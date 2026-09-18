@@ -1,0 +1,125 @@
+const pool = require("../config/db");
+const storageService = require("./storageService");
+
+const mapHealthTip = (t) => ({
+    id: t.id,
+    title: t.title,
+    excerpt: t.excerpt,
+    image: t.image,
+    videoUrl: t.video_url,
+    date: t.date,
+    readTime: t.read_time,
+    author: t.author,
+    category: t.category,
+    content: t.content,
+    active: t.active,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at
+});
+
+exports.getAllHealthTips = async (page, limit) => {
+    if (page && limit) {
+        const offset = (page - 1) * limit;
+        const countResult = await pool.query("SELECT COUNT(*) FROM health_tips");
+        const total = parseInt(countResult.rows[0].count);
+
+        const result = await pool.query("SELECT * FROM health_tips ORDER BY created_at DESC LIMIT $1 OFFSET $2", [limit, offset]);
+
+        return {
+            data: result.rows.map(mapHealthTip),
+            total,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: Math.ceil(total / limit)
+        };
+    }
+
+    const result = await pool.query("SELECT * FROM health_tips ORDER BY created_at DESC");
+    return result.rows.map(mapHealthTip);
+};
+
+const slugify = (text) => {
+    if (!text) return "";
+    return text
+        .toString()
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^\w\-]+/g, '')
+        .replace(/\-\-+/g, '-');
+};
+
+exports.getHealthTipById = async (id) => {
+    const numId = parseInt(id, 10);
+    if (!isNaN(numId) && numId.toString() === id.toString()) {
+        const result = await pool.query("SELECT * FROM health_tips WHERE id = $1", [numId]);
+        return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+    } else {
+        const decodedTitle = decodeURIComponent(id);
+        const slug = slugify(decodedTitle);
+        const result = await pool.query("SELECT * FROM health_tips");
+        const matchingTip = result.rows.find(t => slugify(t.title) === slug);
+        return matchingTip ? mapHealthTip(matchingTip) : null;
+    }
+};
+
+exports.createHealthTip = async (data) => {
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
+    const result = await pool.query(
+        "INSERT INTO health_tips (title, excerpt, image, video_url, date, read_time, author, category, content, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false]
+    );
+    return mapHealthTip(result.rows[0]);
+};
+
+exports.updateHealthTip = async (id, data) => {
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
+    const result = await pool.query(
+        "UPDATE health_tips SET title = $1, excerpt = $2, image = $3, video_url = $4, date = $5, read_time = $6, author = $7, category = $8, content = $9, active = $10, updated_at = NOW() WHERE id = $11 RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false, id]
+    );
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+};
+
+exports.deleteHealthTip = async (id) => {
+    // 1. Get tip to find media URLs
+    const tipResult = await pool.query("SELECT image, video_url FROM health_tips WHERE id = $1", [id]);
+    const tip = tipResult.rows[0];
+
+    // 2. Delete media from Supabase if exists
+    if (tip) {
+        if (tip.image) {
+            try {
+                await storageService.deleteImage(tip.image);
+            } catch (error) {
+                console.error("Error deleting health tip image from Supabase:", error);
+            }
+        }
+        if (tip.video_url) {
+            try {
+                await storageService.deleteImage(tip.video_url); // deleteImage is generic and handles any URL in the bucket
+            } catch (error) {
+                console.error("Error deleting health tip video from Supabase:", error);
+            }
+        }
+    }
+
+    // 3. Delete record from DB
+    const result = await pool.query("DELETE FROM health_tips WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0];
+};
+
+exports.getActiveHealthTips = async () => {
+    const result = await pool.query("SELECT * FROM health_tips WHERE active = true ORDER BY created_at DESC");
+    return result.rows.map(mapHealthTip);
+};
+
+exports.setActiveHealthTip = async (id) => {
+    const result = await pool.query("UPDATE health_tips SET active = true WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+};
+
+exports.setInactiveHealthTip = async (id) => {
+    const result = await pool.query("UPDATE health_tips SET active = false WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+};
