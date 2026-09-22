@@ -146,7 +146,7 @@ exports.getProductById = async (id) => {
     const isNum = !isNaN(id);
     const query = isNum
         ? `${BASE_PRODUCT_QUERY} WHERE p.product_id = $1::integer OR p.id = $1::integer`
-        : `${BASE_PRODUCT_QUERY} WHERE p.style_code = $1 OR p.productname ILIKE $1`;
+        : `${BASE_PRODUCT_QUERY} WHERE p.style_code = $1 OR p.title ILIKE $1`;
 
     const result = await pool.query(query, [id]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
@@ -196,19 +196,21 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 
 exports.createProduct = async (product) => {
     const {
-        productname, description, shortdescription, price, originalprice,
+        productname, title, description, shortdescription, price, originalprice,
         discount, category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
         expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code
     } = product;
 
+    const productTitle = title || productname || '';
+
     const result = await pool.query(
         `INSERT INTO products 
-        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, image_url, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, images, expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code, created_at, updated_at) 
+        (title, description, shortdescription, price, originalprice, discount, category_id, brand, image, image_url, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, images, expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code, created_at, updated_at) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $18, $19, $20, $21, $22, $22, $23, $24, $25, $26, $27, NOW(), NOW()) 
         RETURNING *`,
         [
-            productname, description, shortdescription, price, originalprice, discount, category_id, brand, image,
+            productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image,
             instock !== false, promoted || false, benefits, ingredients, usage, directions, quantity || 0,
             supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false,
             sizes || ['XS', 'S', 'M', 'L'], colors || ['Default'], fabric || '', fit_type || '', style_code || ''
@@ -219,15 +221,17 @@ exports.createProduct = async (product) => {
 
 exports.updateProduct = async (id, product) => {
     const {
-        productname, description, shortdescription, price, originalprice,
+        productname, title, description, shortdescription, price, originalprice,
         discount, category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
         expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code
     } = product;
 
+    const productTitle = title || productname;
+
     const result = await pool.query(
         `UPDATE products 
-        SET productname = COALESCE($2, productname), description = COALESCE($3, description), shortdescription = COALESCE($4, shortdescription), price = COALESCE($5, price), originalprice = COALESCE($6, originalprice), 
+        SET title = COALESCE($2, title), description = COALESCE($3, description), shortdescription = COALESCE($4, shortdescription), price = COALESCE($5, price), originalprice = COALESCE($6, originalprice), 
             discount = COALESCE($7, discount), category_id = COALESCE($8, category_id), brand = COALESCE($9, brand), image = COALESCE($10, image), image_url = COALESCE($10, image_url), instock = COALESCE($11, instock), promoted = COALESCE($12, promoted),
             benefits = COALESCE($13, benefits), ingredients = COALESCE($14, ingredients), 
             usage = COALESCE($15, usage), directions = COALESCE($16, directions),
@@ -239,7 +243,7 @@ exports.updateProduct = async (id, product) => {
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
-        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code]
+        [id, productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
