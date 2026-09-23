@@ -67,3 +67,70 @@ exports.updateProfile = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to update profile', error: error.message });
     }
 };
+
+exports.getProfile = async (req, res) => {
+    try {
+        const username = req.user.id;
+        if (!username) {
+            return res.status(401).json({ success: false, message: 'User not identified' });
+        }
+
+        const userResult = await pool.query(`
+            SELECT username, emailid, fullname, contactno, avatar_url, member_since
+            FROM public.users
+            WHERE username = $1 OR emailid = $1
+        `, [username]);
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User profile not found' });
+        }
+
+        const userRow = userResult.rows[0];
+        const user = {
+            id: userRow.username,
+            userid: userRow.username,
+            email: userRow.emailid,
+            fullName: userRow.fullname || userRow.username,
+            phone: userRow.contactno || '',
+            avatar: userRow.avatar_url || '',
+            memberSince: userRow.member_since
+        };
+
+        let addresses = [];
+        try {
+            const addressResult = await pool.query(`
+                SELECT * FROM public.user_addresses 
+                WHERE user_id = $1 
+                ORDER BY is_default DESC, created_at DESC
+            `, [username]);
+            addresses = addressResult.rows;
+        } catch (e) {
+            console.error('Failed to fetch user addresses in profile:', e.message);
+        }
+
+        let ordersSummary = [];
+        try {
+            const ordersResult = await pool.query(`
+                SELECT id, order_number, total_amount, status, created_at
+                FROM public.orders
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT 5
+            `, [username]);
+            ordersSummary = ordersResult.rows;
+        } catch (e) {
+            console.error('Failed to fetch user orders in profile:', e.message);
+        }
+
+        res.json({
+            success: true,
+            user,
+            addresses,
+            ordersSummary
+        });
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch profile', error: error.message });
+    }
+};
+
