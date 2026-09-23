@@ -107,3 +107,35 @@ exports.socialCallback = async (req, res) => {
     }
 };
 
+exports.checkEmail = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+        const pool = require('../config/db');
+        const result = await pool.query("SELECT 1 FROM public.users WHERE emailid = $1 LIMIT 1", [email.toLowerCase().trim()]);
+        const exists = result.rows.length > 0;
+        return res.json({ success: true, exists });
+    } catch (error) {
+        console.error('[checkEmail] Error:', error.message);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.sendWelcome = async (req, res) => {
+    try {
+        const { email, name } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+        const brevo = require('../services/brevoEmailService');
+        await brevo.sendWelcomeEmail(email, name);
+        return res.json({ success: true, message: 'Welcome email triggered' });
+    } catch (error) {
+        console.error('[sendWelcome] Error:', error.message);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+
