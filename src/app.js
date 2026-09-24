@@ -146,7 +146,7 @@ app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/campaigns', require('./routes/campaignRoutes'));
 
 app.get('/', (req, res) => {
-    res.send("HomeVed API is running....");
+    res.send("House Of Urvaah API is running....");
 });
 
 // Global error handler

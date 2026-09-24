@@ -7,7 +7,7 @@ const axios = require('axios');
 
 /**
  * Creates a reverse pickup request in Shiprocket.
- * As per HOMVED-RR-05: Automate reverse pickups for approved returns.
+ * As per URVAAH-RR-05: Automate reverse pickups for approved returns.
  */
 exports.createReversePickup = async (order, itemsToReturn) => {
     const isMock = process.env.SHIPROCKET_MOCK !== 'false'; // Default to mock

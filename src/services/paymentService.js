@@ -191,7 +191,7 @@ exports.refundPayment = async (paymentId, amount, speed = 'normal') => {
             speed: speed,
             notes: {
                 reason: 'Customer Return/Cancellation Approved by Admin',
-                initiated_by: 'Homeveda Admin Dashboard'
+                initiated_by: 'House of Urvaah Admin Dashboard'
             }
         });
         console.log(`[PaymentService] Refund successful: ${refund.id}`);
