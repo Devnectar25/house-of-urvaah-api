@@ -12,7 +12,7 @@ process.on('unhandledRejection', (reason, promise) => {
     process.exit(1);
 });
 
-console.log('--- STARTING Urvah API ---');
+console.log('--- STARTING House of Urvaah API ---');
 console.log('Node Version:', process.version);
 console.log('CWD:', process.cwd());
 

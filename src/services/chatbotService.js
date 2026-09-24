@@ -71,7 +71,7 @@ function detectIntentFromTokens(tokens) {
         pricing_info: ['price', 'cost', 'expensive', 'cheap', 'affordable', 'budget', 'कीमत', 'मूल्य', 'कितना', 'सस्ता', 'महंगा', 'बजट', 'ਕੀਮਤ', 'ਮੁੱਲ', 'ਕਿੰਨਾ', 'ਸਸਤਾ', 'ਮਹਿੰਗਾ'],
         website_info: ['order', 'shipping', 'delivery', 'return', 'refund', 'payment', 'checkout', 'track', 'ऑर्डर', 'शिपिंग', 'डिलिवरी', 'वापसी', 'भुगतान', 'ट्रैक', 'ਆਰਡਰ', 'ਸ਼ਿਪਿੰਗ', 'ਵਾਪਸੀ', 'ਭੁਗਤਾਨ'],
         contact_info: ['contact', 'support', 'email', 'phone', 'call', 'help', 'संपर्क', 'सहायता', 'ईमेल', 'फोन', 'कॉल', 'मदद', 'ਸੰਪਰਕ', 'ਸਹਾਇਤਾ', 'ਮਦਦ'],
-        about_info: ['about', 'company', 'who', 'mediveda', 'homeveda', 'founder', 'owner', 'ceo', 'team', 'बारे', 'कंपनी', 'कौन', 'मालिक', 'संस्थापक', 'ਬਾਰੇ', 'ਕੌਣ', 'ਮਾਲਕ'],
+        about_info: ['about', 'company', 'who', 'mediveda', 'homeveda', 'urvaah', 'house', 'founder', 'owner', 'ceo', 'team', 'बारे', 'कंपनी', 'कौन', 'मालिक', 'संस्थापक', 'ਬਾਰੇ', 'ਕੌਣ', 'ਮਾਲਕ'],
     };
 
     const scores = {};
@@ -255,7 +255,7 @@ function isLikelyProductQuery(lowerQuery, tokens) {
         /\b(owner|founder|ceo|director|president|chairman|manager|head)\b/i,
         /^(what|how|where|when|why)\s+(is|are|was|were|do|does)\b(?!.*(product|ayurveda|ayurvedic|medicine|tablet|syrup|oil|powder|capsule|brand))/i,
         /\b(is|are|was|were|do|does)\b.*\b(you|your|me|my)\b(?!.*(product|ayurveda|ayurvedic))/i,
-        /tell\s+me\s+about\s+(homeved|mediveda|the\s+company|your\s+company)/i,
+        /tell\s+me\s+about\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah|the\s+company|your\s+company)/i,
         /\b(when\s+was|when\s+did|how\s+many\s+employees|headquarters|location|address\s+of)\b/i,
     ];
 
@@ -614,8 +614,8 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
     if (exactGreetings.includes(lowerQuery) || exactGreetings.includes(cleanLowerQuery)) {
         return {
             answer: language === 'hi'
-                ? "नमस्ते! मैं होमवेद हेल्थबॉट हूँ, आपका आयुर्वेदिक कल्याण सहायक। 🌿\nआज मैं आपकी कैसे मदद कर सकता हूँ? आप मुझसे इनके बारे में पूछ सकते हैं:\n• उत्पाद (जैसे \"अश्वगंधा\", \"त्रिफला\")\n• स्वास्थ्य विषय (जैसे \"तनाव से राहत\", \"प्रतिरक्षा\")\n• मूल्य निर्धारण, शिपिंग, रिटर्न या कंपनी की जानकारी"
-                : "Hello! I'm HomeVed HealthBot, your Ayurvedic wellness assistant. 🌿\nHow can I help you today? You can ask me about:\n• Products (e.g. \"Ashwagandha\", \"Triphala\")\n• Health topics (e.g. \"stress relief\", \"immunity\")\n• Pricing, shipping, returns, or company info",
+                ? "नमस्ते! मैं हाउस ऑफ उर्वाह कंसिएर्ज हूँ, आपका स्टाइल और फैशन सहायक। 🌿\nआज मैं आपकी कैसे मदद कर सकता हूँ? आप मुझसे इनके बारे में पूछ सकते हैं:\n• उत्पाद (जैसे \"कुर्ती\", \"साड़ी\")\n• आकार, मूल्य निर्धारण, शिपिंग, रिटर्न या कंपनी की जानकारी"
+                : "Hello! I'm House of Urvaah Concierge, your fashion & style assistant. 🌿\nHow can I help you today? You can ask me about:\n• Products (e.g. \"Dresses\", \"Sarees\")\n• Sizes, pricing, shipping, returns, or company info",
             intent: 'greeting',
             confidence: 1.0,
             products: []
@@ -766,34 +766,34 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         {
             pattern: /(who\s+(is|are|was)\s+(the\s+)?(owner|founder|ceo|director|head|president|co-founder)|कौन\s+है\s+(मालिक|संस्थापक|प्रमुख))/i,
             answer: language === 'hi'
-                ? "होमवेद एक कल्याणकारी कंपनी है जिसे एक उत्साही टीम द्वारा बनाया गया है जो हर घर में प्रामाणिक आयुर्वेदिक उत्पाद लाने के लिए समर्पित है।\n\nविशिष्ट नेतृत्व या स्वामित्व की जानकारी के लिए, कृपया हमारी आधिकारिक वेबसाइट देखें या support@mediveda.com पर हमसे संपर्क करें।\n📞 +91 1800-123-4567"
-                : "HomeVed is a wellness company built by a passionate team dedicated to bringing authentic Ayurvedic products to every home.\n\nFor specific leadership or ownership information, please visit our official website or contact us at support@mediveda.com.\n📞 +91 1800-123-4567"
+                ? "हाउस ऑफ उर्वाह एक प्रीमियम फैशन और लाइफस्टाइल कंपनी है जिसे एक उत्साही टीम द्वारा बनाया गया है जो हर घर में सुरुचिपूर्ण उत्पाद लाने के लिए समर्पित है।\n\nविशिष्ट नेतृत्व या स्वामित्व की जानकारी के लिए, कृपया हमारी आधिकारिक वेबसाइट देखें या support@houseofurvaah.com पर हमसे संपर्क करें।\n📞 +91 1800-123-4567"
+                : "House of Urvaah is a premium fashion & lifestyle company built by a passionate team dedicated to bringing elegant products to every home.\n\nFor specific leadership or ownership information, please visit our official website or contact us at support@houseofurvaah.com.\n📞 +91 1800-123-4567"
         },
         {
-            pattern: /(\b(owner|founder|ceo|chairman|president|co-founder|director)\b.*\b(homeved|mediveda|company|of)\b|(मालिक|संस्थापक|प्रमुख).*(होमवेद|कंपनी))/i,
+            pattern: /(\b(owner|founder|ceo|chairman|president|co-founder|director)\b.*\b(homeved|mediveda|urvaah|house\s+of\s+urvaah|company|of)\b|(मालिक|संस्थापक|प्रमुख).*(होमवेद|उर्वाह|कंपनी))/i,
             answer: language === 'hi'
-                ? "होमवेद की स्थापना और प्रबंधन आयुर्वेदिक कल्याण के प्रति उत्साही टीम द्वारा किया जाता है।\n\nनेतृत्व के विवरण के लिए, कृपया हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं या support@mediveda.com पर हमसे संपर्क करें।"
-                : "HomeVed is founded and managed by a team passionate about Ayurvedic wellness.\n\nFor leadership details, please visit our About page or contact us at support@mediveda.com."
+                ? "हाउस ऑफ उर्वाह की स्थापना और प्रबंधन एक समर्पित टीम द्वारा किया जाता है।\n\nनेतृत्व के विवरण के लिए, कृपया हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं या support@houseofurvaah.com पर हमसे संपर्क करें।"
+                : "House of Urvaah is founded and managed by a dedicated team.\n\nFor leadership details, please visit our About page or contact us at support@houseofurvaah.com."
         },
         {
-            pattern: /(\b(homeved|mediveda)\b.*\b(owner|founder|ceo|founded|established|started|created)\b|होमवेद.*(शुरू|बनाया|मालिक))/i,
+            pattern: /(\b(homeved|mediveda|urvaah|house\s+of\s+urvaah)\b.*\b(owner|founder|ceo|founded|established|started|created)\b|(होमवेद|उर्वाह).*(शुरू|बनाया|मालिक))/i,
             answer: language === 'hi'
-                ? "होमवेद एक आयुर्वेदिक स्वास्थ्य और कल्याण मंच है जो प्रामाणिक, प्राकृतिक उत्पादों के लिए प्रतिबद्ध है।\n\nविशिष्ट कंपनी या नेतृत्व की जानकारी के लिए, कृपया हमसे support@mediveda.com या +91 1800-123-4567 पर संपर्क करें।"
-                : "HomeVed is an Ayurvedic health & wellness platform committed to authentic, natural products.\n\nFor specific company or leadership information, please contact us at support@mediveda.com or +91 1800-123-4567."
+                ? "हाउस ऑफ उर्वाह एक प्रीमियम फैशन और स्टाइल मंच है जो प्रामाणिक, उच्च-गुणवत्ता वाले उत्पादों के लिए प्रतिबद्ध है।\n\nविशिष्ट कंपनी या नेतृत्व की जानकारी के लिए, कृपया हमसे support@houseofurvaah.com या +91 1800-123-4567 पर संपर्क करें।"
+                : "House of Urvaah is a premium fashion & style platform committed to authentic, high-quality products.\n\nFor specific company or leadership information, please contact us at support@houseofurvaah.com or +91 1800-123-4567."
         },
         {
-            pattern: /(about\s+(homeved|mediveda|us|the\s+company|our\s+company)|(होमवेद|कंपनी|हमारे)\s+बारे\s+में)/i,
+            pattern: /(about\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah|us|the\s+company|our\s+company)|(होमवेद|उर्वाह|कंपनी|हमारे)\s+बारे\s+में)/i,
             answer: language === 'hi'
-                ? "होमवेद के बारे में:\n\nमिशन: समग्र कल्याण के लिए आयुर्वेद के प्रामाणिक ज्ञान को हर घर में लाना।\nदृष्टि: प्राकृतिक, सुरक्षित और प्रभावी आयुर्वेदिक स्वास्थ्य देखभाल उत्पादों के लिए सबसे भरोसेमंद मंच बनना।\nसेवाएं: हम पारंपरिक स्वास्थ्य प्रथाओं पर विशेषज्ञ मार्गदर्शन के साथ उच्च गुणवत्ता वाले आयुर्वेदिक पूरक, त्वचा की देखभाल और कल्याण उत्पादों की एक विस्तृत श्रृंखला प्रदान करते हैं।\n\nसंपर्क करें: support@mediveda.com | +91 1800-123-4567"
-                : "About HomeVed:\n\nMission: To bring the authentic wisdom of Ayurveda to every home for holistic well-being.\nVision: To become the most trusted platform for natural, safe, and effective Ayurvedic healthcare products.\nServices: We offer a curated range of high-quality Ayurvedic supplements, skincare, and wellness products, along with expert guidance on traditional health practices.\n\nContact us: support@mediveda.com | +91 1800-123-4567"
+                ? "हाउस ऑफ उर्वाह के बारे में:\n\nमिशन: हर किसी के लिए सुरुचिपूर्ण और प्रामाणिक फैशन लाना।\nदृष्टि: गुणवत्ता और शैली के लिए सबसे भरोसेमंद मंच बनना।\n\nसंपर्क करें: support@houseofurvaah.com | +91 1800-123-4567"
+                : "About House of Urvaah:\n\nMission: To bring elegant and authentic fashion to everyone.\nVision: To become the most trusted platform for premium quality and style.\n\nContact us: support@houseofurvaah.com | +91 1800-123-4567"
         },
         {
-            pattern: /(what\s+(is|are)\s+(homeved|mediveda)|(होमवेद|मेडिवेद)\s+क्या\s+है|(ਹੋਮਵੇਦ|ਮੇਡੀਵੇਦਾ)\s+ਕੀ\s+ਹੈ)/i,
+            pattern: /(what\s+(is|are)\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah)|(होमवेद|उर्वाह|मेडिवेद)\s+क्या\s+है|(ਹੋਮਵੇਦ|ਉਰਵਾਹ|ਮੇਡੀਵੇਦਾ)\s+ਕੀ\s+ਹੈ)/i,
             answer: language === 'hi'
-                ? "होमवेद (Mediveda) एक भरोसेमंद आयुर्वेदिक कल्याण मंच है जो प्रदान करता है:\n• 100% प्राकृतिक और प्रामाणिक उत्पाद\n• पारंपरिक आयुर्वेदिक फॉर्मूलेशन\n• गुणवत्ता-परीक्षणित पूरक\n• विशेषज्ञ कल्याण मार्गदर्शन\n\nअधिक जानने के लिए हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं!"
+                ? "हाउस ऑफ उर्वाह (House of Urvaah) एक भरोसेमंद फैशन मंच है जो प्रदान करता है:\n• 100% प्रामाणिक उत्पाद\n• गुणवत्ता-परीक्षित सामग्री\n• विशेष डिज़ाइन\n\nअधिक जानने के लिए हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं!"
                 : language === 'pa'
-                ? "ਹੋਮਵੇਦ (Mediveda) ਇੱਕ ਭਰੋਸੇਮੰਦ ਆਯੁਰਵੈਦਿਕ ਤੰਦਰੁਸਤੀ ਪਲੇਟਫਾਰਮ ਹੈ ਜੋ ਪੇਸ਼ ਕਰਦਾ ਹੈ:\n• 100% ਕੁਦਰਤੀ ਅਤੇ ਪ੍ਰਮਾਣਿਕ ਉਤਪਾਦ\n• ਰਵਾਇਤੀ ਆਯੁਰਵੈਦਿਕ ਫਾਰਮੂਲੇਸ਼ਨ\n• ਗੁਣਵੱਤਾ-ਪ੍ਰੀਖਿਆ ਪੂਰਕ\n• ਮਾਹਿਰ ਤੰਦਰੁਸਤੀ ਮਾਰਗਦਰਸ਼ਨ\n\nਹੋਰ ਜਾਣਨ ਲਈ ਸਾਡੇ 'ਸਾਡੇ ਬਾਰੇ' (About) ਪੰਨੇ 'ਤੇ ਜਾਓ!"
-                : "HomeVed (Mediveda) is a trusted Ayurvedic wellness platform offering:\n• 100% natural and authentic products\n• Traditional Ayurvedic formulations\n• Quality-tested supplements\n• Expert wellness guidance\n\nVisit our About page to learn more!"
+                ? "ਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ (House of Urvaah) ਇੱਕ ਭਰੋਸੇਮੰਦ ਫੈਸ਼ਨ ਪਲੇਟਫਾਰਮ ਹੈ ਜੋ ਪੇਸ਼ ਕਰਦਾ ਹੈ:\n• 100% ਪ੍ਰਮਾਣਿਕ ਉਤਪਾਦ\n• ਗੁਣਵੱਤਾ-ਪ੍ਰੀਖਿਆ ਸਮੱਗਰੀ\n\nਹੋਰ ਜਾਣਨ ਲਈ ਸਾਡੇ 'ਸਾਡੇ ਬਾਰੇ' (About) ਪੰਨੇ 'ਤੇ ਜਾਓ!"
+                : "House of Urvaah is a trusted fashion platform offering:\n• 100% authentic products\n• Quality-tested materials\n• Exclusive designs\n\nVisit our About page to learn more!"
         },
     ];
     // ── Stage 5.5: Inventory Count Queries (NEW) ───────────────────────────────
@@ -849,10 +849,10 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         {
             pattern: /privacy\s*policy/i,
             answer: language === 'hi'
-                ? "गोपनीयता नीति (Privacy Policy):\n\nहोमवेद आपकी गोपनीयता की रक्षा के लिए प्रतिबद्ध है। हम आपकी व्यक्तिगत जानकारी (जैसे नाम, ईमेल और पता) केवल आपके आदेशों को संसाधित करने और आपके खरीदारी अनुभव को बेहतर बनाने के लिए एकत्र और उपयोग करते हैं। हम विपणन उद्देश्यों के लिए तीसरे पक्ष के साथ आपका डेटा नहीं बेचते या साझा नहीं करते हैं। सभी लेनदेन उद्योग-मानक एन्क्रिप्शन के साथ सुरक्षित हैं।"
+                ? "गोपनीयता नीति (Privacy Policy):\n\nहाउस ऑफ उर्वाह आपकी गोपनीयता की रक्षा के लिए प्रतिबद्ध है। हम आपकी व्यक्तिगत जानकारी (जैसे नाम, ईमेल और पता) केवल आपके आदेशों को संसाधित करने और आपके खरीदारी अनुभव को बेहतर बनाने के लिए एकत्र और उपयोग करते हैं। हम विपणन उद्देश्यों के लिए तीसरे पक्ष के साथ आपका डेटा नहीं बेचते या साझा नहीं करते हैं। सभी लेनदेन उद्योग-मानक एन्क्रिप्शन के साथ सुरक्षित हैं।"
                 : language === 'pa'
-                ? "ਗੋਪਨੀਯਤਾ ਨੀਤੀ (Privacy Policy):\n\nਹੋਮਵੇਦ ਤੁਹਾਡੀ ਗੋਪਨੀਯਤਾ ਦੀ ਰੱਖਿਆ ਲਈ ਵਚਨਬੱਧ ਹੈ। ਅਸੀਂ ਤੁਹਾਡੀ ਨਿੱਜੀ ਜਾਣਕਾਰੀ (ਜਿਵੇਂ ਕਿ ਨਾਮ, ਈਮੇਲ ਅਤੇ ਪਤਾ) ਸਿਰਫ਼ ਤੁਹਾਡੇ ਆਰਡਰਾਂ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕਰਨ ਅਤੇ ਤੁਹਾਡੇ ਖਰੀਦਦਾਰੀ ਅਨੁਭਵ ਨੂੰ ਬਿਹਤਰ ਬਣਾਉਣ ਲਈ ਇਕੱਤਰ ਕਰਦੇ ਅਤੇ ਵਰਤਦੇ ਹਾਂ। ਅਸੀਂ ਮਾਰਕੀਟਿੰਗ ਉਦੇਸ਼ਾਂ ਲਈ ਤੀਜੀ ਧਿਰਾਂ ਨਾਲ ਤੁਹਾਡਾ ਡੇਟਾ ਵੇਚਦੇ ਜਾਂ ਸਾਂਝਾ ਨਹੀਂ ਕਰਦੇ ਹਾਂ। ਸਾਰੇ ਲੈਣ-ਦੇਣ ਉਦਯੋਗ-ਮਿਆਰੀ ਐਨਕ੍ਰਿਪਸ਼ਨ ਨਾਲ ਸੁਰੱਖਿਅਤ ਹਨ।"
-                : "Privacy Policy:\n\nHomeVed is committed to protecting your privacy. We collect and use your personal information (such as name, email, and address) solely to process your orders and improve your shopping experience. We do not sell or share your data with third parties for marketing purposes. All transactions are secured with industry-standard encryption.",
+                ? "ਗੋਪਨੀਯਤਾ ਨੀਤੀ (Privacy Policy):\n\nਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ ਤੁਹਾਡੀ ਗੋਪਨੀਯਤਾ ਦੀ ਰੱਖਿਆ ਲਈ ਵਚਨਬੱਧ ਹੈ। ਅਸੀਂ ਤੁਹਾਡੀ ਨਿੱਜੀ ਜਾਣਕਾਰੀ (ਜਿਵੇਂ ਕਿ ਨਾਮ, ਈਮੇਲ ਅਤੇ ਪਤਾ) ਸਿਰਫ਼ ਤੁਹਾਡੇ ਆਰਡਰਾਂ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕਰਨ ਅਤੇ ਤੁਹਾਡੇ ਖਰੀਦਦਾਰੀ ਅਨੁਭਵ ਨੂੰ ਬਿਹਤਰ ਬਣਾਉਣ ਲਈ ਇਕੱਤਰ ਕਰਦੇ ਅਤੇ ਵਰਤਦੇ ਹਾਂ। ਅਸੀਂ ਮਾਰਕੀਟਿੰਗ ਉਦੇਸ਼ਾਂ ਲਈ ਤੀਜੀ ਧਿਰਾਂ ਨਾਲ ਤੁਹਾਡਾ ਡੇਟਾ ਵੇਚਦੇ ਜਾਂ ਸਾਂਝਾ ਨਹੀਂ ਕਰਦੇ ਹਾਂ। ਸਾਰੇ ਲੈਣ-ਦੇਣ ਉਦਯੋਗ-ਮਿਆਰੀ ਐਨਕ੍ਰਿਪਸ਼ਨ ਨਾਲ ਸੁਰੱਖਿਅਤ ਹਨ।"
+                : "Privacy Policy:\n\nHouse of Urvaah is committed to protecting your privacy. We collect and use your personal information (such as name, email, and address) solely to process your orders and improve your shopping experience. We do not sell or share your data with third parties for marketing purposes. All transactions are secured with industry-standard encryption.",
             intent: 'navigation'
         },
         {
@@ -867,8 +867,8 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         {
             pattern: /login|sign\s*in|how\s*to\s*login/i,
             answer: language === 'hi'
-                ? "होमवेद में लॉगिन करने के लिए:\n1. होमवेद वेबसाइट पर जाएं।\n2. ऊपर दाईं ओर 'अकाउंट' (Account) आइकन या 'लॉगिन' (Login) बटन पर क्लिक करें।\n3. अपना पंजीकृत ईमेल और पासवर्ड दर्ज करें।\n4. अपने खाते तक पहुँचने के लिए 'सबमिट' (Submit) या 'लॉगिन' पर क्लिक करें।\n5. यदि आप अपना पासवर्ड भूल गए हैं, तो 'फॉरगॉट पासवर्ड' (Forgot Password) विकल्प का उपयोग करें।"
-                : "To login to HomeVed:\n1. Go to the HomeVed website.\n2. Click on the 'Account' icon or 'Login' button at the top right.\n3. Enter your registered email and password.\n4. Click 'Submit' or 'Login' to access your account.\n5. If you forgot your password, use the 'Forgot Password' option.",
+                ? "हाउस ऑफ उर्वाह में लॉगिन करने के लिए:\n1. हाउस ऑफ उर्वाह वेबसाइट पर जाएं।\n2. ऊपर दाईं ओर 'अकाउंट' (Account) आइकन या 'लॉगिन' (Login) बटन पर क्लिक करें।\n3. अपना पंजीकृत ईमेल और पासवर्ड दर्ज करें।\n4. अपने खाते तक पहुँचने के लिए 'सबमिट' (Submit) या 'लॉगिन' पर क्लिक करें।\n5. यदि आप अपना पासवर्ड भूल गए हैं, तो 'फॉरगॉट पासवर्ड' (Forgot Password) विकल्प का उपयोग करें।"
+                : "To login to House of Urvaah:\n1. Go to the House of Urvaah website.\n2. Click on the 'Account' icon or 'Login' button at the top right.\n3. Enter your registered email and password.\n4. Click 'Submit' or 'Login' to access your account.\n5. If you forgot your password, use the 'Forgot Password' option.",
             intent: 'navigation'
         },
         {
@@ -892,10 +892,10 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         {
             pattern: /contact|support|email|phone|call\s*us/i,
             answer: language === 'hi'
-                ? "हमसे संपर्क करें:\n📧 ईमेल: support@mediveda.com\n📞 फोन: +91 1800-123-4567\n⏰ समय: सोम-शनि, सुबह 9 बजे - शाम 6 बजे\n\nहम आमतौर पर 24 घंटों के भीतर जवाब देते हैं!"
+                ? "हमसे संपर्क करें:\n📧 ईमेल: support@houseofurvaah.com\n📞 फोन: +91 1800-123-4567\n⏰ समय: सोम-शनि, सुबह 9 बजे - शाम 6 बजे\n\nहम आमतौर पर 24 घंटों के भीतर जवाब देते हैं!"
                 : language === 'pa'
-                ? "ਸਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੋ:\n📧 ਈਮੇਲ: support@mediveda.com\n📞 ਫ਼ੋਨ: +91 1800-123-4567\n⏰ ਸਮਾਂ: ਸੋਮ-ਸ਼ਨਿ, ਸਵੇਰੇ 9 ਵਜੇ - ਸ਼ਾਮ 6 ਵਜੇ\n\nਅਸੀਂ ਆਮ ਤੌਰ 'ਤੇ 24 ਘੰਟਿਆਂ ਦੇ ਅੰਦਰ ਜਵਾਬ ਦਿੰਦੇ ਹਾਂ!"
-                : "Contact Us:\n📧 Email: support@mediveda.com\n📞 Phone: +91 1800-123-4567\n⏰ Hours: Mon-Sat, 9 AM – 6 PM\n\nWe typically respond within 24 hours!",
+                ? "ਸਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੋ:\n📧 ਈਮੇਲ: support@houseofurvaah.com\n📞 ਫ਼ੋਨ: +91 1800-123-4567\n⏰ ਸਮਾਂ: ਸੋਮ-ਸ਼ਨਿ, ਸਵੇਰੇ 9 ਵਜੇ - ਸ਼ਾਮ 6 ਵਜੇ\n\nਅਸੀਂ ਆਮ ਤੌਰ 'ਤੇ 24 ਘੰਟਿਆਂ ਦੇ ਅੰਦਰ ਜਵਾਬ ਦਿੰਦੇ ਹਾਂ!"
+                : "Contact Us:\n📧 Email: support@houseofurvaah.com\n📞 Phone: +91 1800-123-4567\n⏰ Hours: Mon-Sat, 9 AM – 6 PM\n\nWe typically respond within 24 hours!",
             intent: 'contact_info'
         },
         {
@@ -910,10 +910,10 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         {
             pattern: /return|refund|exchange/i,
             answer: language === 'hi'
-                ? "वापसी और धनवापसी नीति:\n• वितरण से 7 दिन की वापसी अवधि\n• वस्तुएं अप्रयुक्त और मूल पैकेजिंग में होनी चाहिए\n• वापसी शुरू करने के लिए support@mediveda.com पर संपर्क करें\n• 5-7 व्यावसायिक दिनों के भीतर पूर्ण धनवापसी संसाधित की जाएगी"
+                ? "वापसी और धनवापसी नीति:\n• वितरण से 7 दिन की वापसी अवधि\n• वस्तुएं अप्रयुक्त और मूल पैकेजिंग में होनी चाहिए\n• वापसी शुरू करने के लिए support@houseofurvaah.com पर संपर्क करें\n• 5-7 व्यावसायिक दिनों के भीतर पूर्ण धनवापसी संसाधित की जाएगी"
                 : language === 'pa'
-                ? "ਵਾਪਸੀ ਅਤੇ ਰਿਫੰਡ ਨੀਤੀ:\n• ਡਿਲੀਵਰੀ ਤੋਂ 7-ਦਿਨਾਂ ਦੀ ਵਾਪਸੀ ਦੀ ਮਿਆਦ\n• ਵਸਤੂਆਂ ਅਣਵਰਤੀਆਂ ਅਤੇ ਅਸਲ ਪੈਕੇਜਿੰਗ ਵਿੱਚ ਹੋਣੀਆਂ ਚਾਹੀਦੀਆਂ ਹਨ\n• ਵਾਪਸੀ ਸ਼ੁਰੂ ਕਰਨ ਲਈ support@mediveda.com 'ਤੇ ਸੰਪਰਕ ਕਰੋ\n• 5-7 ਕੰਮਕਾਜੀ ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਪੂਰੀ ਰਿਫੰਡ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕੀਤੀ ਜਾਵੇਗੀ"
-                : "Return & Refund Policy:\n• 7-day return window from delivery\n• Items must be unused and in original packaging\n• Contact support@mediveda.com to initiate a return\n• Full refund processed within 5-7 business days",
+                ? "ਵਾਪਸੀ ਅਤੇ ਰਿਫੰਡ ਨੀਤੀ:\n• ਡਿਲੀਵਰੀ ਤੋਂ 7-ਦਿਨਾਂ ਦੀ ਵਾਪਸੀ ਦੀ ਮਿਆਦ\n• ਵਸਤੂਆਂ ਅਣਵਰਤੀਆਂ ਅਤੇ ਅਸਲ ਪੈਕੇਜਿੰਗ ਵਿੱਚ ਹੋਣੀਆਂ ਚਾਹੀਦੀਆਂ ਹਨ\n• ਵਾਪਸੀ ਸ਼ੁਰੂ ਕਰਨ ਲਈ support@houseofurvaah.com 'ਤੇ ਸੰਪਰਕ ਕਰੋ\n• 5-7 ਕੰਮਕਾਜੀ ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਪੂਰੀ ਰਿਫੰਡ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕੀਤੀ ਜਾਵੇਗੀ"
+                : "Return & Refund Policy:\n• 7-day return window from delivery\n• Items must be unused and in original packaging\n• Contact support@houseofurvaah.com to initiate a return\n• Full refund processed within 5-7 business days",
             intent: 'navigation'
         },
     ];
@@ -1106,10 +1106,10 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     return {
         answer: language === 'hi'
-            ? "मुझे क्षमा करें, लेकिन वह उत्तर मेरे ज्ञान में नहीं है। मैं आयुर्वेद और होमवेद उत्पादों में विशेषज्ञता रखता हूँ।"
+            ? "मुझे क्षमा करें, लेकिन वह उत्तर मेरे ज्ञान में नहीं है। मैं हाउस ऑफ उर्वाह के फैशन उत्पादों में विशेषज्ञता रखता हूँ।"
             : language === 'pa'
-            ? "ਮੈਨੂੰ ਮਾਫ਼ ਕਰੋ, ਪਰ ਉਹ ਜਵਾਬ ਮੇਰੇ ਗਿਆਨ ਵਿੱਚ ਨਹੀਂ ਹੈ। ਮੈਂ ਆਯੁਰਵੇਦ ਅਤੇ ਹੋਮਵੇਦ ਉਤਪਾਦਾਂ ਵਿੱਚ ਮੁਹਾਰਤ ਰੱਖਦਾ ਹਾਂ।"
-            : "I am sorry, but that answer is not in my knowledge based. I specialize in Ayurveda and Homeved products.",
+            ? "ਮੈਨੂੰ ਮਾਫ਼ ਕਰੋ, ਪਰ ਉਹ ਜਵਾਬ ਮੇਰੇ ਗਿਆਨ ਵਿੱਚ ਨਹੀਂ ਹੈ। ਮੈਂ ਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ ਉਤਪਾਦਾਂ ਵਿੱਚ ਮੁਹਾਰਤ ਰੱਖਦਾ ਹਾਂ।"
+            : "I am sorry, but that answer is not in my knowledge base. I specialize in House of Urvaah products.",
         intent: 'fallback',
         confidence: 0.0,
         products: []

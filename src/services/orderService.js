@@ -432,7 +432,7 @@ exports.getOrderById = async (orderId) => {
 };
 
 /**
- * HOMVED-RR-03: End-to-End Managed Return & Replacement Lifecycle
+ * URVAAH-RR-03: End-to-End Managed Return & Replacement Lifecycle
  * User-side Return/Replace request processing.
  */
 exports.requestReturnReplace = async (orderId, userId, data) => {
@@ -1169,7 +1169,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         const order = await exports.getOrderById(orderId);
 
-        // ── LOGISTICS & NOTIFICATIONS (HOMVED-RR-05, HOMVED-RR-08) ────────
+        // ── LOGISTICS & NOTIFICATIONS (URVAAH-RR-05, URVAAH-RR-08) ────────
         if (status === 'Return Approved' || status === 'Replace Approved' || status === 'Cancelled' || status === 'Refunded') {
             try {
                 // For Return/Replace, we need to know which items
@@ -1208,7 +1208,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         // INVENTORY AUTOMATION (Common for All Methods)
         // Triggered SPECIFICALLY when status changes to 'Received at Homved' (Or finalized online)
-        // As per HOMVED-014: "Product quantities must auto-increment specifically when status is 'Received at Homved'"
+        // As per URVAAH-014: "Product quantities must auto-increment specifically when status is 'Received at Homved'"
         const isReceivedAtHomved = status === 'Received at Homved';
         const isOnlineFinalization = ['Refunded', 'Returned'].includes(status);
 
@@ -1292,7 +1292,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             }
         }
 
-        // ── AUTOMATED FINANCIAL REFUND (HOMVED-RR-07) ───────────────────
+        // ── AUTOMATED FINANCIAL REFUND (URVAAH-RR-07) ───────────────────
         // NOTE: Automated Razorpay refund on Return Approval was removed from here.
         // It has been moved to updateRefundStatus to process refunds through the Refund Desk.
 
