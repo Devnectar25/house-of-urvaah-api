@@ -1,7 +1,7 @@
-# HOMVED - Backend (medived-api)
+# House of Urvaah - Backend (house-of-urvaah-api)
 
 ## Project Overview
-This is the backend API service for **HOMVED**, a comprehensive full-stack e-commerce solution specializing in **herbal and ayurvedic products**. Built with **Node.js** and **Express.js**, it provides a secure and scalable API for e-commerce transactions and data management.
+This is the backend API service for **House of Urvaah**, a comprehensive full-stack e-commerce solution specializing in **female clothing and fashion**. Built with **Node.js** and **Express.js**, it provides a secure and scalable API for e-commerce transactions and data management.
 
 ## Technical Stack
 - **Runtime:** Node.js
@@ -39,7 +39,7 @@ graph TD
 ## Setup Instructions
 1. **Navigate to the directory:**
    ```bash
-   cd medived-api
+   cd house-of-urvaah-api
    ```
 2. **Install dependencies:**
    ```bash

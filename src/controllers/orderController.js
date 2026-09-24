@@ -162,7 +162,7 @@ exports.downloadInvoice = async (req, res) => {
         const pdfBuffer = await invoiceService.generateInvoicePDF(id);
         
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="HOMVED_INV_${order.order_number}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INV_${order.order_number}.pdf"`);
         res.setHeader('Content-Length', pdfBuffer.length);
         
         res.end(pdfBuffer);

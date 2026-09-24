@@ -30,7 +30,7 @@ exports.getCart = async (userId) => {
         productId: item.product_id.toString(),
         cartItemId: item.id, // Keep DB ID if needed for debugging
         name: item.name,
-        brand: item.brand_name || 'Homved',
+        brand: item.brand_name || 'House of Urvaah',
         category: item.category_name || 'Uncategorized',
         price: parseFloat(item.price),
         originalPrice: parseFloat(item.originalprice),

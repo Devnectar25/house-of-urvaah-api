@@ -10,7 +10,7 @@ const memoryStorage = multer.memoryStorage();
 // Configure Multer for disk storage (for larger files like videos)
 const diskStorage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const uploadDir = path.join(os.tmpdir(), 'homved-uploads');
+        const uploadDir = path.join(os.tmpdir(), 'house-of-urvaah-uploads');
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
         }
