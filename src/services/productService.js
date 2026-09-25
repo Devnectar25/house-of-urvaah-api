@@ -26,7 +26,7 @@ const mapProduct = (p) => {
         shortDescription: p.shortdescription || '',
         description: p.description || '',
         price: parseFloat(p.price) || 0,
-        originalPrice: parseFloat(p.originalprice) || 0,
+        originalPrice: parseFloat(p.originalprice || p.sale_price) || 0,
         discount: parseFloat(p.discount) || 0,
         rating: parseFloat(p.rating) || 0,
         reviews: parseInt(p.reviews_count || p.reviews) || 0,
@@ -165,8 +165,8 @@ exports.getFeaturedProducts = async (query) => {
     const result = await pool.query(`
         ${BASE_PRODUCT_QUERY}
         WHERE COALESCE(p.is_featured, false) = true AND COALESCE(p.is_active, true) = true
-        ORDER BY p.updated_at DESC, p.product_id DESC
-        LIMIT 8
+        ORDER BY p.product_id ASC
+        LIMIT 5
     `);
     return result.rows.map(mapProduct);
 };
