@@ -92,7 +92,7 @@ exports.deleteImage = async (imageUrl) => {
         if (!imageUrl) return;
 
         // Extract path from URL
-        // Example URL: https://xyz.supabase.co/storage/v1/object/public/mediveda/brand/filename.jpg
+        // Example URL: https://xyz.supabase.co/storage/v1/object/public/houseofurvaah-media/brand/filename.jpg
         const path = imageUrl?.split(`${BUCKET_NAME}/`).pop();
 
         const { data, error } = await supabase.storage
