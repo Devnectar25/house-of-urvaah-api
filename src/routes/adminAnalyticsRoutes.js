@@ -7,7 +7,8 @@ const {
   getTopProducts,
   getTopCategories,
   getAnalyticsDrilldown,
-  getDashboardStats
+  getDashboardStats,
+  getDashboardSummary
 } = require("../controllers/analyticsController");
 
 // GET /api/admin/analytics/summary
@@ -27,5 +28,8 @@ router.get("/drilldown", getAnalyticsDrilldown);
 
 // GET /api/admin/analytics/dashboard-stats
 router.get("/dashboard-stats", getDashboardStats);
+
+// GET /api/admin/analytics/dashboard-summary
+router.get("/dashboard-summary", getDashboardSummary);
 
 module.exports = router;
