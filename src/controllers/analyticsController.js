@@ -192,6 +192,65 @@ async function trackEvent(req, res) {
   }
 }
 
+/**
+ * GET /api/admin/dashboard-summary
+ * Returns aggregated entity counts tailored for House of Urvaah fashion catalog
+ */
+async function getDashboardSummary(req, res) {
+  try {
+    const pool = require("../config/db");
+    const [
+      products,
+      categories,
+      subcategories,
+      orders,
+      delivered,
+      pending,
+      processing,
+      cancelled,
+      users,
+      coupons,
+      reviews
+    ] = await Promise.all([
+      pool.query('SELECT COUNT(*) as count FROM products').catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query('SELECT COUNT(*) as count FROM category').catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query('SELECT COUNT(*) as count FROM subcategories').catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query('SELECT COUNT(*) as count FROM orders').catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered'").catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending'").catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing'").catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE status IN ('Cancelled', 'Cancellation Requested', 'Refunded')").catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query('SELECT COUNT(*) as count FROM public.users').catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query("SELECT COUNT(*) as count FROM coupons WHERE active = true").catch(() => ({ rows: [{ count: 0 }] })),
+      pool.query('SELECT COUNT(*) as count FROM reviews').catch(() => ({ rows: [{ count: 0 }] }))
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalProducts: parseInt(products.rows[0]?.count) || 0,
+        totalCategories: parseInt(categories.rows[0]?.count) || 0,
+        totalSubcategories: parseInt(subcategories.rows[0]?.count) || 0,
+        totalOrders: parseInt(orders.rows[0]?.count) || 0,
+        deliveredOrders: parseInt(delivered.rows[0]?.count) || 0,
+        pendingOrders: parseInt(pending.rows[0]?.count) || 0,
+        processingOrders: parseInt(processing.rows[0]?.count) || 0,
+        cancelledOrders: parseInt(cancelled.rows[0]?.count) || 0,
+        totalCustomers: parseInt(users.rows[0]?.count) || 0,
+        activeCoupons: parseInt(coupons.rows[0]?.count) || 0,
+        totalReviews: parseInt(reviews.rows[0]?.count) || 0
+      }
+    });
+  } catch (error) {
+    console.error("Dashboard Summary Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load dashboard summary",
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   getAdminAnalyticsSummary,
   getTopActiveUsers,
@@ -199,5 +258,6 @@ module.exports = {
   getTopCategories,
   getAnalyticsDrilldown,
   getDashboardStats,
+  getDashboardSummary,
   trackEvent
 };
