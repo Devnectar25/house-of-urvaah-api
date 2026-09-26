@@ -199,20 +199,21 @@ exports.createProduct = async (product) => {
         productname, title, description, shortdescription, price, originalprice,
         discount, category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code
+        expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code
     } = product;
 
     const productTitle = title || productname || '';
+    const activeVal = active !== undefined ? active : (is_active !== undefined ? is_active : true);
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, shortdescription, price, originalprice, discount, category_id, brand, image, image_url, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, images, expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $18, $19, $20, $21, $22, $22, $23, $24, $25, $26, $27, NOW(), NOW()) 
+        (title, description, shortdescription, price, originalprice, discount, category_id, brand, image, image_url, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, images, expiryinfo, subcategory_id, specifications, is_active, sizes, colors, fabric, fit_type, style_code, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image,
             instock !== false, promoted || false, benefits, ingredients, usage, directions, quantity || 0,
-            supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false,
+            supports || [], images || [], expiryinfo, subcategory_id, specifications, activeVal !== false,
             sizes || ['XS', 'S', 'M', 'L'], colors || ['Default'], fabric || '', fit_type || '', style_code || ''
         ]
     );
@@ -224,10 +225,11 @@ exports.updateProduct = async (id, product) => {
         productname, title, description, shortdescription, price, originalprice,
         discount, category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code
+        expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code
     } = product;
 
     const productTitle = title || productname;
+    const activeVal = active !== undefined ? active : is_active;
 
     const result = await pool.query(
         `UPDATE products 
@@ -238,12 +240,12 @@ exports.updateProduct = async (id, product) => {
             quantity = COALESCE($17, quantity), stock_quantity = COALESCE($17, stock_quantity),
             supports = COALESCE($18, supports), product_images = COALESCE($19, product_images), images = COALESCE($19, images),
             expiryinfo = COALESCE($20, expiryinfo), subcategory_id = COALESCE($21, subcategory_id), specifications = COALESCE($22, specifications),
-            active = COALESCE($23, active), is_active = COALESCE($23, is_active),
+            is_active = COALESCE($23, is_active),
             sizes = COALESCE($24, sizes), colors = COALESCE($25, colors), fabric = COALESCE($26, fabric), fit_type = COALESCE($27, fit_type), style_code = COALESCE($28, style_code),
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
-        [id, productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, sizes, colors, fabric, fit_type, style_code]
+        [id, productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, activeVal, sizes, colors, fabric, fit_type, style_code]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
@@ -256,7 +258,7 @@ exports.deleteProduct = async (id) => {
 exports.toggleProductStatus = async (id) => {
     const result = await pool.query(`
         UPDATE products 
-        SET active = NOT active, is_active = NOT is_active, updated_at = NOW() 
+        SET is_active = NOT COALESCE(is_active, true), updated_at = NOW() 
         WHERE product_id = $1::integer OR id = $1::integer 
         RETURNING *
     `, [id]);
