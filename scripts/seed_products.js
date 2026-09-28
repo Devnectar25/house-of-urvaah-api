@@ -6,16 +6,10 @@ const { Pool } = require('pg');
 require('dotenv').config({ path: 'c:/Urvaah Workspace/Urvaah-BA/.env' });
 
 const SEED_CATEGORIES = [
-  { id: 10, name: 'CLOTHING', description: 'Dresses, Blazers, Co-ord Sets, Tops, Knitwear & Outerwear' },
-  { id: 11, name: 'DRESSES', description: 'Silk & Satin Midis, Draped Maxis, Blazer Dresses & Minis' },
-  { id: 12, name: 'TOPS', description: 'Oversized Linen Shirts, Corset Tops, Blouses & Knit Tops' },
-  { id: 13, name: 'KNITWEAR', description: 'Cashmere Sweaters, Ribbed Knits, Cardigans & Vests' },
-  { id: 14, name: 'OUTERWEAR', description: 'Oversized Trench Coats, Blazers, Wool Overcoats & Jackets' },
-  { id: 15, name: 'TROUSERS', description: 'High-Waisted Wide Leg, Tailored Pants, Jeans & Satin Trousers' },
-  { id: 16, name: 'SHOES', description: 'Leather Ankle Boots, Mule Heels, Sandals & Loafers' },
-  { id: 17, name: 'BAGS & ACCESSORIES', description: 'Calfskin Shoulder Bags, Structured Totes, Belts & Jewelry' },
-  { id: 18, name: 'CO-ORD SETS', description: 'Monochrome Sets, Printed Ensembles & Corset Sets' },
-  { id: 19, name: 'NEW IN', description: 'Weekly Drop Capsule Collections & Runway Edits' }
+  { id: 1, name: 'CORSET TOPS', description: 'Embroidered, Contoured & Strapless Corset Tops' },
+  { id: 2, name: 'CO-ORD SETS', description: 'Matching Two-Piece Sets & Printed Ensembles' },
+  { id: 3, name: 'SUMMER DRESSES', description: 'Breezy Linen, Silk & Floral Summer Dresses' },
+  { id: 4, name: 'PARTY WEAR', description: 'Glamorous Cocktail Dresses & Evening Wear' }
 ];
 
 const SEED_PRODUCTS = [
