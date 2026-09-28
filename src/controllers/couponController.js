@@ -1,11 +1,37 @@
 const couponService = require('../services/couponService');
 
+const handleSaveError = (error, res, isEdit = false) => {
+    console.error(`[CouponController ${isEdit ? 'Update' : 'Create'} Error]:`, error);
+
+    const isValidationOrBusiness = [
+        'Coupon code already exists',
+        'Coupon not found',
+        'discount_type must be one of',
+        'discount_value is required',
+        'discount_value cannot be negative',
+        'Percentage discount cannot exceed 100%',
+        'Minimum order value must be 0 or more',
+        'Minimum order value can have at most 2 decimal places',
+        'Fixed discount cannot be equal to or greater than minimum order value',
+        'expiry_date is required',
+        'expiry_date must be a future date',
+        'apply_to must be one of'
+    ].some(msg => error.message && error.message.includes(msg));
+
+    if (isValidationOrBusiness) {
+        const statusCode = error.message === 'Coupon not found' ? 404 : 400;
+        return res.status(statusCode).json({ success: false, message: error.message });
+    }
+
+    return res.status(400).json({ success: false, message: 'Could not save the coupon. Please try again.' });
+};
+
 exports.createCoupon = async (req, res) => {
     try {
         const coupon = await couponService.createCoupon(req.body);
         res.status(201).json({ success: true, data: coupon });
     } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        handleSaveError(error, res, false);
     }
 };
 
@@ -14,7 +40,7 @@ exports.updateCoupon = async (req, res) => {
         const result = await couponService.updateCoupon(req.params.id, req.body);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
-        res.status(error.message === 'Coupon not found' ? 404 : 400).json({ success: false, message: error.message });
+        handleSaveError(error, res, true);
     }
 };
 
