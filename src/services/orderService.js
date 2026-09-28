@@ -376,8 +376,7 @@ exports.getCancelledOrdersStats = async () => {
         `SELECT 
             COUNT(*) FILTER (
                 WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved')
-                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled'))
-                ) AND LOWER(payment_method) != 'cod'
+                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id)) AND LOWER(payment_method) != 'cod'
             ) as total_cancelled,
             COUNT(*) FILTER (WHERE refund_status = 'Pending' AND LOWER(payment_method) != 'cod') as pending_refunds
          FROM orders`
@@ -653,43 +652,34 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
 };
 
 exports.getOrderStats = async () => {
-    // Metric logic:
-    // Successful = COD (any status) OR Non-COD with payment processed (Paid/Completed)
-    // Potential = Non-COD with payment NOT processed (Pending) — basically abandoned session
     const result = await pool.query(
         `SELECT 
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE payment_method != 'cod' AND payment_status = 'Pending') as potential_users,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as active,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending') as pending,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing') as processing,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Shipped', 'Confirmed')) as shipped,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Out for Delivery') as out_for_delivery,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered') as delivered,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')) as canceled,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending') as pending_payment,
-            COUNT(*) FILTER (WHERE status = 'Return Request Processing') as return_requests,
-            COUNT(*) FILTER (WHERE status = 'Replacement Request Processing') as replacement_requests,
-            COUNT(*) FILTER (WHERE status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED'))) as cancellation_requests
+            COUNT(*)::int as total,
+            COUNT(*) FILTER (WHERE status ILIKE 'Pending' OR status ILIKE 'Placed')::int as pending,
+            COUNT(*) FILTER (WHERE status ILIKE 'Processing' OR status ILIKE 'Confirmed' OR status ILIKE 'Packed')::int as processing,
+            COUNT(*) FILTER (WHERE status ILIKE 'Shipped' OR status ILIKE 'Dispatched')::int as shipped,
+            COUNT(*) FILTER (WHERE status ILIKE 'Out for Delivery')::int as out_for_delivery,
+            COUNT(*) FILTER (WHERE status ILIKE 'Delivered')::int as delivered,
+            COUNT(*) FILTER (WHERE status ILIKE 'Cancelled' OR status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED')::int as cancelled,
+            COUNT(*) FILTER (WHERE status ILIKE 'Returned' OR status ILIKE 'Return%' OR is_returned_order = true)::int as returns,
+            COUNT(*) FILTER (WHERE status ILIKE 'Exchanged' OR status ILIKE 'Exchange%' OR return_type = 'exchange')::int as exchanges,
+            COUNT(*) FILTER (WHERE payment_status ILIKE 'Pending' OR payment_status ILIKE 'Failed')::int as pending_payment
          FROM orders`
     );
 
-    const stats = result.rows[0];
+    const stats = result.rows[0] || {};
     return {
-        total: parseInt(stats.total),
-        potentialUsers: parseInt(stats.potential_users),
-        active: parseInt(stats.active),
-        pending: parseInt(stats.pending),
-        processing: parseInt(stats.processing),
+        total: parseInt(stats.total || 0),
+        pending: parseInt(stats.pending || 0),
+        processing: parseInt(stats.processing || 0),
         shipped: parseInt(stats.shipped || 0),
         outForDelivery: parseInt(stats.out_for_delivery || 0),
-        delivered: parseInt(stats.delivered),
-        canceled: parseInt(stats.canceled),
-        pendingPayment: parseInt(stats.pending_payment),
-        returnRequests: parseInt(stats.return_requests || 0),
-        replacementRequests: parseInt(stats.replacement_requests || 0),
-        cancellationRequests: parseInt(stats.cancellation_requests || 0),
-        allRecordsCount: parseInt(stats.total) // total rows in DB
+        delivered: parseInt(stats.delivered || 0),
+        cancelled: parseInt(stats.cancelled || 0),
+        canceled: parseInt(stats.cancelled || 0),
+        returns: parseInt(stats.returns || 0),
+        exchanges: parseInt(stats.exchanges || 0),
+        pendingPayment: parseInt(stats.pending_payment || 0)
     };
 };
 
@@ -1081,48 +1071,52 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         // Fallback for Return/Replace item statuses when itemIds is NOT provided
         if (!itemIds || itemIds.length === 0) {
-            if (status === 'Return Approved') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Return Approved' 
-                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
-                );
-            } else if (status === 'Return Rejected') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Return Rejected' 
-                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
-                );
-            } else if (status === 'Replace Rejected') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Replace Rejected' 
-                     WHERE order_id = $1 AND (status = 'Replacement Request Processing' OR status = 'Replace Requested')`,
-                    [orderId]
-                );
-            } else if (status === 'Received at Homved') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Received at Homved' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
-                );
-            } else if (status === 'Refunded') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Refunded' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
-                );
-            } else if (status === 'Returned') {
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Returned' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
-                );
+            try {
+                if (status === 'Return Approved') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Return Approved' 
+                         WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                        [orderId]
+                    );
+                } else if (status === 'Return Rejected') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Return Rejected' 
+                         WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                        [orderId]
+                    );
+                } else if (status === 'Replace Rejected') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Replace Rejected' 
+                         WHERE order_id = $1 AND (status = 'Replacement Request Processing' OR status = 'Replace Requested')`,
+                        [orderId]
+                    );
+                } else if (status === 'Received at Homved') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Received at Homved' 
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                        [orderId]
+                    );
+                } else if (status === 'Refunded') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Refunded' 
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                        [orderId]
+                    );
+                } else if (status === 'Returned') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Returned' 
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                        [orderId]
+                    );
+                }
+            } catch (itemErr) {
+                console.warn(`[OrderService] Non-fatal item sync warning for order ${orderId}:`, itemErr.message);
             }
         }
 
@@ -1158,12 +1152,16 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     });
                 }
 
-                await client.query(
-                    `UPDATE order_items 
-                     SET status = $1 
-                     WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`,
-                    [status, orderId, effectiveExcluded]
-                );
+                try {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = $1 
+                         WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`,
+                        [status, orderId, effectiveExcluded]
+                    );
+                } catch (itemErr) {
+                    console.warn(`[OrderService] Non-fatal item sync warning for order ${orderId}:`, itemErr.message);
+                }
             }
         }
 
