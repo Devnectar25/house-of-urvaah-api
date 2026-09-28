@@ -196,25 +196,31 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 
 exports.createProduct = async (product) => {
     const {
-        productname, title, description, shortdescription, price, originalprice,
-        discount, category_id, brand, image, instock, promoted,
-        benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code
+        productname, title, description, price, originalprice, sale_price,
+        category_id, brand, image, image_url, images, promoted, is_featured,
+        quantity, stock_quantity, stock, active, is_active, sizes, colors,
+        fabric, fit_type, care_instructions, style_code, subcategory_id
     } = product;
 
     const productTitle = title || productname || '';
     const activeVal = active !== undefined ? active : (is_active !== undefined ? is_active : true);
+    const origPrice = originalprice ?? sale_price ?? price;
+    const imgUrl = image_url || image || (Array.isArray(images) ? images[0] : '');
+    const isFeatured = promoted !== undefined ? promoted : (is_featured || false);
+    const stockQty = stock_quantity ?? quantity ?? stock ?? 0;
+    const parsedCatId = category_id ? parseInt(category_id) : null;
+    const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : null;
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, shortdescription, price, originalprice, discount, category_id, brand, image, image_url, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, images, expiryinfo, subcategory_id, specifications, is_active, sizes, colors, fabric, fit_type, style_code, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), NOW()) 
+        (title, description, price, sale_price, category_id, brand, image_url, images, is_featured, is_active, stock_quantity, stock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()) 
         RETURNING *`,
         [
-            productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image,
-            instock !== false, promoted || false, benefits, ingredients, usage, directions, quantity || 0,
-            supports || [], images || [], expiryinfo, subcategory_id, specifications, activeVal !== false,
-            sizes || ['XS', 'S', 'M', 'L'], colors || ['Default'], fabric || '', fit_type || '', style_code || ''
+            productTitle, description || '', price || 0, origPrice, parsedCatId,
+            brand || 'House of Urvaah', imgUrl, images || [], isFeatured, activeVal !== false,
+            stockQty, sizes || ['XS', 'S', 'M', 'L'], colors || ['Default'],
+            fabric || '', fit_type || '', care_instructions || '', style_code || '', parsedSubcatId
         ]
     );
     return mapProduct(result.rows[0]);
@@ -222,30 +228,50 @@ exports.createProduct = async (product) => {
 
 exports.updateProduct = async (id, product) => {
     const {
-        productname, title, description, shortdescription, price, originalprice,
-        discount, category_id, brand, image, instock, promoted,
-        benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, is_active, sizes, colors, fabric, fit_type, style_code
+        productname, title, description, price, originalprice, sale_price,
+        category_id, brand, image, image_url, images, promoted, is_featured,
+        quantity, stock_quantity, stock, active, is_active, sizes, colors,
+        fabric, fit_type, care_instructions, style_code, subcategory_id
     } = product;
 
     const productTitle = title || productname;
     const activeVal = active !== undefined ? active : is_active;
+    const origPrice = originalprice ?? sale_price;
+    const imgUrl = image_url || image;
+    const isFeatured = promoted !== undefined ? promoted : is_featured;
+    const stockQty = stock_quantity ?? quantity ?? stock;
+    const parsedCatId = category_id ? parseInt(category_id) : null;
+    const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : null;
 
     const result = await pool.query(
         `UPDATE products 
-        SET title = COALESCE($2, title), description = COALESCE($3, description), shortdescription = COALESCE($4, shortdescription), price = COALESCE($5, price), originalprice = COALESCE($6, originalprice), 
-            discount = COALESCE($7, discount), category_id = COALESCE($8, category_id), brand = COALESCE($9, brand), image = COALESCE($10, image), image_url = COALESCE($10, image_url), instock = COALESCE($11, instock), promoted = COALESCE($12, promoted),
-            benefits = COALESCE($13, benefits), ingredients = COALESCE($14, ingredients), 
-            usage = COALESCE($15, usage), directions = COALESCE($16, directions),
-            quantity = COALESCE($17, quantity), stock_quantity = COALESCE($17, stock_quantity),
-            supports = COALESCE($18, supports), product_images = COALESCE($19, product_images), images = COALESCE($19, images),
-            expiryinfo = COALESCE($20, expiryinfo), subcategory_id = COALESCE($21, subcategory_id), specifications = COALESCE($22, specifications),
-            is_active = COALESCE($23, is_active),
-            sizes = COALESCE($24, sizes), colors = COALESCE($25, colors), fabric = COALESCE($26, fabric), fit_type = COALESCE($27, fit_type), style_code = COALESCE($28, style_code),
+        SET title = COALESCE($2, title),
+            description = COALESCE($3, description),
+            price = COALESCE($4, price),
+            sale_price = COALESCE($5, sale_price),
+            category_id = COALESCE($6, category_id),
+            brand = COALESCE($7, brand),
+            image_url = COALESCE($8, image_url),
+            images = COALESCE($9, images),
+            is_featured = COALESCE($10, is_featured),
+            is_active = COALESCE($11, is_active),
+            stock_quantity = COALESCE($12, stock_quantity),
+            stock = COALESCE($12, stock),
+            sizes = COALESCE($13, sizes),
+            colors = COALESCE($14, colors),
+            fabric = COALESCE($15, fabric),
+            fit_type = COALESCE($16, fit_type),
+            care_instructions = COALESCE($17, care_instructions),
+            style_code = COALESCE($18, style_code),
+            subcategory_id = COALESCE($19, subcategory_id),
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
-        [id, productTitle, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, activeVal, sizes, colors, fabric, fit_type, style_code]
+        [
+            id, productTitle, description, price, origPrice, parsedCatId,
+            brand, imgUrl, images, isFeatured, activeVal, stockQty,
+            sizes, colors, fabric, fit_type, care_instructions, style_code, parsedSubcatId
+        ]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
