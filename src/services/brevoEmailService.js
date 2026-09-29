@@ -1,21 +1,27 @@
 const https = require('https');
 
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'concierge@houseofurvaah.com';
-const SENDER_NAME = process.env.BREVO_SENDER_NAME || 'House of Urvaah Atelier';
-
 /**
  * Send Transactional Email via Brevo API v3
  */
 const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
-  if (!BREVO_API_KEY) {
-    console.warn('[Brevo Email] BREVO_API_KEY is not set. Email notification logged to console:');
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.SENDER_EMAIL || process.env.BREVO_SENDER_EMAIL || 'concierge@houseofurvaah.com';
+  const senderName = process.env.SENDER_NAME || process.env.BREVO_SENDER_NAME || 'House of Urvaah Atelier';
+
+  console.log(`[Brevo Email Request] Initiating transactional email:`);
+  console.log(`  To: ${toEmail}`);
+  console.log(`  Sender: "${senderName}" <${senderEmail}>`);
+  console.log(`  Subject: ${subject}`);
+  console.log(`  API Key Present: ${!!apiKey}`);
+
+  if (!apiKey) {
+    console.warn('[Brevo Email Error] BREVO_API_KEY environment variable is NOT set. Email notification logged as mock:');
     console.log(`[Brevo Email Mock] To: ${toEmail}, Subject: ${subject}`);
-    return { success: true, mock: true };
+    return { success: false, error: 'BREVO_API_KEY environment variable is missing' };
   }
 
   const payload = JSON.stringify({
-    sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+    sender: { name: senderName, email: senderEmail },
     to: [{ email: toEmail, name: toName || toEmail }],
     subject: subject,
     htmlContent: htmlContent
@@ -27,7 +33,7 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
       {
         method: 'POST',
         headers: {
-          'api-key': BREVO_API_KEY,
+          'api-key': apiKey,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)
         }
@@ -36,12 +42,15 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
         let body = '';
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
+          console.log(`[Brevo API Response] HTTP Status: ${res.statusCode}`);
+          console.log(`[Brevo API Response] Body: ${body}`);
+
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            console.log(`[Brevo Email] Successfully sent email to ${toEmail}`);
-            resolve({ success: true, data: body });
+            console.log(`[Brevo Email Success] Successfully dispatched email to ${toEmail}`);
+            resolve({ success: true, statusCode: res.statusCode, data: body });
           } else {
-            console.error(`[Brevo Email Error] Status ${res.statusCode}:`, body);
-            resolve({ success: false, error: body });
+            console.error(`[Brevo Email Failed] Status ${res.statusCode}: ${body}`);
+            resolve({ success: false, statusCode: res.statusCode, error: body });
           }
         });
       }
@@ -197,4 +206,3 @@ module.exports = {
   sendPasswordResetEmail,
   sendOtpEmail
 };
-
