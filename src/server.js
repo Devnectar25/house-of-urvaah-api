@@ -35,7 +35,11 @@ if (require.main === module) {
     const server = app.listen(PORT, () => {
         console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
     }).on('error', (err) => {
-        console.error('❌ Server startup error:', err);
+        if (err.code === 'EADDRINUSE') {
+            console.error(`❌ Port ${PORT} is already in use — a previous server instance may still be running. Please stop it and try again.`);
+        } else {
+            console.error('❌ Server startup error:', err.message);
+        }
         process.exit(1);
     });
 

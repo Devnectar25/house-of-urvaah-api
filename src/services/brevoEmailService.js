@@ -5,8 +5,8 @@ const https = require('https');
  */
 const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
   const apiKey = process.env.BREVO_API_KEY;
-  const senderEmail = process.env.SENDER_EMAIL || process.env.BREVO_SENDER_EMAIL || 'concierge@houseofurvaah.com';
-  const senderName = process.env.SENDER_NAME || process.env.BREVO_SENDER_NAME || 'House of Urvaah Atelier';
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SENDER_EMAIL || 'devnectar27@gmail.com';
+  const senderName = process.env.BREVO_SENDER_NAME || process.env.SENDER_NAME || 'House of Urvaah';
 
   console.log(`[Brevo Email Request] Initiating transactional email:`);
   console.log(`  To: ${toEmail}`);
