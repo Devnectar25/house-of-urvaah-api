@@ -108,7 +108,13 @@ exports.sendOtp = async (email) => {
 
     // 4. Send email via Brevo API
     const brevo = require('./brevoEmailService');
-    await brevo.sendOtpEmail(cleanEmail, otp);
+    console.log(`[OTP Service] Calling sendOtpEmail for ${cleanEmail}...`);
+    const brevoResult = await brevo.sendOtpEmail(cleanEmail, otp);
+    console.log(`[OTP Service] Brevo dispatch result:`, JSON.stringify(brevoResult, null, 2));
+
+    if (!brevoResult.success) {
+        throw new Error(`Failed to deliver OTP email: ${brevoResult.error || 'Brevo API error'}`);
+    }
 
     console.log(`[OTP Service] Successfully sent OTP to ${cleanEmail}`);
 
