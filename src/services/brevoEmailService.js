@@ -146,8 +146,55 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
   });
 };
 
+/**
+ * Branded OTP Email Template
+ */
+const sendOtpEmail = async (email, otp) => {
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 20px; }
+        .container { max-width: 500px; margin: 0 auto; background: #ffffff; border: 1px solid #E5E5E5; padding: 40px; text-align: center; }
+        .logo { font-size: 22px; font-weight: 300; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 25px; color: #111; }
+        .title { font-size: 16px; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 15px; color: #111111; }
+        .otp-box { font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #111111; background-color: #FAF8F3; padding: 18px 24px; border: 1px solid #E5E5E5; margin: 25px 0; display: inline-block; }
+        .content { font-size: 13px; line-height: 1.8; color: #555555; margin-bottom: 25px; text-align: center; }
+        .footer { margin-top: 30px; font-size: 10px; letter-spacing: 0.2em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="logo">HOUSE OF URVAAH</div>
+        <div class="title">VERIFICATION CODE</div>
+        <div class="content">
+          Please use the following 6-digit verification code to complete your authentication:
+        </div>
+        <div class="otp-box">${otp}</div>
+        <div class="content">
+          This code is valid for <strong>10 minutes</strong>. For your security, do not share this code with anyone.
+        </div>
+        <div class="footer">
+          HOUSE OF URVAAH CONCIERGE &bull; SECURE SINGLE SIGN-ON
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendBrevoEmail({
+    toEmail: email,
+    subject: `Your Verification Code: ${otp} - House of Urvaah`,
+    htmlContent
+  });
+};
+
 module.exports = {
   sendBrevoEmail,
   sendWelcomeEmail,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  sendOtpEmail
 };
+

@@ -7,13 +7,13 @@ const subAdminController = require('../controllers/subAdminController');
 const { protect, authorize } = require('../middlewares/authMiddleware');
 const { getClientUrl } = require('../utils/urlHelper');
 
-
-router.post('/register', authController.register);
-router.post('/login', authController.login);
+// --- OTP AUTHENTICATION FLOW (SINGLE LOGIN/SIGNUP FLOW) ---
+router.post('/send-otp', authController.sendOtp);
 router.post('/verify-otp', authController.verifyOtp);
-router.post('/resend-otp', authController.resendOtp);
-router.post('/check-email', authController.checkEmail);
-router.post('/send-welcome', authController.sendWelcome);
+router.post('/complete-signup', authController.completeSignup);
+router.post('/logout', authController.logout);
+
+// Admin login
 router.post('/admin/login', authController.adminLogin);
 
 // Sub-admin management routes
@@ -23,18 +23,14 @@ router.put('/admin/subadmins/:id', protect, authorize('admin'), subAdminControll
 router.delete('/admin/subadmins/:id', protect, authorize('admin'), subAdminController.deleteSubAdmin);
 router.get('/admin/audit-logs', protect, authorize('admin'), subAdminController.getAuditLogs);
 
-
-
 // --- GOOGLE OAUTH ---
 router.get('/google', (req, res, next) => {
     const state = crypto.randomBytes(32).toString('hex');
     req.session = req.session || {};
     req.session.oauth_state = state;
-    // Capture redirect URL if provided
     if (req.query.redirect) {
         req.session.returnTo = req.query.redirect;
     }
-    // Dynamically resolve client URL and store in session
     req.session.clientUrl = getClientUrl(req);
     req.session.save((err) => {
         if (err) return next(err);
@@ -63,11 +59,9 @@ router.get('/facebook', (req, res, next) => {
     const state = crypto.randomBytes(32).toString('hex');
     req.session = req.session || {};
     req.session.oauth_state_facebook = state;
-    // Capture redirect URL if provided
     if (req.query.redirect) {
         req.session.returnTo = req.query.redirect;
     }
-    // Dynamically resolve client URL and store in session
     req.session.clientUrl = getClientUrl(req);
     req.session.save((err) => {
         if (err) return next(err);
@@ -91,10 +85,7 @@ router.get('/facebook/callback', (req, res, next) => {
     })(req, res, next);
 }, authController.socialCallback);
 
-// Debug: decode current token and return payload
-router.get('/me', protect, (req, res) => {
-    res.json({ success: true, user: req.user });
-});
-
+// Current user profile route
+router.get('/me', protect, authController.getCurrentUser);
 
 module.exports = router;

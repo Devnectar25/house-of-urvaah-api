@@ -5,10 +5,12 @@ exports.protect = (req, res, next) => {
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         token = req.headers.authorization?.split(' ')[1];
+    } else if (req.cookies && req.cookies.token) {
+        token = req.cookies.token;
     }
 
     if (!token) {
-        console.warn(`[Auth] No token on ${req.method} ${req.path}. Headers: ${Object.keys(req.headers).join(', ')}`);
+        console.warn(`[Auth] No token on ${req.method} ${req.path}.`);
         return res.status(401).json({ success: false, message: 'Not authorized to access this route' });
     }
 

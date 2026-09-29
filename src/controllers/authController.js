@@ -1,95 +1,169 @@
 const authService = require('../services/authService');
 const jwt = require('jsonwebtoken');
 const { getClientUrl } = require('../utils/urlHelper');
+const pool = require('../config/db');
 
-
-exports.register = async (req, res) => {
-    try {
-        const result = await authService.registerUser(req.body);
-        res.status(201).json({ success: true, ...result });
-    } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+const setAuthCookie = (res, token) => {
+    if (res && typeof res.cookie === 'function') {
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
     }
 };
 
-exports.login = async (req, res) => {
+/**
+ * Step 1: Send OTP to email
+ * POST /api/auth/send-otp
+ */
+exports.sendOtp = async (req, res) => {
     try {
-        const { email, password } = req.body;
-        const result = await authService.loginUser(email, password);
-        res.json({ success: true, ...result });
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email address is required' });
+        }
+
+        const result = await authService.sendOtp(email);
+        res.status(200).json({ success: true, ...result });
     } catch (error) {
-        res.status(401).json({ success: false, message: error.message });
+        console.error('[sendOtp Error]:', error.message);
+        const statusCode = error.message.includes('Too many') || error.message.includes('locked out') ? 429 : 400;
+        res.status(statusCode).json({ success: false, message: error.message });
     }
 };
 
+/**
+ * Step 2: Verify OTP
+ * POST /api/auth/verify-otp
+ */
 exports.verifyOtp = async (req, res) => {
     try {
         const { email, otp } = req.body;
 
-        // Validate required fields
         if (!email || !otp) {
-            console.error('[verifyOtp] Missing required fields:', { email: !!email, otp: !!otp });
             return res.status(400).json({
                 success: false,
-                message: 'Email and OTP are required',
-                details: { email: !email ? 'missing' : 'provided', otp: !otp ? 'missing' : 'provided' }
+                message: 'Email and OTP are required'
             });
         }
 
-        console.log(`[verifyOtp] Attempting to verify OTP for email: ${email}`);
         const result = await authService.verifyOtp(email, otp);
-        console.log(`[verifyOtp] Successfully verified OTP for email: ${email}`);
-        res.json({ success: true, ...result });
-    } catch (error) {
-        console.error('[verifyOtp] Error:', error.message);
-        res.status(400).json({ success: false, message: error.message });
-    }
-};
 
-exports.resendOtp = async (req, res) => {
-    try {
-        const { email } = req.body;
-        if (!email) {
-            return res.status(400).json({ success: false, message: 'Email is required' });
+        if (result.token) {
+            setAuthCookie(res, result.token);
         }
 
-        const result = await authService.resendOtp(email);
-        res.json({ success: true, ...result });
+        res.status(200).json({ success: true, ...result });
     } catch (error) {
-        console.error('[resendOtp] Error:', error.message);
+        console.error('[verifyOtp Error]:', error.message);
+        const statusCode = error.message.includes('locked out') ? 429 : 400;
+        res.status(statusCode).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Step 3: Complete Signup for first-time users
+ * POST /api/auth/complete-signup
+ */
+exports.completeSignup = async (req, res) => {
+    try {
+        const result = await authService.completeSignup(req.body);
+
+        if (result.token) {
+            setAuthCookie(res, result.token);
+        }
+
+        res.status(200).json({ success: true, ...result });
+    } catch (error) {
+        console.error('[completeSignup Error]:', error.message);
         res.status(400).json({ success: false, message: error.message });
     }
 };
 
+/**
+ * Logout and clear session cookie
+ * POST /api/auth/logout
+ */
+exports.logout = async (req, res) => {
+    try {
+        if (res && typeof res.clearCookie === 'function') {
+            res.clearCookie('token', {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+            });
+        }
+        res.status(200).json({ success: true, message: 'Logged out successfully' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Get current logged in user from session token / cookie
+ * GET /api/auth/me
+ */
+exports.getCurrentUser = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Not authenticated' });
+        }
+
+        const result = await pool.query(
+            "SELECT * FROM public.users WHERE username = $1 OR emailid = $1 LIMIT 1",
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const user = authService.formatUserResponse(result.rows[0]);
+        res.status(200).json({ success: true, user });
+    } catch (error) {
+        console.error('[getCurrentUser Error]:', error.message);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Admin Login
+ * POST /api/auth/admin/login
+ */
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;
         const ipAddress = req.ip || req.connection?.remoteAddress || '';
-        console.log(`[adminLogin] Attempt for username: ${username}`);
         const result = await authService.loginAdmin(username, password, ipAddress);
-        console.log(`[adminLogin] Success for username: ${username}`);
+
+        if (result.token) {
+            setAuthCookie(res, result.token);
+        }
+
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error(`[adminLogin] FAILED: ${error.message}`, error.stack);
+        console.error(`[adminLogin Error]: ${error.message}`);
         res.status(401).json({ success: false, message: error.message });
     }
 };
 
+/**
+ * Social Auth Callback
+ */
 exports.socialCallback = async (req, res) => {
     try {
-        const user = req.user; // Passport attaches user here
-        const token = jwt.sign(
-            { id: user.username, role: 'user' },
-            process.env.JWT_SECRET || 'your_super_secret_key',
-            { expiresIn: '24h' }
-        );
+        const user = req.user;
+        const token = authService.generateToken(user.username || user.emailid, 'user');
+        setAuthCookie(res, token);
 
         const redirectPath = req.session.returnTo || '/';
-        console.log(`[socialCallback] Redirecting to: ${redirectPath}`);
         delete req.session.returnTo;
 
         const clientUrl = req.session.clientUrl || getClientUrl(req);
-        delete req.session.clientUrl; // clean up session
+        delete req.session.clientUrl;
 
         res.redirect(`${clientUrl}/auth/callback?token=${token}&redirect=${encodeURIComponent(redirectPath)}&user=${encodeURIComponent(JSON.stringify({
             id: user.username,
@@ -102,40 +176,7 @@ exports.socialCallback = async (req, res) => {
     } catch (error) {
         console.error("Social Auth Error:", error);
         const clientUrl = req.session?.clientUrl || getClientUrl(req);
-        delete req.session?.clientUrl; // clean up session if present
+        delete req.session?.clientUrl;
         res.redirect(`${clientUrl}/auth?error=SocialLoginFailed`);
     }
 };
-
-exports.checkEmail = async (req, res) => {
-    try {
-        const { email } = req.body;
-        if (!email) {
-            return res.status(400).json({ success: false, message: 'Email is required' });
-        }
-        const pool = require('../config/db');
-        const result = await pool.query("SELECT 1 FROM public.users WHERE emailid = $1 LIMIT 1", [email.toLowerCase().trim()]);
-        const exists = result.rows.length > 0;
-        return res.json({ success: true, exists });
-    } catch (error) {
-        console.error('[checkEmail] Error:', error.message);
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-exports.sendWelcome = async (req, res) => {
-    try {
-        const { email, name } = req.body;
-        if (!email) {
-            return res.status(400).json({ success: false, message: 'Email is required' });
-        }
-        const brevo = require('../services/brevoEmailService');
-        await brevo.sendWelcomeEmail(email, name);
-        return res.json({ success: true, message: 'Welcome email triggered' });
-    } catch (error) {
-        console.error('[sendWelcome] Error:', error.message);
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-
