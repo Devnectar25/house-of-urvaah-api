@@ -136,6 +136,8 @@ app.get('/api/admin/cancelled-orders/stats', protect, authorize('admin'), orderC
 app.get('/api/admin/refund-desk/stats', protect, authorize('admin'), orderController.getCancelledOrdersStats); // Alias
 app.patch('/api/admin/order/:id/refund-status', protect, authorize('admin'), orderController.updateRefundStatus);
 app.patch('/api/admin/refund/:id/status', protect, authorize('admin'), orderController.updateRefundStatus); // Alias
+app.get('/api/admin/order/:id/payment-details', protect, authorize('admin'), orderController.getRefundPaymentDetails);
+app.get('/api/admin/refund/:id/payment-details', protect, authorize('admin'), orderController.getRefundPaymentDetails); // Alias
 app.post('/api/admin/refunds/initiate', protect, authorize('admin'), require('./controllers/refundController').initiateRazorpayRefund);
 app.post('/api/admin/order/:id/restock', protect, authorize('admin'), orderController.restockOrder);
 

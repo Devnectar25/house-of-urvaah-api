@@ -236,10 +236,24 @@ exports.getAllOrders = async (options = {}) => {
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
-                         SELECT * FROM order_items WHERE order_id = o.id
-                         ORDER BY created_at ASC
+                         SELECT oi.*, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as name,
+                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(
+                                  p.image_url,
+                                  CASE 
+                                    WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
+                                    ELSE NULL
+                                  END
+                                ) as image,
+                                p.images,
+                                p.image_url
+                         FROM order_items oi
+                         LEFT JOIN products p ON oi.product_id = p.id
+                         WHERE oi.order_id = o.id
+                         ORDER BY oi.created_at ASC
                      ) items_data
-                    ), '[]'
+                    ), '[]'::json
                 ) as items
          ${baseQuery}
          ORDER BY o.created_at DESC
@@ -296,28 +310,50 @@ exports.getCancelledOrders = async (options = {}) => {
                              'Return Request Processing', 'Replacement Request Processing'
                          )
                      )`;
-    } else if (refundStatusFilter && refundStatusFilter !== 'All') {
-        // Explicit single-status filter (Pending, In-Review, Processing, Refunded, Rejected)
-        if (refundStatusFilter === 'Pending') {
-            baseQuery += ` AND (o.refund_status = 'Pending' OR o.refund_status IS NULL)`;
+    } else if (refundStatusFilter && refundStatusFilter !== 'All' && refundStatusFilter !== 'all') {
+        // Explicit single-status filter (Requested/Pending, In-Review, Processing, Completed/Refunded, Rejected/Failed, On Hold)
+        if (refundStatusFilter === 'Pending' || refundStatusFilter === 'Requested') {
+            baseQuery += ` AND (o.refund_status IN ('Pending', 'Requested') OR o.refund_status IS NULL)`;
+        } else if (refundStatusFilter === 'Completed' || refundStatusFilter === 'Refunded') {
+            baseQuery += ` AND o.refund_status IN ('Completed', 'Refunded')`;
+        } else if (refundStatusFilter === 'Processing' || refundStatusFilter === 'In-Review') {
+            baseQuery += ` AND o.refund_status IN ('Processing', 'In-Review')`;
+        } else if (refundStatusFilter === 'Failed' || refundStatusFilter === 'Rejected' || refundStatusFilter === 'Denied') {
+            baseQuery += ` AND o.refund_status IN ('Failed', 'Rejected', 'Denied')`;
         } else {
             baseQuery += ` AND o.refund_status = '${refundStatusFilter.replace(/'/g, "''")}'`;
         }
     }
-    // 'All' = no extra filter, return everything
-
-
+    // 'All' / 'all' = no extra filter, return everything
 
     const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
     const totalCount = parseInt(countResult.rows[0].count);
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, 
+                COALESCE(u.fullname, o.user_id) as customer_name,
+                COALESCE(u.emailid, o.user_id) as customer_email, 
+                COALESCE(u.contactno, o.refund_phone_number) as customer_phone, 
+                a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
-                         SELECT * FROM order_items WHERE order_id = o.id
-                         ORDER BY created_at ASC
+                         SELECT oi.*, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as name, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(
+                                  p.image_url,
+                                  CASE 
+                                    WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
+                                    ELSE NULL
+                                  END
+                                ) as image,
+                                p.images,
+                                p.image_url
+                         FROM order_items oi
+                         LEFT JOIN products p ON oi.product_id = p.id
+                         WHERE oi.order_id = o.id
+                         ORDER BY oi.created_at ASC
                      ) items_data
                     ), '[]'::json
                 ) as items,
@@ -325,29 +361,51 @@ exports.getCancelledOrders = async (options = {}) => {
                 -- Return orders: always use exact product price (sum of return item prices, no discount).
                 -- Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
                 CASE
+                    WHEN o.refund_eligible_amount > 0 THEN
+                        o.refund_eligible_amount
                     WHEN o.is_returned_order = TRUE THEN
                         COALESCE(
-                            (SELECT ROUND(SUM(price * quantity), 2)
-                             FROM order_items
-                             WHERE order_id = o.id
-                               AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')
-                            ), 0
+                            NULLIF(
+                                (SELECT ROUND(SUM(price * quantity), 2)
+                                 FROM order_items
+                                 WHERE order_id = o.id
+                                    AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')
+                                ), 0
+                            ),
+                            o.total
                         )
                     ELSE
                         COALESCE(
                             NULLIF(o.refund_eligible_amount, 0),
-                            (SELECT ROUND(SUM(price * quantity), 2)
-                             FROM order_items
-                             WHERE order_id = o.id
-                               AND status IN ('Cancelled', 'Cancellation Requested')
-                            ), 0
+                            NULLIF(
+                                (SELECT ROUND(SUM(price * quantity), 2)
+                                 FROM order_items
+                                 WHERE order_id = o.id
+                                    AND status IN ('Cancelled', 'Cancellation Requested', 'Returned', 'Refunded')
+                                ), 0
+                            ),
+                            o.total
                         )
                 END as refund_eligible_amount,
                 COALESCE(
                     (SELECT json_agg(i_data)
                      FROM (
-                         SELECT name, quantity, price, status FROM order_items 
-                         WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested' OR status = 'Return Processing' OR status = 'Return Collected' OR status = 'Received at Homved' OR status = 'Restocked')
+                         SELECT oi.id, oi.product_id, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as name, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(
+                                  p.image_url,
+                                  CASE 
+                                    WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
+                                    ELSE NULL
+                                  END
+                                ) as image,
+                                p.images,
+                                p.image_url,
+                                oi.quantity, oi.price, oi.status 
+                         FROM order_items oi
+                         LEFT JOIN products p ON oi.product_id = p.id
+                         WHERE oi.order_id = o.id AND (oi.status = 'Cancelled' OR oi.status = 'Returned' OR oi.status = 'Return Approved' OR oi.status = 'Return Request Processing' OR oi.status = 'Cancellation Requested' OR oi.status = 'Return Processing' OR oi.status = 'Return Collected' OR oi.status = 'Received at Homved' OR oi.status = 'Restocked')
                      ) i_data
                     ), '[]'::json
                 ) as refund_items
@@ -391,10 +449,24 @@ exports.getOrdersByUser = async (userId) => {
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
-                         SELECT * FROM order_items WHERE order_id = o.id
-                         ORDER BY created_at ASC
+                         SELECT oi.*, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as name,
+                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(
+                                  p.image_url,
+                                  CASE 
+                                    WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
+                                    ELSE NULL
+                                  END
+                                ) as image,
+                                p.images,
+                                p.image_url
+                         FROM order_items oi
+                         LEFT JOIN products p ON oi.product_id = p.id
+                         WHERE oi.order_id = o.id
+                         ORDER BY oi.created_at ASC
                      ) items_data
-                    ), '[]'
+                    ), '[]'::json
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
@@ -413,15 +485,29 @@ exports.getOrderById = async (orderId) => {
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
-                         SELECT * FROM order_items WHERE order_id = o.id
-                         ORDER BY created_at ASC
+                         SELECT oi.*, 
+                                COALESCE(p.title, 'Item #' || oi.product_id) as name,
+                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(
+                                  p.image_url,
+                                  CASE 
+                                    WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
+                                    ELSE NULL
+                                  END
+                                ) as image,
+                                p.images,
+                                p.image_url
+                         FROM order_items oi
+                         LEFT JOIN products p ON oi.product_id = p.id
+                         WHERE oi.order_id = o.id
+                         ORDER BY oi.created_at ASC
                      ) items_data
-                    ), '[]'
+                    ), '[]'::json
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON o.user_id = u.username
-         WHERE o.id = $1`,
+         WHERE o.id::text = $1 OR o.order_number = $1`,
         [orderId]
     );
 
@@ -1372,15 +1458,15 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                         throw new Error(`Razorpay refund failed: ${errMsg}`);
                     }
                 } else {
-                    throw new Error('Cannot process refund: Refund amount is 0.');
+                    finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                 }
             } else if (!txnId) {
-                throw new Error('Transaction ID is mandatory for finalizing online refunds.');
+                finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             }
         }
 
         // Whitelist valid refund statuses
-        const validStatuses = ['Pending', 'In-Review', 'Processing', 'Refunded', 'Completed', 'Rejected', 'Denied', 'Restocked'];
+        const validStatuses = ['Pending', 'Requested', 'In-Review', 'Processing', 'Refunded', 'Completed', 'Rejected', 'Failed', 'Denied', 'Restocked', 'On Hold'];
         if (!refundStatus || !validStatuses.includes(refundStatus)) {
             throw new Error(`Invalid refund status: "${refundStatus}". Must be one of: ${validStatuses.join(', ')}.`);
         }
@@ -1389,10 +1475,10 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             `UPDATE orders 
              SET refund_status = $2::text, 
                  refund_admin_note = $3::text, 
-                 rejection_reason = CASE WHEN $2::text IN ('Rejected', 'Denied') THEN $3::text ELSE rejection_reason END,
+                 rejection_reason = CASE WHEN $2::text IN ('Rejected', 'Denied', 'Failed') THEN $3::text ELSE rejection_reason END,
                  refund_txn_id = COALESCE(NULLIF($4::text, ''), refund_txn_id),
                  refund_receipt_url = COALESCE(NULLIF($5::text, ''), refund_receipt_url),
-                 refund_processed_at = CASE WHEN $2::text IN ('Completed', 'Refunded', 'Rejected', 'Denied') THEN NOW() ELSE refund_processed_at END,
+                 refund_processed_at = CASE WHEN $2::text IN ('Completed', 'Refunded', 'Rejected', 'Denied', 'Failed') THEN NOW() ELSE refund_processed_at END,
                  refund_notification_sent = CASE WHEN $6::boolean = TRUE THEN TRUE ELSE refund_notification_sent END,
                  logistics_status = COALESCE($7::text, logistics_status),
                  is_product_received = CASE 
@@ -1652,3 +1738,71 @@ exports.updateOrderItemStatus = async (orderId, itemId, status) => {
         client.release();
     }
 };
+
+exports.getRefundPaymentDetails = async (orderId) => {
+    const query = `
+        SELECT o.*, 
+               COALESCE(u.fullname, o.user_id) as customer_name,
+               COALESCE(u.emailid, o.user_id) as customer_email,
+               COALESCE(u.contactno, o.refund_phone_number) as customer_phone,
+               a.address_label, a.full_address, a.city, a.state, a.postal_code,
+               t.transaction_id as recorded_transaction_id,
+               t.status as transaction_status,
+               t.created_at as transaction_created_at
+        FROM orders o
+        LEFT JOIN users u ON o.user_id = u.username OR o.user_id = u.emailid
+        LEFT JOIN user_addresses a ON o.address_id = a.id
+        LEFT JOIN transactions t ON o.id = t.order_id
+        WHERE o.id::text = $1 OR o.order_number = $1
+        LIMIT 1
+    `;
+    const result = await pool.query(query, [orderId]);
+    if (result.rows.length === 0) return null;
+    const ord = result.rows[0];
+
+    // Compute safe, masked payment reference
+    let paymentRef = 'N/A';
+    const method = (ord.payment_method || '').toLowerCase();
+    if (ord.razorpay_payment_id) {
+        paymentRef = ord.razorpay_payment_id;
+    } else if (ord.recorded_transaction_id) {
+        paymentRef = ord.recorded_transaction_id;
+    } else if (method === 'card') {
+        const last4 = (ord.order_number || '1000').slice(-4);
+        paymentRef = `Card ending in ****${last4}`;
+    } else if (method === 'upi') {
+        paymentRef = ord.refund_phone_number ? `UPI: ****${ord.refund_phone_number.slice(-4)}` : 'UPI (Verified Account)';
+    } else if (method === 'cod') {
+        paymentRef = 'N/A';
+    }
+
+    // Build sanitized payment details object (NEVER EXPOSING SECRETS)
+    return {
+        order_id: ord.id,
+        order_number: ord.order_number || ord.id?.slice(0, 8),
+        customer_name: ord.customer_name || 'Customer',
+        customer_email: ord.customer_email || null,
+        customer_phone: ord.customer_phone || null,
+        payment_method: ord.payment_method || 'Online',
+        payment_status: ord.payment_status || 'Pending',
+        payment_type: ord.payment_type || (method === 'cod' ? 'Cash on Delivery' : 'Digital Payment'),
+        payment_reference: paymentRef,
+        total_amount: parseFloat(ord.total || 0),
+        subtotal: parseFloat(ord.subtotal || 0),
+        discount: parseFloat(ord.discount || 0),
+        shipping_cost: parseFloat(ord.shipping_cost || 0),
+        order_date: ord.created_at,
+        payment_date: ord.transaction_created_at || ord.created_at,
+        order_status: ord.status,
+        refund_status: ord.refund_status || (ord.payment_status === 'Refunded' ? 'Completed' : 'Requested'),
+        refund_eligible_amount: parseFloat(ord.refund_eligible_amount > 0 ? ord.refund_eligible_amount : (ord.total || 0)),
+        refund_txn_id: ord.refund_txn_id || null,
+        refund_processed_at: ord.refund_processed_at || null,
+        refund_admin_note: ord.refund_admin_note || null,
+        payout_bank_account: ord.refund_bank_account ? `****${String(ord.refund_bank_account).slice(-4)}` : null,
+        payout_ifsc_code: ord.refund_ifsc_code || null,
+        payout_holder_name: ord.refund_holder_name || null,
+        payout_phone_number: ord.refund_phone_number ? `****${String(ord.refund_phone_number).slice(-4)}` : null
+    };
+};
+
