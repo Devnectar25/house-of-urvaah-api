@@ -6,6 +6,7 @@ const { protect } = require('../middlewares/authMiddleware');
 router.use(protect);
 
 router.get('/', cartController.getCart);
+router.get('/:userId', cartController.getCart);
 router.post('/add', cartController.addToCart);
 router.post('/instant', cartController.instantCheckout);
 router.patch('/update', cartController.updateQuantity);
@@ -14,3 +15,4 @@ router.delete('/clear', cartController.clearCart);
 router.post('/sync', cartController.syncCart);
 
 module.exports = router;
+

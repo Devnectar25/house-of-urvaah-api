@@ -1,8 +1,15 @@
 const cartService = require('../services/cartService');
 
+const getUserId = (req) => {
+    return req.user?.id || req.params?.userId || req.body?.userId || req.query?.userId || null;
+};
+
 exports.getCart = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const cart = await cartService.getCart(userId);
         res.status(200).json({ success: true, data: cart });
     } catch (error) {
@@ -12,7 +19,10 @@ exports.getCart = async (req, res) => {
 
 exports.addToCart = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const { productId, quantity, setMode } = req.body;
         if (!productId) {
             return res.status(400).json({ success: false, message: 'Product ID is required' });
@@ -26,12 +36,14 @@ exports.addToCart = async (req, res) => {
 
 exports.instantCheckout = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const { productId, quantity } = req.body;
         if (!productId) {
             return res.status(400).json({ success: false, message: 'Product ID is required' });
         }
-        // HOM-11: Instant checkout now uses setMode: true to ensure quantity is exactly 'quantity' (usually 1)
         const item = await cartService.addToCart(userId, productId, quantity || 1, true);
         res.status(200).json({ success: true, data: item });
     } catch (error) {
@@ -41,7 +53,10 @@ exports.instantCheckout = async (req, res) => {
 
 exports.updateQuantity = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const { productId, quantity } = req.body;
         if (!productId || quantity === undefined) {
             return res.status(400).json({ success: false, message: 'Product ID and quantity are required' });
@@ -55,7 +70,10 @@ exports.updateQuantity = async (req, res) => {
 
 exports.removeFromCart = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const { productId } = req.params;
         const item = await cartService.removeFromCart(userId, productId);
         res.status(200).json({ success: true, data: item });
@@ -66,7 +84,10 @@ exports.removeFromCart = async (req, res) => {
 
 exports.clearCart = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         await cartService.clearCart(userId);
         res.status(200).json({ success: true, message: 'Cart cleared' });
     } catch (error) {
@@ -76,7 +97,10 @@ exports.clearCart = async (req, res) => {
 
 exports.syncCart = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = getUserId(req);
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID is required' });
+        }
         const { localItems } = req.body;
         await cartService.syncCart(userId, localItems);
         res.status(200).json({ success: true, message: 'Cart synced' });
@@ -84,3 +108,4 @@ exports.syncCart = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
