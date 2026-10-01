@@ -3,24 +3,76 @@ const pool = require('../config/db');
 exports.getUsers = async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT username, emailid, contactno, active, createdate 
-            FROM public.users
-            ORDER BY createdate DESC
+            SELECT 
+                u.username, 
+                u.emailid, 
+                u.fullname, 
+                u.contactno, 
+                u.active, 
+                u.createdate,
+                COALESCE(u.member_since, u.createdate) as member_since,
+                COUNT(DISTINCT o.id) as total_orders,
+                COALESCE(SUM(CASE WHEN o.status != 'Cancelled' THEN o.total ELSE 0 END), 0) as total_spent
+            FROM public.users u
+            LEFT JOIN public.orders o ON u.username = o.user_id OR LOWER(u.emailid) = LOWER(o.user_id)
+            GROUP BY u.username, u.emailid, u.fullname, u.contactno, u.active, u.createdate, u.member_since
+            ORDER BY u.createdate DESC
         `);
         
-        const mappedUsers = result.rows.map(row => ({
-            id: row.username,
-            name: row.username, // the id is username which often is email or name
-            email: row.emailid,
-            phone: row.contactno,
-            active: row.active,
-            createdAt: row.createdate
-        }));
+        // In-memory deduplication by normalized email address
+        const userMap = new Map();
+        for (const row of result.rows) {
+            const emailKey = (row.emailid || row.username || '').toLowerCase().trim();
+            if (!emailKey) continue;
 
+            if (userMap.has(emailKey)) {
+                const existing = userMap.get(emailKey);
+                existing.totalOrders += parseInt(row.total_orders) || 0;
+                existing.totalSpent += parseFloat(row.total_spent) || 0;
+                if ((!existing.phone || existing.phone === 'null') && row.contactno) {
+                    existing.phone = row.contactno;
+                }
+                if (row.fullname && row.fullname !== row.username) {
+                    existing.name = row.fullname;
+                }
+            } else {
+                userMap.set(emailKey, {
+                    id: row.username,
+                    name: row.fullname || row.username,
+                    email: row.emailid,
+                    phone: row.contactno,
+                    active: row.active !== false,
+                    createdAt: row.createdate || row.member_since,
+                    totalOrders: parseInt(row.total_orders) || 0,
+                    totalSpent: parseFloat(row.total_spent) || 0
+                });
+            }
+        }
+
+        const mappedUsers = Array.from(userMap.values());
         res.json({ success: true, count: mappedUsers.length, data: mappedUsers });
     } catch (error) {
         console.error('Error fetching users:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch users', error: error.message });
+    }
+};
+
+exports.toggleUserStatus = async (req, res) => {
+    try {
+        const { username } = req.params;
+        const userCheck = await pool.query('SELECT active FROM public.users WHERE username = $1', [username]);
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        const currentActive = userCheck.rows[0].active !== false;
+        const newActive = !currentActive;
+
+        await pool.query('UPDATE public.users SET active = $1 WHERE username = $2', [newActive, username]);
+
+        res.json({ success: true, message: `User status updated to ${newActive ? 'active' : 'inactive'}`, active: newActive });
+    } catch (error) {
+        console.error('Error toggling user status:', error);
+        res.status(500).json({ success: false, message: 'Failed to toggle user status', error: error.message });
     }
 };
 
