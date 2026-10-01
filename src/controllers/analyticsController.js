@@ -109,33 +109,7 @@ async function getTopCategories(req, res) {
 async function getAnalyticsDrilldown(req, res) {
   try {
     const { type, period, sortBy } = req.query;
-    let data = [];
-
-    switch (type) {
-      case 'total_users':
-        data = await analyticsService.getAllAnalyticsUsers(100);
-        break;
-      case 'active_users':
-        data = await analyticsService.getTopActiveUsers(period || '7d', 100);
-        break;
-      case 'orders':
-      case 'total_orders':
-      case 'total_revenue':
-      case 'revenue':
-        data = await analyticsService.getAnalyticsOrders(period || '7d', 100);
-        break;
-      case 'top_products':
-        data = await analyticsService.getTopProducts(period || '7d', 50, sortBy || 'revenue');
-        break;
-      case 'potential_users':
-        data = await analyticsService.getPotentialUsers(period || '7d', 100);
-        break;
-      case 'top_categories':
-        data = await analyticsService.getTopCategories(period || '7d', 50, sortBy || 'revenue');
-        break;
-      default:
-        return res.status(400).json({ success: false, message: 'Invalid drilldown type' });
-    }
+    const data = await analyticsService.getAnalyticsDrilldown(type, period || '7d', 100);
 
     res.status(200).json({
       success: true,

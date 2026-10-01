@@ -17,17 +17,44 @@ const mapProduct = (p) => {
     const galleryUrls = rawImagesArray.map(img => storageService.getPublicMediaUrl(img));
     const hoverImageUrl = galleryUrls.length > 1 ? galleryUrls[1] : mainImageUrl;
 
+    const currPrice = parseFloat(p.price) || 0;
+    const origPrice = parseFloat(p.sale_price || p.originalprice) || currPrice;
+    const calcDiscount = (origPrice > currPrice && origPrice > 0)
+        ? Math.round(((origPrice - currPrice) / origPrice) * 100)
+        : (parseFloat(p.discount) || 0);
+
+    let parsedSpecs = p.specifications || [];
+    if (typeof parsedSpecs === 'string') {
+        try { parsedSpecs = JSON.parse(parsedSpecs); } catch (e) { parsedSpecs = []; }
+    }
+
+    let parsedNameOpts = p.name_options || p.nameoptions || [];
+    if (typeof parsedNameOpts === 'string') {
+        try { parsedNameOpts = JSON.parse(parsedNameOpts); } catch (e) { parsedNameOpts = []; }
+    }
+    if (!Array.isArray(parsedNameOpts)) parsedNameOpts = [];
+
+    let parsedProdDetails = p.product_details || p.productdetails || [];
+    if (typeof parsedProdDetails === 'string') {
+        try { parsedProdDetails = JSON.parse(parsedProdDetails); } catch (e) { parsedProdDetails = []; }
+    }
+    if (!Array.isArray(parsedProdDetails)) parsedProdDetails = [];
+
     return {
         id: p.product_id?.toString() || p.id?.toString() || '',
-        name: p.productname || p.title || '',
+        name: p.title || p.productname || '',
+        title: p.title || p.productname || '',
         brand: p.brand_name || p.brand || 'House of Urvaah',
         category: p.category_name || 'CLOTHING',
         categoryId: p.category_id || '',
-        shortDescription: p.shortdescription || '',
+        category_id: p.category_id || '',
+        shortDescription: p.short_description || p.shortdescription || '',
+        short_description: p.short_description || p.shortdescription || '',
         description: p.description || '',
-        price: parseFloat(p.price) || 0,
-        originalPrice: parseFloat(p.originalprice || p.sale_price) || 0,
-        discount: parseFloat(p.discount) || 0,
+        price: currPrice,
+        originalPrice: origPrice,
+        discount: calcDiscount,
+        discountPercent: calcDiscount,
         rating: parseFloat(p.rating) || 0,
         reviews: parseInt(p.reviews_count || p.reviews) || 0,
         image: mainImageUrl,
@@ -42,18 +69,26 @@ const mapProduct = (p) => {
         directions: p.directions,
         supports: p.supports || [],
         expiryInfo: p.expiryinfo,
-        sizes: p.sizes || ['XS', 'S', 'M', 'L'],
-        colors: p.colors || ['Default'],
+        sizes: Array.isArray(p.sizes) ? p.sizes : (typeof p.sizes === 'string' ? [p.sizes] : ['XS', 'S', 'M', 'L']),
+        colors: Array.isArray(p.colors) ? p.colors : (typeof p.colors === 'string' ? [p.colors] : ['Default']),
         fabric: p.fabric || '',
         fitType: p.fit_type || '',
         careInstructions: p.care_instructions || '',
+        care_instructions: p.care_instructions || '',
         sizeChartUrl: p.size_chart_url || '',
         styleCode: p.style_code || '',
         subCategory: p.subcategory_name || '',
         subCategoryId: p.subcategory_id || '',
-        specifications: p.specifications,
+        specifications: parsedSpecs,
+        nameOptions: parsedNameOpts,
+        name_options: parsedNameOpts,
+        productDetails: parsedProdDetails,
+        product_details: parsedProdDetails,
         promoted: p.promoted || p.is_featured || false,
-        active: p.active !== false && p.is_active !== false
+        is_recommended: p.is_recommended !== undefined ? Boolean(p.is_recommended) : Boolean(p.isrecommended),
+        isRecommended: p.is_recommended !== undefined ? Boolean(p.is_recommended) : Boolean(p.isrecommended),
+        active: p.active !== false && p.is_active !== false,
+        is_active: p.active !== false && p.is_active !== false
     };
 };
 
@@ -164,13 +199,172 @@ exports.getActiveProducts = async () => {
 };
 
 exports.getFeaturedProducts = async (query) => {
+    // Best Sellers: Computed strictly from actual sales volume in order_items (or rating / created_at fallback)
     const result = await pool.query(`
         ${BASE_PRODUCT_QUERY}
-        WHERE COALESCE(p.is_featured, false) = true AND COALESCE(p.is_active, true) = true
-        ORDER BY p.product_id ASC
+        LEFT JOIN (
+            SELECT product_id, SUM(quantity) as total_sales
+            FROM order_items
+            GROUP BY product_id
+        ) oi ON (p.product_id = oi.product_id OR p.id = oi.product_id)
+        WHERE COALESCE(p.is_active, true) = true
+        ORDER BY COALESCE(oi.total_sales, 0) DESC, COALESCE(p.rating, 0) DESC, p.product_id DESC
         LIMIT 5
     `);
     return result.rows.map(mapProduct);
+};
+
+exports.getRecommendations = async ({ userId, recentlyViewedIds = [], cartProductIds = [], limit = 5 } = {}) => {
+    const seenIds = new Set();
+    const recommendedList = [];
+
+    // Exclusion rule: Exclude products already purchased by logged-in user if userId provided
+    let purchasedProductIds = new Set();
+    if (userId) {
+        try {
+            const purchasedRes = await pool.query(`
+                SELECT DISTINCT oi.product_id::text
+                FROM order_items oi
+                JOIN orders o ON oi.order_id = o.order_id
+                WHERE (o.user_id = $1::integer OR o.user_id::text = $1::text)
+                  AND o.order_status NOT IN ('cancelled', 'Cancelled')
+            `, [userId]);
+            purchasedRes.rows.forEach(r => {
+                if (r.product_id) purchasedProductIds.add(r.product_id.toString());
+            });
+        } catch (e) {
+            console.error('Error checking purchased products for user:', e);
+        }
+    }
+
+    const addProducts = (rows) => {
+        for (const rawP of rows) {
+            if (recommendedList.length >= limit) break;
+            const mapped = mapProduct(rawP);
+            const pId = mapped?.id;
+            if (pId && !seenIds.has(pId) && !purchasedProductIds.has(pId) && mapped.active !== false && mapped.inStock !== false && mapped.price > 0 && mapped.name) {
+                seenIds.add(pId);
+                recommendedList.push(mapped);
+            }
+        }
+    };
+
+    // Tier 1: Wishlist
+    if (userId && recommendedList.length < limit) {
+        try {
+            const wishlistRes = await pool.query(`
+                ${BASE_PRODUCT_QUERY}
+                JOIN wishlist w ON (p.product_id = w.product_id OR p.id = w.product_id)
+                WHERE (w.user_id = $1::integer OR w.user_id::text = $1::text)
+                  AND COALESCE(p.is_active, true) = true
+                ORDER BY w.created_at DESC
+            `, [userId]);
+            addProducts(wishlistRes.rows);
+        } catch (e) {
+            // Wishlist table error or empty
+        }
+    }
+
+    // Tier 2: Admin Recommended Products (is_recommended = true)
+    if (recommendedList.length < limit) {
+        try {
+            const adminRecRes = await pool.query(`
+                ${BASE_PRODUCT_QUERY}
+                WHERE COALESCE(p.is_recommended, false) = true
+                  AND COALESCE(p.is_active, true) = true
+                ORDER BY p.created_at DESC NULLS LAST, p.updated_at DESC, p.product_id DESC
+            `);
+            addProducts(adminRecRes.rows);
+        } catch (e) {
+            console.error('Error fetching Admin Recommended products:', e);
+        }
+    }
+
+    // Tier 3: Recently Viewed products
+    if (recentlyViewedIds && recentlyViewedIds.length > 0 && recommendedList.length < limit) {
+        try {
+            const validIds = recentlyViewedIds.map(id => parseInt(id)).filter(id => !isNaN(id));
+            if (validIds.length > 0) {
+                const recViewedRes = await pool.query(`
+                    ${BASE_PRODUCT_QUERY}
+                    WHERE (p.product_id = ANY($1::int[]) OR p.id = ANY($1::int[]))
+                      AND COALESCE(p.is_active, true) = true
+                `, [validIds]);
+                addProducts(recViewedRes.rows);
+            }
+        } catch (e) {
+            console.error('Error fetching Recently Viewed products:', e);
+        }
+    }
+
+    // Tier 4: Add-to-Cart products
+    if (cartProductIds && cartProductIds.length > 0 && recommendedList.length < limit) {
+        try {
+            const validIds = cartProductIds.map(id => parseInt(id)).filter(id => !isNaN(id));
+            if (validIds.length > 0) {
+                const cartRes = await pool.query(`
+                    ${BASE_PRODUCT_QUERY}
+                    WHERE (p.product_id = ANY($1::int[]) OR p.id = ANY($1::int[]))
+                      AND COALESCE(p.is_active, true) = true
+                `, [validIds]);
+                addProducts(cartRes.rows);
+            }
+        } catch (e) {
+            console.error('Error fetching Cart products:', e);
+        }
+    }
+
+    // Tier 5: Best Sellers (actual order_items sales volume)
+    if (recommendedList.length < limit) {
+        try {
+            const bestSellerRes = await pool.query(`
+                ${BASE_PRODUCT_QUERY}
+                LEFT JOIN (
+                    SELECT product_id, SUM(quantity) as total_sales
+                    FROM order_items
+                    GROUP BY product_id
+                ) oi ON (p.product_id = oi.product_id OR p.id = oi.product_id)
+                WHERE COALESCE(p.is_active, true) = true
+                ORDER BY COALESCE(oi.total_sales, 0) DESC, COALESCE(p.rating, 0) DESC, p.product_id DESC
+                LIMIT 10
+            `);
+            addProducts(bestSellerRes.rows);
+        } catch (e) {
+            console.error('Error fetching Best Sellers in recommendations:', e);
+        }
+    }
+
+    // Tier 6: Most Viewed / Highest Rated
+    if (recommendedList.length < limit) {
+        try {
+            const mostViewedRes = await pool.query(`
+                ${BASE_PRODUCT_QUERY}
+                WHERE COALESCE(p.is_active, true) = true
+                ORDER BY COALESCE(p.rating, 0) DESC, p.reviews_count DESC NULLS LAST, p.product_id DESC
+                LIMIT 10
+            `);
+            addProducts(mostViewedRes.rows);
+        } catch (e) {
+            console.error('Error fetching Most Viewed in recommendations:', e);
+        }
+    }
+
+    // Tier 7: Other Available Catalog fallback
+    if (recommendedList.length < limit) {
+        try {
+            const fallbackRes = await pool.query(`
+                ${BASE_PRODUCT_QUERY}
+                WHERE COALESCE(p.is_active, true) = true
+                ORDER BY p.updated_at DESC, p.product_id DESC
+                LIMIT 10
+            `);
+            addProducts(fallbackRes.rows);
+        } catch (e) {
+            console.error('Error fetching Catalog fallback in recommendations:', e);
+        }
+    }
+
+    return recommendedList.slice(0, limit);
 };
 
 exports.getRelatedProducts = async (productId, category, limit = 4) => {
@@ -198,31 +392,61 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 
 exports.createProduct = async (product) => {
     const {
-        productname, title, description, price, originalprice, sale_price,
-        category_id, brand, image, image_url, images, promoted, is_featured,
+        productname, title, description, shortDescription, short_description, shortdescription,
+        price, originalprice, originalPrice, sale_price,
+        category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
-        fabric, fit_type, care_instructions, style_code, subcategory_id
+        fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
+        specifications, name_options, nameOptions, product_details, productDetails
     } = product;
 
     const productTitle = title || productname || '';
     const activeVal = active !== undefined ? active : (is_active !== undefined ? is_active : true);
-    const origPrice = originalprice ?? sale_price ?? price;
-    const imgUrl = image_url || image || (Array.isArray(images) ? images[0] : '');
+    const recVal = is_recommended !== undefined ? Boolean(is_recommended) : (isRecommended !== undefined ? Boolean(isRecommended) : true);
+    const currPrice = parseFloat(price) || 0;
+    const origPrice = parseFloat(originalPrice ?? originalprice ?? sale_price ?? price) || currPrice;
+    const imgList = Array.isArray(images) && images.length > 0
+        ? images
+        : (image_url || image ? [image_url || image] : []);
+    const imgUrl = imgList.length > 0 ? imgList[0] : '';
     const isFeatured = promoted !== undefined ? promoted : (is_featured || false);
-    const stockQty = stock_quantity ?? quantity ?? stock ?? 0;
+    const stockQty = parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock) || 0;
     const parsedCatId = category_id ? parseInt(category_id) : null;
     const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : null;
+    const shortDesc = short_description || shortDescription || shortdescription || '';
+    const careInst = care_instructions || careInstructions || '';
+
+    let specsVal = specifications || [];
+    if (typeof specsVal === 'string') {
+        try { specsVal = JSON.parse(specsVal); } catch(e) { specsVal = []; }
+    }
+
+    let nameOptsVal = name_options || nameOptions || [];
+    if (typeof nameOptsVal === 'string') {
+        try { nameOptsVal = JSON.parse(nameOptsVal); } catch(e) { nameOptsVal = []; }
+    }
+    if (!Array.isArray(nameOptsVal)) nameOptsVal = [];
+
+    let prodDetailsVal = product_details || productDetails || [];
+    if (typeof prodDetailsVal === 'string') {
+        try { prodDetailsVal = JSON.parse(prodDetailsVal); } catch(e) { prodDetailsVal = []; }
+    }
+    if (!Array.isArray(prodDetailsVal)) prodDetailsVal = [];
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, price, sale_price, category_id, brand, image_url, images, is_featured, is_active, stock_quantity, stock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()) 
+        (title, description, short_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23::jsonb, NOW(), NOW()) 
         RETURNING *`,
         [
-            productTitle, description || '', price || 0, origPrice, parsedCatId,
-            brand || 'House of Urvaah', imgUrl, images || [], isFeatured, activeVal !== false,
-            stockQty, sizes || ['XS', 'S', 'M', 'L'], colors || ['Default'],
-            fabric || '', fit_type || '', care_instructions || '', style_code || '', parsedSubcatId
+            productTitle, description || '', shortDesc, currPrice, origPrice, parsedCatId,
+            brand || 'House of Urvaah', imgUrl, imgList, isFeatured, recVal, activeVal !== false,
+            stockQty, Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L'],
+            Array.isArray(colors) ? colors : ['Default'],
+            fabric || '', fit_type || '', careInst, style_code || '', parsedSubcatId,
+            JSON.stringify(specsVal),
+            JSON.stringify(nameOptsVal),
+            JSON.stringify(prodDetailsVal)
         ]
     );
     return mapProduct(result.rows[0]);
@@ -230,49 +454,86 @@ exports.createProduct = async (product) => {
 
 exports.updateProduct = async (id, product) => {
     const {
-        productname, title, description, price, originalprice, sale_price,
-        category_id, brand, image, image_url, images, promoted, is_featured,
+        productname, title, description, shortDescription, short_description, shortdescription,
+        price, originalprice, originalPrice, sale_price,
+        category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
-        fabric, fit_type, care_instructions, style_code, subcategory_id
+        fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
+        specifications, name_options, nameOptions, product_details, productDetails
     } = product;
 
     const productTitle = title || productname;
     const activeVal = active !== undefined ? active : is_active;
-    const origPrice = originalprice ?? sale_price;
-    const imgUrl = image_url || image;
+    const recVal = is_recommended !== undefined ? Boolean(is_recommended) : (isRecommended !== undefined ? Boolean(isRecommended) : undefined);
+    const currPrice = price !== undefined ? parseFloat(price) : undefined;
+    const origPrice = (originalPrice !== undefined || originalprice !== undefined || sale_price !== undefined)
+        ? parseFloat(originalPrice ?? originalprice ?? sale_price)
+        : undefined;
+    const imgList = Array.isArray(images)
+        ? images
+        : (image_url || image ? [image_url || image] : undefined);
+    const imgUrl = imgList && imgList.length > 0 ? imgList[0] : (image_url || image);
     const isFeatured = promoted !== undefined ? promoted : is_featured;
-    const stockQty = stock_quantity ?? quantity ?? stock;
-    const parsedCatId = category_id ? parseInt(category_id) : null;
-    const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : null;
+    const stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
+        ? parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock)
+        : undefined;
+    const parsedCatId = category_id ? parseInt(category_id) : undefined;
+    const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : undefined;
+    const shortDesc = short_description !== undefined ? short_description : (shortDescription !== undefined ? shortDescription : shortdescription);
+    const careInst = care_instructions !== undefined ? care_instructions : careInstructions;
+
+    let specsVal = specifications;
+    if (specsVal !== undefined && typeof specsVal === 'string') {
+        try { specsVal = JSON.parse(specsVal); } catch(e) {}
+    }
+
+    let nameOptsVal = name_options !== undefined ? name_options : nameOptions;
+    if (nameOptsVal !== undefined && typeof nameOptsVal === 'string') {
+        try { nameOptsVal = JSON.parse(nameOptsVal); } catch(e) {}
+    }
+
+    let prodDetailsVal = product_details !== undefined ? product_details : productDetails;
+    if (prodDetailsVal !== undefined && typeof prodDetailsVal === 'string') {
+        try { prodDetailsVal = JSON.parse(prodDetailsVal); } catch(e) {}
+    }
 
     const result = await pool.query(
         `UPDATE products 
         SET title = COALESCE($2, title),
             description = COALESCE($3, description),
-            price = COALESCE($4, price),
-            sale_price = COALESCE($5, sale_price),
-            category_id = COALESCE($6, category_id),
-            brand = COALESCE($7, brand),
-            image_url = COALESCE($8, image_url),
-            images = COALESCE($9, images),
-            is_featured = COALESCE($10, is_featured),
-            is_active = COALESCE($11, is_active),
-            stock_quantity = COALESCE($12, stock_quantity),
-            stock = COALESCE($12, stock),
-            sizes = COALESCE($13, sizes),
-            colors = COALESCE($14, colors),
-            fabric = COALESCE($15, fabric),
-            fit_type = COALESCE($16, fit_type),
-            care_instructions = COALESCE($17, care_instructions),
-            style_code = COALESCE($18, style_code),
-            subcategory_id = COALESCE($19, subcategory_id),
+            short_description = COALESCE($4, short_description),
+            price = COALESCE($5, price),
+            sale_price = COALESCE($6, sale_price),
+            category_id = COALESCE($7, category_id),
+            brand = COALESCE($8, brand),
+            image_url = COALESCE($9, image_url),
+            images = COALESCE($10, images),
+            is_featured = COALESCE($11, is_featured),
+            is_recommended = COALESCE($12, is_recommended),
+            is_active = COALESCE($13, is_active),
+            stock_quantity = COALESCE($14, stock_quantity),
+            stock = COALESCE($14, stock),
+            quantity = COALESCE($14, quantity),
+            sizes = COALESCE($15, sizes),
+            colors = COALESCE($16, colors),
+            fabric = COALESCE($17, fabric),
+            fit_type = COALESCE($18, fit_type),
+            care_instructions = COALESCE($19, care_instructions),
+            style_code = COALESCE($20, style_code),
+            subcategory_id = COALESCE($21, subcategory_id),
+            specifications = COALESCE($22::jsonb, specifications),
+            name_options = COALESCE($23::jsonb, name_options),
+            product_details = COALESCE($24::jsonb, product_details),
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
         [
-            id, productTitle, description, price, origPrice, parsedCatId,
-            brand, imgUrl, images, isFeatured, activeVal, stockQty,
-            sizes, colors, fabric, fit_type, care_instructions, style_code, parsedSubcatId
+            id, productTitle, description, shortDesc, currPrice, origPrice, parsedCatId,
+            brand, imgUrl, imgList, isFeatured, recVal !== undefined ? recVal : null, activeVal, stockQty,
+            sizes, colors, fabric, fit_type, careInst, style_code, parsedSubcatId,
+            specsVal !== undefined ? JSON.stringify(specsVal) : null,
+            nameOptsVal !== undefined ? JSON.stringify(nameOptsVal) : null,
+            prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null
         ]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
