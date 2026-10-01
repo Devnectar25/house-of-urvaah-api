@@ -158,6 +158,27 @@ exports.getFeaturedProducts = async (req, res) => {
     }
 };
 
+exports.getRecommendations = async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?.user_id || req.query.userId || req.query.user_id;
+        const recentlyViewed = req.query.recentlyViewed ? req.query.recentlyViewed.split(',') : (req.query.recently_viewed ? req.query.recently_viewed.split(',') : []);
+        const cart = req.query.cart ? req.query.cart.split(',') : (req.query.cartProductIds ? req.query.cartProductIds.split(',') : []);
+        const limit = parseInt(req.query.limit) || 5;
+
+        const data = await productService.getRecommendations({
+            userId,
+            recentlyViewedIds: recentlyViewed,
+            cartProductIds: cart,
+            limit
+        });
+
+        res.json({ success: true, data, count: data.length });
+    } catch (error) {
+        console.error("Error in getRecommendations:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 exports.setInactiveProduct = async (req, res) => {
     try {
         const id = req.params.id;
