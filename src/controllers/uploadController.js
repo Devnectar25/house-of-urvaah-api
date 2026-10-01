@@ -34,7 +34,7 @@ exports.uploadMiddleware = multer({
             cb(new Error('Invalid file type. Only JPEG, PNG, WebP, SVG, and PDF are allowed.'));
         }
     }
-}).single('image');
+}).any();
 
 // Video upload middleware using disk storage for large files
 exports.uploadVideoMiddleware = multer({
@@ -53,13 +53,14 @@ exports.uploadVideoMiddleware = multer({
 
 exports.uploadImage = async (req, res) => {
     try {
-        console.log(`[UPLOAD] Image request received: ${req.file?.originalname}, size: ${req.file?.size} bytes`);
-        if (!req.file) {
+        const file = req.file || (req.files && req.files[0]);
+        console.log(`[UPLOAD] Image request received: ${file?.originalname}, size: ${file?.size} bytes`);
+        if (!file) {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const folderName = req.body.folderName || 'common'; 
-        const publicUrl = await storageService.uploadImage(req.file, folderName);
+        const folderName = req.body?.folderName || req.body?.folder || 'products'; 
+        const publicUrl = await storageService.uploadImage(file, folderName);
 
         console.log(`[UPLOAD] Image successful: ${publicUrl}`);
         res.json({
