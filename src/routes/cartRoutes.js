@@ -11,6 +11,7 @@ router.post('/add', cartController.addToCart);
 router.post('/instant', cartController.instantCheckout);
 router.patch('/update', cartController.updateQuantity);
 router.delete('/item/:productId', cartController.removeFromCart);
+router.delete('/:productId', cartController.removeFromCart);
 router.delete('/clear', cartController.clearCart);
 router.post('/sync', cartController.syncCart);
 
