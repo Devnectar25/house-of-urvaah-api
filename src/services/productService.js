@@ -70,8 +70,10 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
     let params = [];
     let paramIdx = 1;
 
-    if (active === 'true') {
+    if (active === 'true' || active === true || active === '1') {
         whereClauses.push(`COALESCE(p.is_active, true) = true`);
+    } else if (active === 'false' || active === false || active === '0') {
+        whereClauses.push(`COALESCE(p.is_active, true) = false`);
     }
 
     if (search) {
