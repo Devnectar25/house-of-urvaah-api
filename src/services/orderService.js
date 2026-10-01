@@ -140,18 +140,18 @@ exports.createOrder = async (orderData) => {
 
             const stockUpdateResult = await client.query(
                 `UPDATE products
-                 SET stock_quantity = GREATEST(0, stock_quantity - $2),
-                     quantity       = GREATEST(0, quantity - $2),
+                 SET stock_quantity = GREATEST(0, COALESCE(stock_quantity, 0) - $2),
+                     quantity       = GREATEST(0, COALESCE(quantity, 0) - $2),
                      updated_at     = NOW()
-                 WHERE product_id = $1::integer
+                 WHERE product_id::text = $1::text
                  RETURNING stock_quantity`,
-                [item.id || item.productId, item.quantity]
+                [String(item.id || item.productId), item.quantity]
             );
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
-                    `UPDATE products SET instock = false WHERE product_id = $1::integer`,
-                    [item.id || item.productId]
+                    `UPDATE products SET instock = false WHERE product_id::text = $1::text`,
+                    [String(item.id || item.productId)]
                 );
             }
         }

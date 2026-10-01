@@ -7,6 +7,22 @@ const cleanId = (id) => {
     return num ? parseInt(num, 10) : null;
 };
 
+const ensureUserExists = async (userId) => {
+    if (!userId) return;
+    try {
+        const uStr = String(userId).trim();
+        const email = `${uStr}@urvaah.local`;
+        await pool.query(
+            `INSERT INTO users (username, emailid, fullname)
+             VALUES ($1, $2, $1)
+             ON CONFLICT (username) DO NOTHING`,
+            [uStr, email]
+        );
+    } catch (e) {
+        console.warn('[cartService] ensureUserExists warning:', e.message);
+    }
+};
+
 exports.getCart = async (userId) => {
     if (!userId) return [];
     const result = await pool.query(
@@ -52,6 +68,8 @@ exports.getCart = async (userId) => {
 exports.addToCart = async (userId, productId, quantity = 1, setMode = false) => {
     const numProductId = cleanId(productId);
     if (!userId || !numProductId) return null;
+
+    await ensureUserExists(userId);
 
     const result = await pool.query(
         `INSERT INTO cart (user_id, product_id, quantity, created_at)
@@ -108,6 +126,7 @@ exports.clearCart = async (userId) => {
 
 exports.syncCart = async (userId, localItems) => {
     if (!userId || !localItems || !Array.isArray(localItems)) return;
+    await ensureUserExists(userId);
 
     for (const item of localItems) {
         const pId = cleanId(item.id || item.productId || item.product?.id);
