@@ -1,21 +1,27 @@
 const https = require('https');
 
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'concierge@houseofurvaah.com';
-const SENDER_NAME = process.env.BREVO_SENDER_NAME || 'House of Urvaah Atelier';
-
 /**
  * Send Transactional Email via Brevo API v3
  */
 const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
-  if (!BREVO_API_KEY) {
-    console.warn('[Brevo Email] BREVO_API_KEY is not set. Email notification logged to console:');
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SENDER_EMAIL || 'devnectar27@gmail.com';
+  const senderName = process.env.BREVO_SENDER_NAME || process.env.SENDER_NAME || 'House of Urvaah';
+
+  console.log(`[Brevo Email Request] Initiating transactional email:`);
+  console.log(`  To: ${toEmail}`);
+  console.log(`  Sender: "${senderName}" <${senderEmail}>`);
+  console.log(`  Subject: ${subject}`);
+  console.log(`  API Key Present: ${!!apiKey}`);
+
+  if (!apiKey) {
+    console.warn('[Brevo Email Error] BREVO_API_KEY environment variable is NOT set. Email notification logged as mock:');
     console.log(`[Brevo Email Mock] To: ${toEmail}, Subject: ${subject}`);
-    return { success: true, mock: true };
+    return { success: false, error: 'BREVO_API_KEY environment variable is missing' };
   }
 
   const payload = JSON.stringify({
-    sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+    sender: { name: senderName, email: senderEmail },
     to: [{ email: toEmail, name: toName || toEmail }],
     subject: subject,
     htmlContent: htmlContent
@@ -27,7 +33,7 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
       {
         method: 'POST',
         headers: {
-          'api-key': BREVO_API_KEY,
+          'api-key': apiKey,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)
         }
@@ -36,12 +42,15 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
         let body = '';
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
+          console.log(`[Brevo API Response] HTTP Status: ${res.statusCode}`);
+          console.log(`[Brevo API Response] Body: ${body}`);
+
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            console.log(`[Brevo Email] Successfully sent email to ${toEmail}`);
-            resolve({ success: true, data: body });
+            console.log(`[Brevo Email Success] Successfully dispatched email to ${toEmail}`);
+            resolve({ success: true, statusCode: res.statusCode, data: body });
           } else {
-            console.error(`[Brevo Email Error] Status ${res.statusCode}:`, body);
-            resolve({ success: false, error: body });
+            console.error(`[Brevo Email Failed] Status ${res.statusCode}: ${body}`);
+            resolve({ success: false, statusCode: res.statusCode, error: body });
           }
         });
       }
@@ -146,8 +155,54 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
   });
 };
 
+/**
+ * Branded OTP Email Template
+ */
+const sendOtpEmail = async (email, otp) => {
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 20px; }
+        .container { max-width: 500px; margin: 0 auto; background: #ffffff; border: 1px solid #E5E5E5; padding: 40px; text-align: center; }
+        .logo { font-size: 22px; font-weight: 300; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 25px; color: #111; }
+        .title { font-size: 16px; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 15px; color: #111111; }
+        .otp-box { font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #111111; background-color: #FAF8F3; padding: 18px 24px; border: 1px solid #E5E5E5; margin: 25px 0; display: inline-block; }
+        .content { font-size: 13px; line-height: 1.8; color: #555555; margin-bottom: 25px; text-align: center; }
+        .footer { margin-top: 30px; font-size: 10px; letter-spacing: 0.2em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="logo">HOUSE OF URVAAH</div>
+        <div class="title">VERIFICATION CODE</div>
+        <div class="content">
+          Please use the following 6-digit verification code to complete your authentication:
+        </div>
+        <div class="otp-box">${otp}</div>
+        <div class="content">
+          This code is valid for <strong>10 minutes</strong>. For your security, do not share this code with anyone.
+        </div>
+        <div class="footer">
+          HOUSE OF URVAAH CONCIERGE &bull; SECURE SINGLE SIGN-ON
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendBrevoEmail({
+    toEmail: email,
+    subject: `Your Verification Code: ${otp} - House of Urvaah`,
+    htmlContent
+  });
+};
+
 module.exports = {
   sendBrevoEmail,
   sendWelcomeEmail,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  sendOtpEmail
 };

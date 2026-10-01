@@ -40,6 +40,27 @@ app.use((req, res, next) => {
     next();
 });
 
+// Cookie parser middleware
+app.use((req, res, next) => {
+    req.cookies = req.cookies || {};
+    if (req.headers.cookie) {
+        req.headers.cookie.split(';').forEach(cookie => {
+            const parts = cookie.split('=');
+            if (parts.length >= 2) {
+                const key = parts[0].trim();
+                const val = parts.slice(1).join('=').trim();
+                try {
+                    req.cookies[key] = decodeURIComponent(val);
+                } catch (e) {
+                    req.cookies[key] = val;
+                }
+            }
+        });
+    }
+    next();
+});
+
+
 // ⭐ IMPORTANT: Upload routes must come BEFORE the manual body parser
 // to ensure the stream is not consumed or interfered with.
 app.use('/api/upload', uploadRoutes);
