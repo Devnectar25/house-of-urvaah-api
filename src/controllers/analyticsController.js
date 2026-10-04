@@ -225,6 +225,29 @@ async function getDashboardSummary(req, res) {
   }
 }
 
+/**
+ * GET /api/admin/analytics/revenue-breakdown
+ * Returns orders placed in range + grandTotal
+ */
+async function getRevenueBreakdown(req, res) {
+  try {
+    const { period, range } = req.query;
+    const data = await analyticsService.getRevenueBreakdown(period || range || '7d');
+
+    res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    console.error("Revenue Breakdown Controller Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch revenue breakdown data",
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   getAdminAnalyticsSummary,
   getTopActiveUsers,
@@ -233,5 +256,6 @@ module.exports = {
   getAnalyticsDrilldown,
   getDashboardStats,
   getDashboardSummary,
+  getRevenueBreakdown,
   trackEvent
 };
