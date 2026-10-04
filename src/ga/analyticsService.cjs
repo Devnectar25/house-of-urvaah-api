@@ -180,7 +180,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
       totalUsers: buildKPI(currMetrics.users, prevMetrics.users),
       activeUsers: buildKPI(currMetrics.activeUsers, prevMetrics.activeUsers),
       totalRevenue: buildKPI(currMetrics.revenue, prevMetrics.revenue),
-      
+
       // Secondary Stat Cards
       averageOrderValue: {
         value: parseFloat(currAOV.toFixed(2)),
@@ -611,3 +611,5 @@ module.exports = {
   getRevenueBreakdown,
   getDashboardEntityCounts
 };
+
+
