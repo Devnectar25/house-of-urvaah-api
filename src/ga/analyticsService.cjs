@@ -66,10 +66,11 @@ async function getAdminAnalyticsSummary(period = "7d") {
 
       // Active users with valid order activity in window
       const activeUsersRes = await pool.query(
-        `SELECT COUNT(DISTINCT user_id) as count 
-         FROM orders 
-         WHERE created_at >= $1 AND created_at <= $2 
-         AND status != 'Cancelled'`,
+        `SELECT COUNT(DISTINCT o.user_id) as count 
+         FROM orders o
+         WHERE o.created_at >= $1 AND o.created_at <= $2 
+           AND o.status NOT IN ('Cancelled', 'Refunded')
+           AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`,
         [start.toISOString(), end.toISOString()]
       );
 
@@ -275,6 +276,11 @@ async function getTopActiveUsers(period = '7d', limit = 15) {
       if (displayName.includes('@')) displayName = displayName.split('@')[0];
       displayName = displayName.replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
+      let phoneVal = row.phone;
+      if (!phoneVal || phoneVal === 'N/A' || phoneVal === 'null' || phoneVal === 'undefined' || !String(phoneVal).trim()) {
+        phoneVal = null;
+      }
+
       let lastActiveFormatted = 'N/A';
       if (row.lastActiveDate) {
         const d = new Date(row.lastActiveDate);
@@ -291,11 +297,12 @@ async function getTopActiveUsers(period = '7d', limit = 15) {
         userId: row.userId,
         name: displayName,
         displayName: displayName,
-        email: row.email || 'No email registered',
-        phone: row.phone || 'N/A',
+        email: row.email && row.email !== 'No email registered' ? row.email : '',
+        phone: phoneVal,
         totalOrders: parseInt(row.totalOrders) || 0,
         totalRevenue: parseFloat(row.totalRevenue) || 0,
-        lastActiveDate: lastActiveFormatted
+        lastActiveDate: row.lastActiveDate ? new Date(row.lastActiveDate).toISOString() : null,
+        lastActiveFormatted: lastActiveFormatted
       };
     });
   } catch (error) {
@@ -504,11 +511,83 @@ const getDashboardEntityCounts = async () => {
   }
 };
 
+/**
+ * Get Revenue Breakdown dataset for Analytics Modal
+ */
+async function getRevenueBreakdown(period = '7d') {
+  try {
+    const { currStart, currEnd } = getDateRanges(period);
+
+    // 1. Calculate Grand Total using exact same revenue rule as stat card
+    const grandTotalQuery = `
+      SELECT COALESCE(SUM(total), 0)::numeric as "grandTotal"
+      FROM orders
+      WHERE created_at >= $1 AND created_at <= $2
+        AND status NOT IN ('Cancelled', 'Refunded')
+        AND (payment_method = 'cod' OR payment_status != 'Pending')
+    `;
+    const grandTotalRes = await pool.query(grandTotalQuery, [currStart.toISOString(), currEnd.toISOString()]);
+    const grandTotal = parseFloat(grandTotalRes.rows[0]?.grandTotal) || 0;
+
+    // 2. Fetch all orders placed within date range for transparency
+    const ordersQuery = `
+      SELECT 
+        COALESCE(o.order_number, o.id::text) as "orderId",
+        COALESCE(u.emailid, o.user_id, 'Guest') as "customerEmail",
+        COALESCE(u.fullname, u.username) as "customerName",
+        o.created_at as "orderDate",
+        o.status as "status",
+        o.payment_status as "paymentStatus",
+        o.payment_method as "paymentMethod",
+        COALESCE(o.total, 0)::numeric as "total"
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.username OR LOWER(o.user_id) = LOWER(u.emailid)
+      WHERE o.created_at >= $1 AND o.created_at <= $2
+      ORDER BY o.created_at DESC
+    `;
+    const ordersRes = await pool.query(ordersQuery, [currStart.toISOString(), currEnd.toISOString()]);
+
+    const mappedOrders = ordersRes.rows.map(row => {
+      const isCancelledOrRefunded = ['cancelled', 'refunded'].includes((row.status || '').toLowerCase());
+      const isPendingOnline = row.paymentMethod !== 'cod' && (row.paymentStatus || '').toLowerCase() === 'pending';
+      const isRevenue = !isCancelledOrRefunded && !isPendingOnline;
+
+      return {
+        orderId: row.orderId,
+        customerEmail: row.customerEmail || 'Guest',
+        customerName: row.customerName || row.customerEmail || 'Guest',
+        orderDate: row.orderDate ? new Date(row.orderDate).toISOString() : null,
+        status: row.status || 'Placed',
+        paymentStatus: row.paymentStatus || 'Pending',
+        paymentMethod: row.paymentMethod || 'online',
+        total: parseFloat(row.total) || 0,
+        isRevenue
+      };
+    });
+
+    return {
+      period,
+      grandTotal: parseFloat(grandTotal.toFixed(2)),
+      totalOrdersCount: mappedOrders.length,
+      orders: mappedOrders
+    };
+  } catch (error) {
+    console.error('[REVENUE BREAKDOWN ERROR]', error);
+    return {
+      period,
+      grandTotal: 0,
+      totalOrdersCount: 0,
+      orders: []
+    };
+  }
+}
+
 module.exports = {
   getAdminAnalyticsSummary,
   getTopActiveUsers,
   getTopProducts,
   getTopCategories,
   getAnalyticsDrilldown,
+  getRevenueBreakdown,
   getDashboardEntityCounts
 };

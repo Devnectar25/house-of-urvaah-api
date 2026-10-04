@@ -2,7 +2,20 @@ const pool = require('../config/db');
 
 exports.getUsers = async (req, res) => {
     try {
-        const result = await pool.query(`
+        const { period, page, limit, search } = req.query;
+
+        // Calculate end date for filtering if period is provided
+        let queryParams = [];
+        let whereClause = '';
+
+        if (period && period !== 'all') {
+            let endDate = new Date();
+            endDate.setHours(23, 59, 59, 999);
+            queryParams.push(endDate.toISOString());
+            whereClause = 'WHERE u.createdate <= $1';
+        }
+
+        const query = `
             SELECT 
                 u.username, 
                 u.emailid, 
@@ -15,22 +28,30 @@ exports.getUsers = async (req, res) => {
                 COALESCE(SUM(CASE WHEN o.status != 'Cancelled' THEN o.total ELSE 0 END), 0) as total_spent
             FROM public.users u
             LEFT JOIN public.orders o ON u.username = o.user_id OR LOWER(u.emailid) = LOWER(o.user_id)
+            ${whereClause}
             GROUP BY u.username, u.emailid, u.fullname, u.contactno, u.active, u.createdate, u.member_since
             ORDER BY u.createdate DESC
-        `);
+        `;
+
+        const result = await pool.query(query, queryParams);
         
-        // In-memory deduplication by normalized email address
+        // In-memory deduplication & phone sanitization
         const userMap = new Map();
         for (const row of result.rows) {
             const emailKey = (row.emailid || row.username || '').toLowerCase().trim();
             if (!emailKey) continue;
 
+            let phoneVal = row.contactno;
+            if (!phoneVal || phoneVal === 'null' || phoneVal === 'undefined' || !phoneVal.trim()) {
+                phoneVal = null;
+            }
+
             if (userMap.has(emailKey)) {
                 const existing = userMap.get(emailKey);
                 existing.totalOrders += parseInt(row.total_orders) || 0;
                 existing.totalSpent += parseFloat(row.total_spent) || 0;
-                if ((!existing.phone || existing.phone === 'null') && row.contactno) {
-                    existing.phone = row.contactno;
+                if (!existing.phone && phoneVal) {
+                    existing.phone = phoneVal;
                 }
                 if (row.fullname && row.fullname !== row.username) {
                     existing.name = row.fullname;
@@ -40,7 +61,7 @@ exports.getUsers = async (req, res) => {
                     id: row.username,
                     name: row.fullname || row.username,
                     email: row.emailid,
-                    phone: row.contactno,
+                    phone: phoneVal,
                     active: row.active !== false,
                     createdAt: row.createdate || row.member_since,
                     totalOrders: parseInt(row.total_orders) || 0,
@@ -49,8 +70,39 @@ exports.getUsers = async (req, res) => {
             }
         }
 
-        const mappedUsers = Array.from(userMap.values());
-        res.json({ success: true, count: mappedUsers.length, data: mappedUsers });
+        let mappedUsers = Array.from(userMap.values());
+
+        // Optional server-side search filter
+        if (search && search.trim()) {
+            const q = search.toLowerCase().trim();
+            mappedUsers = mappedUsers.filter(u => 
+                (u.name && u.name.toLowerCase().includes(q)) ||
+                (u.email && u.email.toLowerCase().includes(q)) ||
+                (u.phone && u.phone.toLowerCase().includes(q)) ||
+                (u.id && u.id.toLowerCase().includes(q))
+            );
+        }
+
+        const totalCount = mappedUsers.length;
+
+        // Support optional pagination
+        let paginatedUsers = mappedUsers;
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+
+        if (!isNaN(pageNum) && !isNaN(limitNum) && limitNum > 0) {
+            const startIndex = (pageNum - 1) * limitNum;
+            paginatedUsers = mappedUsers.slice(startIndex, startIndex + limitNum);
+        }
+
+        res.json({ 
+            success: true, 
+            count: paginatedUsers.length,
+            totalCount, 
+            page: pageNum || 1,
+            totalPages: limitNum > 0 ? Math.ceil(totalCount / limitNum) : 1,
+            data: paginatedUsers 
+        });
     } catch (error) {
         console.error('Error fetching users:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch users', error: error.message });

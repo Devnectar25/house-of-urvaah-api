@@ -8,7 +8,8 @@ const {
   getTopCategories,
   getAnalyticsDrilldown,
   getDashboardStats,
-  getDashboardSummary
+  getDashboardSummary,
+  getRevenueBreakdown
 } = require("../controllers/analyticsController");
 
 // GET /api/admin/analytics/summary
@@ -22,6 +23,9 @@ router.get("/top-products", getTopProducts);
 
 // GET /api/admin/analytics/top-categories
 router.get("/top-categories", getTopCategories);
+
+// GET /api/admin/analytics/revenue-breakdown
+router.get("/revenue-breakdown", getRevenueBreakdown);
 
 // GET /api/admin/analytics/drilldown
 router.get("/drilldown", getAnalyticsDrilldown);
