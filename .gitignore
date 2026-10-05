@@ -13,3 +13,5 @@ build/
 
 
 config/ga4-service-account.json
+src/ga/*.json
+*.bak

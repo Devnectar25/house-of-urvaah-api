@@ -15,15 +15,18 @@ exports.getSubAdmins = async () => {
 
 exports.createSubAdmin = async (data) => {
     const { username, password, permissions } = data;
-    const existing = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [username]);
+    if (!username || !username.trim()) throw new Error("Username is required");
+    if (!password || !password.trim()) throw new Error("Password is required");
+
+    const existing = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [username.trim()]);
     if (existing.rows.length > 0) throw new Error("Username already exists");
 
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(password.trim(), salt);
 
     const result = await pool.query(
         "INSERT INTO public.admins (userid, password, accesstopage, active, createdate) VALUES ($1, $2, $3, true, NOW()) RETURNING *",
-        [username, hashedPassword, permissions]
+        [username.trim(), hashedPassword, Array.isArray(permissions) ? permissions : []]
     );
 
     const row = result.rows[0];
@@ -43,32 +46,50 @@ exports.updateSubAdmin = async (id, data) => {
     const existing = await pool.query("SELECT * FROM public.admins WHERE adminid = $1 AND userid != 'Admin'", [id]);
     if (existing.rows.length === 0) throw new Error("Sub-admin not found");
 
-    let query = "UPDATE public.admins SET accesstopage = $1";
-    const values = [permissions];
-    let paramIndex = 2;
+    const setClauses = [];
+    const values = [];
+    let paramIndex = 1;
 
-    if (username !== undefined) {
-        query += `, userid = $${paramIndex}`;
-        values.push(username);
-        paramIndex++;
+    if (permissions !== undefined) {
+        setClauses.push(`accesstopage = $${paramIndex++}`);
+        values.push(Array.isArray(permissions) ? permissions : []);
     }
 
-    if (password) {
+    if (username !== undefined && username.trim() !== '') {
+        // Check uniqueness if username changed
+        const duplicateCheck = await pool.query("SELECT * FROM public.admins WHERE userid = $1 AND adminid != $2", [username.trim(), id]);
+        if (duplicateCheck.rows.length > 0) throw new Error("Username already taken by another admin");
+
+        setClauses.push(`userid = $${paramIndex++}`);
+        values.push(username.trim());
+    }
+
+    if (password && password.trim() !== '') {
         const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        query += `, password = $${paramIndex}`;
+        const hashedPassword = await bcrypt.hash(password.trim(), salt);
+        setClauses.push(`password = $${paramIndex++}`);
         values.push(hashedPassword);
-        paramIndex++;
     }
 
     if (active !== undefined) {
-        query += `, active = $${paramIndex}`;
-        values.push(active);
-        paramIndex++;
+        setClauses.push(`active = $${paramIndex++}`);
+        values.push(Boolean(active));
     }
 
-    query += ` WHERE adminid = $${paramIndex} RETURNING *`;
+    if (setClauses.length === 0) {
+        const row = existing.rows[0];
+        return {
+            id: row.adminid.toString(),
+            username: row.userid,
+            role: 'sub_admin',
+            permissions: row.accesstopage || [],
+            active: row.active,
+            createdate: row.createdate
+        };
+    }
+
     values.push(id);
+    const query = `UPDATE public.admins SET ${setClauses.join(', ')} WHERE adminid = $${paramIndex} RETURNING *`;
 
     const result = await pool.query(query, values);
     const row = result.rows[0];
@@ -89,3 +110,4 @@ exports.deleteSubAdmin = async (id) => {
 
     await pool.query("DELETE FROM public.admins WHERE adminid = $1", [id]);
 };
+

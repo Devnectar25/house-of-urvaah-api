@@ -128,18 +128,19 @@ app.use(passport.session());
 
 // ⭐ IMPORTANT — Attach API route
 const orderController = require('./controllers/orderController');
-const { protect, authorize } = require('./middlewares/authMiddleware');
+const { protect, authorize, checkPermission } = require('./middlewares/authMiddleware');
 
-app.get('/api/admin/cancelled-orders', protect, authorize('admin'), orderController.getCancelledOrders);
-app.get('/api/admin/refund-desk', protect, authorize('admin'), orderController.getCancelledOrders); // Alias for rebranding
-app.get('/api/admin/cancelled-orders/stats', protect, authorize('admin'), orderController.getCancelledOrdersStats);
-app.get('/api/admin/refund-desk/stats', protect, authorize('admin'), orderController.getCancelledOrdersStats); // Alias
-app.patch('/api/admin/order/:id/refund-status', protect, authorize('admin'), orderController.updateRefundStatus);
-app.patch('/api/admin/refund/:id/status', protect, authorize('admin'), orderController.updateRefundStatus); // Alias
-app.get('/api/admin/order/:id/payment-details', protect, authorize('admin'), orderController.getRefundPaymentDetails);
-app.get('/api/admin/refund/:id/payment-details', protect, authorize('admin'), orderController.getRefundPaymentDetails); // Alias
-app.post('/api/admin/refunds/initiate', protect, authorize('admin'), require('./controllers/refundController').initiateRazorpayRefund);
-app.post('/api/admin/order/:id/restock', protect, authorize('admin'), orderController.restockOrder);
+app.get('/api/admin/cancelled-orders', protect, authorize('admin'), checkPermission('refunds'), orderController.getCancelledOrders);
+app.get('/api/admin/refund-desk', protect, authorize('admin'), checkPermission('refunds'), orderController.getCancelledOrders); // Alias for rebranding
+app.get('/api/admin/cancelled-orders/stats', protect, authorize('admin'), checkPermission('refunds'), orderController.getCancelledOrdersStats);
+app.get('/api/admin/refund-desk/stats', protect, authorize('admin'), checkPermission('refunds'), orderController.getCancelledOrdersStats); // Alias
+app.patch('/api/admin/order/:id/refund-status', protect, authorize('admin'), checkPermission('refunds'), orderController.updateRefundStatus);
+app.patch('/api/admin/refund/:id/status', protect, authorize('admin'), checkPermission('refunds'), orderController.updateRefundStatus); // Alias
+app.get('/api/admin/order/:id/payment-details', protect, authorize('admin'), checkPermission('refunds'), orderController.getRefundPaymentDetails);
+app.get('/api/admin/refund/:id/payment-details', protect, authorize('admin'), checkPermission('refunds'), orderController.getRefundPaymentDetails); // Alias
+app.post('/api/admin/refunds/initiate', protect, authorize('admin'), checkPermission('refunds'), require('./controllers/refundController').initiateRazorpayRefund);
+app.post('/api/admin/order/:id/restock', protect, authorize('admin'), checkPermission('refunds'), orderController.restockOrder);
+
 
 app.use('/api/products', productRoutes);
 app.use('/api/brands', brandRoutes);
