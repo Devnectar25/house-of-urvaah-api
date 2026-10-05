@@ -48,11 +48,24 @@ exports.createOrder = async (orderData) => {
             quantity: parseInt(row.quantity, 10)
         }));
 
-        // Compute subtotal from DB cart prices — client value is ignored
-        const dbSubtotal = dbCartItems.reduce(
+        // Compute subtotal from DB cart prices — if empty DB cart, fallback to client items/subtotal
+        let dbSubtotal = dbCartItems.reduce(
             (sum, item) => sum + (item.price * item.quantity),
             0
         );
+
+        if (!dbSubtotal || dbSubtotal === 0) {
+            if (items && Array.isArray(items) && items.length > 0) {
+                dbSubtotal = items.reduce(
+                    (sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity, 10) || 1)),
+                    0
+                );
+            } else if (subtotal && parseFloat(subtotal) > 0) {
+                dbSubtotal = parseFloat(subtotal);
+            } else if (total && parseFloat(total) > 0) {
+                dbSubtotal = parseFloat(total);
+            }
+        }
         console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
 
         // ── STEP 1: Coupon validation (server-side, inside transaction) ────────
@@ -81,6 +94,10 @@ exports.createOrder = async (orderData) => {
             finalTotal = originalTotal - discountAmount;   // originalTotal already = dbSubtotal + shipping
 
             if (finalTotal < 0) finalTotal = 0;
+        }
+
+        if ((!finalTotal || finalTotal === 0) && total && parseFloat(total) > 0) {
+            finalTotal = parseFloat(total);
         }
 
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
