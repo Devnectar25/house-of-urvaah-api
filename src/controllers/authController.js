@@ -112,6 +112,25 @@ exports.getCurrentUser = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Not authenticated' });
         }
 
+        if (req.user?.role === 'admin') {
+            const adminResult = await pool.query("SELECT * FROM public.admins WHERE adminid = $1", [userId]);
+            if (adminResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Admin not found' });
+            }
+            const adminRow = adminResult.rows[0];
+            if (adminRow.userid !== 'Admin' && adminRow.active === false) {
+                return res.status(403).json({ success: false, message: 'Account deactivated' });
+            }
+            const admin = {
+                id: adminRow.adminid.toString(),
+                username: adminRow.userid,
+                role: adminRow.userid === 'Admin' ? 'super_admin' : 'sub_admin',
+                permissions: adminRow.accesstopage || [],
+                createdate: adminRow.createdate
+            };
+            return res.status(200).json({ success: true, user: admin, admin });
+        }
+
         const result = await pool.query(
             "SELECT * FROM public.users WHERE username = $1 OR emailid = $1 LIMIT 1",
             [userId]
@@ -128,6 +147,7 @@ exports.getCurrentUser = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
 
 /**
  * Admin Login

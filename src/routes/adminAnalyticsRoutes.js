@@ -12,6 +12,11 @@ const {
   getRevenueBreakdown
 } = require("../controllers/analyticsController");
 
+const { protect, authorize, checkPermission } = require("../middlewares/authMiddleware");
+
+// All routes require admin role and analytics permission
+router.use(protect, authorize('admin'), checkPermission('analytics'));
+
 // GET /api/admin/analytics/summary
 router.get("/summary", getAdminAnalyticsSummary);
 
@@ -35,5 +40,6 @@ router.get("/dashboard-stats", getDashboardStats);
 
 // GET /api/admin/analytics/dashboard-summary
 router.get("/dashboard-summary", getDashboardSummary);
+
 
 module.exports = router;

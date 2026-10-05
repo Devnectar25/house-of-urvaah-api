@@ -38,7 +38,7 @@ exports.authorize = (...roles) => {
 
 exports.checkPermission = (permission) => {
     return async (req, res, next) => {
-        if (req.user?.role !== 'admin') {
+        if (!req.user || req.user.role !== 'admin') {
             return res.status(403).json({ success: false, message: 'Access denied: Requires admin role' });
         }
         
@@ -48,7 +48,11 @@ exports.checkPermission = (permission) => {
             const admin = result.rows[0];
             
             if (!admin) {
-                return res.status(403).json({ success: false, message: 'Admin not found' });
+                return res.status(403).json({ success: false, message: 'Admin account not found' });
+            }
+            
+            if (admin.active === false) {
+                return res.status(403).json({ success: false, message: 'Your admin account has been deactivated' });
             }
             
             // Check permissions
@@ -56,8 +60,12 @@ exports.checkPermission = (permission) => {
             if (admin.userid === 'Admin') {
                 hasAccess = true;
             } else {
-                const permissions = admin.accesstopage || [];
-                if (permissions.includes(permission)) {
+                const permissions = Array.isArray(admin.accesstopage) ? admin.accesstopage : [];
+                if (
+                    permissions.includes(permission) ||
+                    (permission === 'refunds' && (permissions.includes('refunds') || permissions.includes('refund-desk'))) ||
+                    (permission === 'refund-desk' && (permissions.includes('refunds') || permissions.includes('refund-desk')))
+                ) {
                     hasAccess = true;
                 }
             }
@@ -65,15 +73,12 @@ exports.checkPermission = (permission) => {
             const ipAddress = req.ip || req.connection?.remoteAddress || '';
             
             if (!hasAccess) {
-                // Log unauthorized access
-                await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", 
-                    [admin.adminid, admin.userid, 'UNAUTHORIZED_ACCESS', `Attempted to access ${req.originalUrl} (${permission})`, ipAddress]);
-                return res.status(403).json({ success: false, message: `Access denied for module: ${permission}` });
+                try {
+                    await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", 
+                        [admin.adminid, admin.userid, 'UNAUTHORIZED_ACCESS', `Attempted to access ${req.originalUrl} (${permission})`, ipAddress]);
+                } catch (logErr) {}
+                return res.status(403).json({ success: false, message: `Access denied: You do not have permission for section '${permission}'` });
             }
-            
-            // Log successful access
-            await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", 
-                [admin.adminid, admin.userid, 'PAGE_ACCESS', `Accessed ${req.originalUrl}`, ipAddress]);
             
             next();
         } catch (error) {
@@ -82,3 +87,4 @@ exports.checkPermission = (permission) => {
         }
     };
 };
+
