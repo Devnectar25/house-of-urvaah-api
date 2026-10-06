@@ -26,7 +26,7 @@ const SEED_PRODUCTS = [
     colors: ['#4A3B32', '#111111', '#F5F5F0'],
     fabric: 'Virgin Wool Suiting Crepe',
     fit_type: 'Oversized Boyfriend Fit',
-    description: 'Structured single-breasted blazer in warm taupe brown with padded shoulders, peak lapels, and hand-finished seams.',
+    description: 'A spaghetti-strap top and mini skirt set in a rich brown floral embroidered fabric with intricate sequin detailing. A low, backless silhouette with an adjustable tie-back on the top, finished with a potli-trimmed skirt hem for texture.\nFully lined for comfort, with a smooth side-zip closure on the skirt.',
     is_featured: true,
     is_active: true
   },
