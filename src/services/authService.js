@@ -228,9 +228,17 @@ exports.completeSignup = async (data) => {
     const cleanFirstName = (firstName && firstName.trim()) ? firstName.trim() : 'Customer';
     const cleanLastName = (lastName && lastName.trim()) ? lastName.trim() : '';
     const cleanEmail = email.toLowerCase().trim();
+    const cleanFirstName = (firstName || '').trim();
+    const cleanLastName = (lastName || '').trim();
     const cleanPhone = (phone || '').replace(/\D/g, '');
 
-    if (!cleanPhone || cleanPhone.length !== 10) {
+    if (!cleanFirstName || cleanFirstName.length < 2) {
+        throw new Error("First name is required (at least 2 characters)");
+    }
+    if (!cleanLastName || cleanLastName.length < 2) {
+        throw new Error("Last name is required (at least 2 characters)");
+    }
+    if (!cleanPhone || cleanPhone.length !== 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
         throw new Error("Please enter a valid 10-digit mobile number");
     }
 

@@ -68,11 +68,11 @@ exports.createRazorpayOrder = async (amount, currency = 'INR', receipt, internal
             };
         }
 
-        if (internalOrderId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(internalOrderId)) {
+        if (internalOrderId) {
             await pool.query(
-                `UPDATE orders SET razorpay_order_id = $1 WHERE id = $2`,
-                [order.id, internalOrderId]
-            );
+                `UPDATE orders SET razorpay_order_id = $1 WHERE id::text = $2 OR order_number = $2`,
+                [order.id, String(internalOrderId)]
+            ).catch(err => console.warn('[createRazorpayOrder] razorpay_order_id update note:', err.message));
         }
 
         return order;
@@ -96,9 +96,9 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
     if (!isSignatureValid) {
         if (internalOrderId) {
             await pool.query(
-                `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id = $1`,
-                [internalOrderId]
-            );
+                `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id::text = $1 OR order_number = $1`,
+                [String(internalOrderId)]
+            ).catch(err => console.warn('[verifyPayment] Cancel update note:', err.message));
         }
         return { success: false, message: 'Invalid signature' };
     }
@@ -124,8 +124,8 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                 `INSERT INTO transactions (user_id, order_id, transaction_id, amount, status, created_at)
                  VALUES ($1, $2, $3, $4, 'Completed', NOW())
                  ON CONFLICT (transaction_id) DO NOTHING`,
-                [userId, internalOrderId, razorpay_payment_id || `pay_${Date.now()}`, amount || 0]
-            );
+                [userId, String(internalOrderId), razorpay_payment_id || `pay_${Date.now()}`, amount || 0]
+            ).catch(err => console.warn('[verifyPayment] Transaction record insert note:', err.message));
 
             const orderResult = await client.query(
                 `UPDATE orders 
@@ -133,9 +133,9 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                      payment_status = 'Paid', 
                      razorpay_payment_id = $2,
                      updated_at = NOW() 
-                 WHERE id = $1 
+                 WHERE id::text = $1 OR order_number = $1 
                  RETURNING *`,
-                [internalOrderId, razorpay_payment_id || `pay_${Date.now()}`]
+                [String(internalOrderId), razorpay_payment_id || `pay_${Date.now()}`]
             );
             orderRow = orderResult.rows[0];
         }

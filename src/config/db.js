@@ -25,9 +25,11 @@ const pool = new Pool({
 // The pool will emit an error on behalf of any idle client
 // it contains if it closes unexpectedly (e.g., network issue, db restart).
 // Adding this handler prevents the process from crashing.
-pool.on('error', (err, client) => {
-    console.error('[DB Pool Error] Unexpected error on idle client:', err.message);
-    // Don't exit process, just log. The pool will discard the bad client.
+// Auto-ensure required columns exist on public.orders
+pool.query(`
+    ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+`).catch((err) => {
+    console.warn('[DB Auto Migration Warning] Could not check/add delivered_at column:', err.message);
 });
 
 module.exports = pool;

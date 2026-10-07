@@ -15,6 +15,14 @@ exports.createOrder = async (orderData) => {
             couponCode,   // optional — sent from Checkout.tsx when user applied a coupon
             cartItemIds
         } = orderData;
+
+        if (!userId) {
+            throw new Error('User authentication ID is required to place an order.');
+        }
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            throw new Error('Order items cannot be empty.');
+        }
+
         console.log(`[OrderService] Starting order creation for user: ${userId}, Order #: ${orderNumber}`);
         console.log(`[OrderService] Order items count: ${items?.length}, Cart item IDs: ${JSON.stringify(cartItemIds)}`);
         // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
@@ -101,6 +109,18 @@ exports.createOrder = async (orderData) => {
         }
 
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
+        let sanitizedAddressId = addressId;
+        if (sanitizedAddressId) {
+            const strVal = String(sanitizedAddressId).trim();
+            if (strVal.startsWith('local-') || isNaN(Number(strVal))) {
+                sanitizedAddressId = null;
+            } else {
+                sanitizedAddressId = parseInt(strVal, 10);
+            }
+        } else {
+            sanitizedAddressId = null;
+        }
+
         const orderResult = await client.query(
             `INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
@@ -113,7 +133,7 @@ exports.createOrder = async (orderData) => {
             [
                 userId,                          // $1
                 orderNumber,                     // $2
-                addressId,                       // $3
+                sanitizedAddressId,              // $3
                 paymentMethod,                   // $4
                 paymentStatus || 'Pending',      // $5
                 paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $6
@@ -1021,7 +1041,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, paymentStatus || 'Paid'];
         } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
             status.includes('Replace Approved') || status.includes('Replace Rejected') ||
