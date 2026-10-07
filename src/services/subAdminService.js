@@ -18,7 +18,7 @@ exports.createSubAdmin = async (data) => {
     if (!username || !username.trim()) throw new Error("Username is required");
     if (!password || !password.trim()) throw new Error("Password is required");
 
-    const existing = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [username.trim()]);
+    const existing = await pool.query("SELECT * FROM public.admins WHERE LOWER(userid) = LOWER($1)", [username.trim()]);
     if (existing.rows.length > 0) throw new Error("Username already exists");
 
     const salt = await bcrypt.genSalt(10);
