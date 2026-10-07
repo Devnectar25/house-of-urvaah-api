@@ -1,9 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
-// const puppeteer = require('puppeteer'); // Commented out for Vercel fix
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
 const orderService = require('./orderService');
 const pool = require('../config/db');
 
@@ -153,6 +150,8 @@ exports.generateInvoicePDF = async (orderId) => {
     // NEW CODE - VERCEL COMPATIBLE
     let browser;
     try {
+        const puppeteer = require('puppeteer-core');
+        const chromium = require('@sparticuz/chromium');
         const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL;
         
         browser = await puppeteer.launch({

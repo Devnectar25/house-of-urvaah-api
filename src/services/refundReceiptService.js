@@ -1,8 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
 
 const getCurrencySymbol = () => {
     try {
@@ -56,6 +54,8 @@ exports.generateRefundReceiptPDF = async (order, refundId) => {
     const html = await exports.generateRefundReceiptHTML(order, refundId);
     let browser;
     try {
+        const puppeteer = require('puppeteer-core');
+        const chromium = require('@sparticuz/chromium');
         const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL;
         browser = await puppeteer.launch({
             args: isProd ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
