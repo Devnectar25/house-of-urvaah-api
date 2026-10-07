@@ -23,31 +23,29 @@ app.use((req, res, next) => {
     next();
 });
 
-// Bulletproof W3C/MDN CORS Middleware — never returns wildcard '*' when credentials mode is 'include'
-app.use((req, res, next) => {
-    let rawOrigin = req.headers.origin;
-    if (!rawOrigin && req.headers.referer) {
-        try {
-            rawOrigin = new URL(req.headers.referer).origin;
-        } catch (e) {
-            rawOrigin = null;
+// Express CORS middleware using cors package with explicit allowed origins & credentials: true
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://house-of-urvaah-fe.vercel.app'
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin) || /^https:\/\/.*\.vercel\.app$/.test(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
         }
-    }
-    // Mirror exact request origin or fallback to frontend Vercel origin (NEVER wildcard '*')
-    const allowedOrigin = rawOrigin || 'https://house-of-urvaah-fe.vercel.app';
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'],
+    maxAge: 86400
+}));
 
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-    res.setHeader('Access-Control-Max-Age', '86400');
-
-    // Handle preflight OPTIONS request immediately
-    if (req.method === 'OPTIONS') {
-        return res.status(204).end();
-    }
-    next();
-});
+// Respond immediately to OPTIONS preflight requests across all endpoints
+app.options('*', cors());
 
 // Cookie parser middleware
 app.use((req, res, next) => {
