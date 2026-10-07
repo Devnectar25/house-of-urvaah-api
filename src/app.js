@@ -74,48 +74,9 @@ app.use((req, res, next) => {
 // to ensure the stream is not consumed or interfered with.
 app.use('/api/upload', uploadRoutes);
 
-// Manual JSON body parser to bypass express.json() crash on Vercel
-app.use((req, res, next) => {
-    if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
-        return next();
-    }
-
-    const contentType = req.headers['content-type'];
-    if (!contentType || !contentType.includes('application/json')) {
-        return next();
-    }
-
-    let data = '';
-    const MAX_SIZE = 1 * 1024 * 1024; // 1MB limit
-    // ... (omitting lines for brevity in match, but I will replace the whole block correctly)
-
-
-    req.on('data', chunk => {
-        data += chunk;
-        if (data.length > MAX_SIZE) {
-            req.destroy(); // Terminate request if too large
-        }
-    });
-
-    req.on('end', () => {
-        try {
-            if (data && data.trim()) {
-                req.body = JSON.parse(data);
-            } else {
-                req.body = {};
-            }
-            next();
-        } catch (e) {
-            console.error("Manual JSON Parse Error:", e);
-            res.status(400).json({ success: false, error: "Invalid JSON body" });
-        }
-    });
-
-    req.on('error', (err) => {
-        console.error("Request stream error:", err);
-        next(err);
-    });
-});
+// Standard JSON & URL-encoded body parsers for local and Vercel serverless
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Session middleware (MUST be before passport)
 app.use(session({
