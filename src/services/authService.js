@@ -225,8 +225,6 @@ exports.completeSignup = async (data) => {
         throw new Error("Email is required");
     }
 
-    const cleanFirstName = (firstName && firstName.trim()) ? firstName.trim() : 'Customer';
-    const cleanLastName = (lastName && lastName.trim()) ? lastName.trim() : '';
     const cleanEmail = email.toLowerCase().trim();
     const cleanFirstName = (firstName || '').trim();
     const cleanLastName = (lastName || '').trim();
