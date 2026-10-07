@@ -228,9 +228,17 @@ exports.completeSignup = async (data) => {
     const cleanFirstName = (firstName && firstName.trim()) ? firstName.trim() : 'Customer';
     const cleanLastName = (lastName && lastName.trim()) ? lastName.trim() : '';
     const cleanEmail = email.toLowerCase().trim();
+    const cleanFirstName = (firstName || '').trim();
+    const cleanLastName = (lastName || '').trim();
     const cleanPhone = (phone || '').replace(/\D/g, '');
 
-    if (!cleanPhone || cleanPhone.length !== 10) {
+    if (!cleanFirstName || cleanFirstName.length < 2) {
+        throw new Error("First name is required (at least 2 characters)");
+    }
+    if (!cleanLastName || cleanLastName.length < 2) {
+        throw new Error("Last name is required (at least 2 characters)");
+    }
+    if (!cleanPhone || cleanPhone.length !== 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
         throw new Error("Please enter a valid 10-digit mobile number");
     }
 
@@ -279,20 +287,33 @@ exports.completeSignup = async (data) => {
 exports.loginAdmin = async (username, password, ipAddress) => {
     console.log(`[authService] loginAdmin called for: ${username}`);
 
-    const result = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [username]);
+    const result = await pool.query("SELECT * FROM public.admins WHERE LOWER(userid) = LOWER($1)", [username]);
     const adminRow = result.rows[0];
 
-    if (!adminRow || !(await bcrypt.compare(password, adminRow.password))) {
-        if (adminRow && adminRow.password === password) {
-            console.log(`[authService] Plain password matched (fallback)`);
-        } else {
-            if (adminRow) {
-                await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [adminRow.adminid, username, 'FAILED_LOGIN', 'Invalid password', ipAddress]);
-            } else {
-                await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, username, 'FAILED_LOGIN', 'User not found', ipAddress]);
+    if (!adminRow) {
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, username, 'FAILED_LOGIN', 'User not found', ipAddress]).catch(() => {});
+        throw new Error("Invalid username or password");
+    }
+
+    let isPasswordValid = false;
+    if (adminRow.password) {
+        if (await bcrypt.compare(password, adminRow.password).catch(() => false)) {
+            isPasswordValid = true;
+        } else if (adminRow.password === password) {
+            isPasswordValid = true;
+            console.log(`[authService] Plain password matched for ${username}, auto-hashing...`);
+            try {
+                const newHash = await bcrypt.hash(password, 10);
+                await pool.query("UPDATE public.admins SET password = $1 WHERE adminid = $2", [newHash, adminRow.adminid]);
+            } catch (hashErr) {
+                console.warn('[authService] Auto-hash warning:', hashErr.message);
             }
-            throw new Error("Invalid username or password");
         }
+    }
+
+    if (!isPasswordValid) {
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [adminRow.adminid, username, 'FAILED_LOGIN', 'Invalid password', ipAddress]).catch(() => {});
+        throw new Error("Invalid username or password");
     }
 
     if (adminRow.userid !== 'Admin' && adminRow.active === false) {

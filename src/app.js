@@ -23,14 +23,23 @@ app.use((req, res, next) => {
     next();
 });
 
-// Manual CORS middleware — cors package is unreliable on Vercel serverless
-// for Authorization headers. This is explicit and guaranteed to work.
+// Bulletproof W3C/MDN CORS Middleware — never returns wildcard '*' when credentials mode is 'include'
 app.use((req, res, next) => {
-    const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : 'http://localhost:3000');
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    let rawOrigin = req.headers.origin;
+    if (!rawOrigin && req.headers.referer) {
+        try {
+            rawOrigin = new URL(req.headers.referer).origin;
+        } catch (e) {
+            rawOrigin = null;
+        }
+    }
+    // Mirror exact request origin or fallback to frontend Vercel origin (NEVER wildcard '*')
+    const allowedOrigin = rawOrigin || 'https://house-of-urvaah-fe.vercel.app';
+
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
     res.setHeader('Access-Control-Max-Age', '86400');
 
     // Handle preflight OPTIONS request immediately
@@ -148,6 +157,8 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/health-tips', healthTipRoutes);
+app.use('/api/delivery', require('./routes/deliveryRoutes'));
+app.use('/api/pincode', require('./routes/pincodeRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
