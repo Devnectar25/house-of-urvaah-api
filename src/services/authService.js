@@ -224,21 +224,23 @@ exports.completeSignup = async (data) => {
     if (!email || !email.trim()) {
         throw new Error("Email is required");
     }
-    if (!firstName || !firstName.trim() || firstName.trim().length < 2) {
-        throw new Error("First name is required (at least 2 characters)");
-    }
-    if (!lastName || !lastName.trim()) {
-        throw new Error("Last name is required");
-    }
 
     const cleanEmail = email.toLowerCase().trim();
+    const cleanFirstName = (firstName || '').trim();
+    const cleanLastName = (lastName || '').trim();
     const cleanPhone = (phone || '').replace(/\D/g, '');
 
-    if (!cleanPhone || cleanPhone.length !== 10) {
+    if (!cleanFirstName || cleanFirstName.length < 2) {
+        throw new Error("First name is required (at least 2 characters)");
+    }
+    if (!cleanLastName || cleanLastName.length < 2) {
+        throw new Error("Last name is required (at least 2 characters)");
+    }
+    if (!cleanPhone || cleanPhone.length !== 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
         throw new Error("Please enter a valid 10-digit mobile number");
     }
 
-    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    const fullName = `${cleanFirstName} ${cleanLastName}`.trim();
     const username = cleanEmail;
 
     // Check if user exists
@@ -251,7 +253,7 @@ exports.completeSignup = async (data) => {
             SET first_name = $1, last_name = $2, fullname = $3, phone = $4, contactno = $4, is_verified = TRUE
             WHERE emailid = $5 OR username = $5
             RETURNING *;
-        `, [firstName.trim(), lastName.trim(), fullName, cleanPhone, cleanEmail]);
+        `, [cleanFirstName, cleanLastName, fullName, cleanPhone, cleanEmail]);
         userRow = updateRes.rows[0];
     } else {
         const insertRes = await pool.query(`
@@ -259,7 +261,7 @@ exports.completeSignup = async (data) => {
             (username, emailid, first_name, last_name, fullname, phone, contactno, active, is_verified, createdate, member_since)
             VALUES ($1, $2, $3, $4, $5, $6, $6, true, true, NOW(), NOW())
             RETURNING *;
-        `, [username, cleanEmail, firstName.trim(), lastName.trim(), fullName, cleanPhone]);
+        `, [username, cleanEmail, cleanFirstName, cleanLastName, fullName, cleanPhone]);
         userRow = insertRes.rows[0];
     }
 
