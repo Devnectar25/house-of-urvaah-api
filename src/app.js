@@ -23,14 +23,26 @@ app.use((req, res, next) => {
     next();
 });
 
-// Manual CORS middleware — cors package is unreliable on Vercel serverless
-// for Authorization headers. This is explicit and guaranteed to work.
+// Manual CORS middleware — guaranteed W3C / MDN spec compliance on Vercel
 app.use((req, res, next) => {
-    const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : 'http://localhost:3000');
-    res.setHeader('Access-Control-Allow-Origin', origin);
+    let origin = req.headers.origin;
+    if (!origin && req.headers.referer) {
+        try {
+            origin = new URL(req.headers.referer).origin;
+        } catch (e) {
+            origin = null;
+        }
+    }
+
+    if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+    } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
     res.setHeader('Access-Control-Max-Age', '86400');
 
     // Handle preflight OPTIONS request immediately
