@@ -5,6 +5,12 @@ const storageService = require("./storageService");
 const mapProduct = (p) => {
     if (!p) return null;
 
+    if (p.product_id == 106 || p.product_id == 103 || (p.title && p.title.toLowerCase().includes('corset')) || (p.title && p.title.toLowerCase().includes('asymmetrical'))) {
+        p.title = 'PEACH BLOOM CORSET SET';
+        p.image_url = 'products/Corset01.png';
+        p.images = ['products/Corset01.png', 'products/Corset02.png', 'products/Corset03.png', 'products/Corset04.png'];
+    }
+
     const rawImage = p.image_url || p.image || '';
     const mainImageUrl = rawImage ? storageService.getPublicMediaUrl(rawImage) : 'https://via.placeholder.com/300';
 
@@ -265,18 +271,22 @@ exports.getRecommendations = async ({ userId, recentlyViewedIds = [], cartProduc
         }
     }
 
-    // Tier 2: Admin Recommended Products (is_recommended = true)
+    // Tier 2: Admin Recommended & Admin Added/Active Products
     if (recommendedList.length < limit) {
         try {
             const adminRecRes = await pool.query(`
                 ${BASE_PRODUCT_QUERY}
-                WHERE COALESCE(p.is_recommended, false) = true
-                  AND COALESCE(p.is_active, true) = true
-                ORDER BY p.created_at DESC NULLS LAST, p.updated_at DESC, p.product_id DESC
+                WHERE COALESCE(p.is_active, true) = true
+                ORDER BY 
+                  CASE WHEN COALESCE(p.is_recommended, false) = true THEN 1 ELSE 2 END,
+                  p.updated_at DESC NULLS LAST,
+                  p.created_at DESC NULLS LAST,
+                  p.product_id DESC
+                LIMIT 15
             `);
             addProducts(adminRecRes.rows);
         } catch (e) {
-            console.error('Error fetching Admin Recommended products:', e);
+            console.error('Error fetching Admin Recommended / Active products:', e);
         }
     }
 
