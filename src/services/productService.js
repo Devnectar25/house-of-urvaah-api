@@ -5,9 +5,9 @@ const storageService = require("./storageService");
 const mapProduct = (p) => {
     if (!p) return null;
 
-    if (p.product_id == 105) {
+    if (p.product_id == 105 || (p.title && p.title.toLowerCase().includes('oversized blazer'))) {
         p.product_id = 101;
-        p.title = p.title || 'CHESTNUT BLOOM SET';
+        p.title = 'CHESTNUT BLOOM SET';
         p.image_url = p.image_url || 'products/Brown02.png';
         p.images = (p.images && p.images.length > 0) ? p.images : ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
     }
