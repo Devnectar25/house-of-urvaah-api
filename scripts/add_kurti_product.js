@@ -21,8 +21,8 @@ async function addKurtiProduct() {
       ) VALUES (
         109,
         109,
-        'EMBROIDERED SILK KURTI SET',
-        'Architectural embroidered silk kurti ensemble featuring intricate hand-finished detailing and flowing silhouette.',
+        'Ivory Corset Kurti',
+        'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.',
         8990,
         11990,
         18,
@@ -32,9 +32,9 @@ async function addKurtiProduct() {
         true,
         true,
         50,
-        ARRAY['XS', 'S', 'M', 'L', 'XL'],
+        ARRAY['XS', 'S', 'M', 'L'],
         ARRAY['#8B0000', '#111111', '#F5F5F0'],
-        'Artisan Silk Blend',
+        'Cora cotton',
         'Fluid Tailored Fit',
         NOW(),
         NOW()
@@ -46,6 +46,8 @@ async function addKurtiProduct() {
         sale_price = EXCLUDED.sale_price,
         image_url = EXCLUDED.image_url,
         images = EXCLUDED.images,
+        fabric = EXCLUDED.fabric,
+        sizes = EXCLUDED.sizes,
         is_featured = true,
         is_active = true,
         updated_at = NOW()

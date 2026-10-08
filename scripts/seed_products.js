@@ -15,7 +15,7 @@ const SEED_CATEGORIES = [
 const SEED_PRODUCTS = [
   {
     product_id: 101,
-    title: 'OVERSIZED TAILORED BLAZER',
+    title: 'CHESTNUT BLOOM SET',
     price: 8990,
     sale_price: 11990,
     category_id: 14,
@@ -32,7 +32,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 102,
-    title: 'DARK BLUE WIDE LEG TAILORED SET',
+    title: 'CERULEAN GARDEN SET',
     price: 10990,
     sale_price: 13990,
     category_id: 18,
@@ -43,13 +43,14 @@ const SEED_PRODUCTS = [
     colors: ['#5B9BD5', '#111111'],
     fabric: 'Fluid Silk Blend',
     fit_type: 'Tailored Wide-Leg Fit',
-    description: 'Printed two-piece ensemble featuring a halter neck top and matching floral mini skirt with smocked waist.',
+    description: 'A halter-neck top and mini skirt set in a teal floral embroidered fabric, finished with all-over sequin detailing that catches the light with every move. The skirt hem is edged with a hand-finished potli trim for a playful, textured finish.\nFully lined for comfort, with an adjustable tie-back on the top for a customizable fit and a smooth side-zip closure on the skirt.\nStyle it for a beach day, a vacation dinner, or a night out — this one does double duty.',
+    additional_info: 'Fabric: Embroidered fabric with sequin detailing\nSkirt hem: Hand-finished potli trim\nClosure: Adjustable tie-back (top), side zip on left of skirt\nLining: Fully lined (top and skirt)\nAvailable sizes: S, M, L\nTop: Lightly Padded',
     is_featured: true,
     is_active: true
   },
   {
     product_id: 103,
-    title: 'PEACH BLOOM CORSET SET',
+    title: 'GILDED MIST CORSET',
     price: 12990,
     sale_price: 15990,
     category_id: 18,
@@ -60,13 +61,13 @@ const SEED_PRODUCTS = [
     colors: ['#FFFFFF', '#111111'],
     fabric: 'Artisan Cotton Jacquard',
     fit_type: 'Contoured Slim Fit',
-    description: 'Floral embroidered corset bodice with sweetheart neckline, contour boning, and matching blossom skirt.',
+    description: 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.',
     is_featured: true,
     is_active: true
   },
   {
     product_id: 104,
-    title: 'MINIMALIST RIBBED SILK TOP',
+    title: 'ROSEWOOD BLOOM SET',
     price: 4990,
     sale_price: 6490,
     category_id: 12,
@@ -77,7 +78,7 @@ const SEED_PRODUCTS = [
     colors: ['#F5F5F0', '#111111'],
     fabric: 'Pure Silk Rib Knit',
     fit_type: 'Fitted',
-    description: 'Fine silk rib knit fitted top in dusty rose blush with delicate crew neckline and subtle rib texture.',
+    description: 'A cap-sleeve top and mini skirt set in a soft peach-pink floral embroidered fabric with delicate sequin work throughout. The skirt hem finishes in a hand-detailed potli trim, and a corset-style lace-up back on the top gives it a fitted, flattering silhouette.\nFully lined, with a side-zip closure on the skirt for easy wear.\nSoft enough for daytime, sharp enough for evening.',
     is_featured: true,
     is_active: true
   },
@@ -100,7 +101,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 106,
-    title: 'PEACH BLOOM CORSET SET',
+    title: 'GILDED MIST CORSET',
     price: 12990,
     sale_price: 15990,
     category_id: 11,
@@ -111,7 +112,7 @@ const SEED_PRODUCTS = [
     colors: ['#FFFFFF', '#111111'],
     fabric: 'Artisan Cotton Jacquard',
     fit_type: 'Contoured Slim Fit',
-    description: 'Floral embroidered corset bodice with sweetheart neckline, contour boning, and matching blossom skirt.',
+    description: 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.',
     is_featured: false,
     is_active: true
   },
