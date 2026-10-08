@@ -4,14 +4,14 @@ const supabase = require('../src/config/supabaseClient');
 const newDesc = `A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.`;
 
 async function updateDatabase() {
-    console.log('=== UPDATING PRODUCT NAME FOR 109 TO Ivory Corset Kurti ===');
+    console.log('=== UPDATING PRODUCT NAME FOR 105 / OVERSIZED BLAZER TO CHESTNUT BLOOM SET ===');
 
     // 1. PostgreSQL pool update
     try {
         const res = await pool.query(`
             UPDATE products 
-            SET title = 'Ivory Corset Kurti', updated_at = NOW()
-            WHERE product_id = 109 OR title ILIKE '%EMBROIDERED SILK KURTI%' OR title ILIKE '%Ivory Corset Kurti%';
+            SET title = 'CHESTNUT BLOOM SET', updated_at = NOW()
+            WHERE product_id IN (101, 105) OR title ILIKE '%OVERSIZED BLAZER%';
         `);
         console.log('✅ PostgreSQL Update Result:', res.rowCount, 'rows updated.');
     } catch (err) {
@@ -23,8 +23,8 @@ async function updateDatabase() {
         try {
             const { data, error } = await supabase
                 .from('products')
-                .update({ title: 'Ivory Corset Kurti' })
-                .or('product_id.eq.109,title.ilike.%EMBROIDERED SILK KURTI%,title.ilike.%Ivory Corset Kurti%');
+                .update({ title: 'CHESTNUT BLOOM SET' })
+                .or('product_id.in.(101,105),title.ilike.%OVERSIZED BLAZER%');
             if (error) {
                 console.error('❌ Supabase Update Error:', error.message);
             } else {

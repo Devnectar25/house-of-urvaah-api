@@ -84,7 +84,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 105,
-    title: 'DOUBLE-BREASTED OVERSIZED BLAZER',
+    title: 'CHESTNUT BLOOM SET',
     price: 8990,
     sale_price: 11990,
     category_id: 14,
