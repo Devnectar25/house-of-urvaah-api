@@ -5,10 +5,34 @@ const storageService = require("./storageService");
 const mapProduct = (p) => {
     if (!p) return null;
 
-    if (p.product_id == 106 || p.product_id == 103 || (p.title && p.title.toLowerCase().includes('corset')) || (p.title && p.title.toLowerCase().includes('asymmetrical'))) {
-        p.title = 'PEACH BLOOM CORSET SET';
+    if (p.product_id == 105) {
+        p.product_id = 101;
+        p.title = p.title || 'CHESTNUT BLOOM SET';
+        p.image_url = p.image_url || 'products/Brown02.png';
+        p.images = (p.images && p.images.length > 0) ? p.images : ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
+    }
+
+    if (p.product_id == 102 && (!p.title || p.title.toLowerCase().includes('dark blue'))) {
+        p.title = 'CERULEAN GARDEN SET';
+    }
+
+    if (p.product_id == 104 && (!p.title || p.title.toLowerCase().includes('ribbed silk'))) {
+        p.title = 'ROSEWOOD BLOOM SET';
+        p.description = 'A cap-sleeve top and mini skirt set in a soft peach-pink floral embroidered fabric with delicate sequin work throughout. The skirt hem finishes in a hand-detailed potli trim, and a corset-style lace-up back on the top gives it a fitted, flattering silhouette.\nFully lined, with a side-zip closure on the skirt for easy wear.\nSoft enough for daytime, sharp enough for evening.';
+    }
+
+    if (p.product_id == 106 || p.product_id == 103 || (p.title && p.title.toLowerCase().includes('asymmetrical')) || (p.title && p.title.toLowerCase().includes('peach bloom')) || (p.title && p.title.toLowerCase().includes('gilded mist'))) {
+        p.product_id = 103;
+        p.title = 'GILDED MIST CORSET';
+        p.description = 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.';
         p.image_url = 'products/Corset01.png';
         p.images = ['products/Corset01.png', 'products/Corset02.png', 'products/Corset03.png', 'products/Corset04.png'];
+    }
+
+    if (p.product_id == 109 || (p.title && (p.title.toLowerCase().includes('embroidered silk kurti') || p.title.toLowerCase().includes('ivory corset kurti')))) {
+        p.title = 'Ivory Corset Kurti';
+        p.description = 'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.';
+        p.additional_info = 'Fabric: Cora cotton (breathable, all-day wear)\nLining: Cotton lining\nNeckline: Square neck with floral lace trim\nClosure: Front button placket, corset-style lace-up back\nEmbroidery: All-over heart-shaped butti embroidery\nStyling: Wear buttoned as a dress, or open-front as a kurti\nAvailable sizes: XS, S, M, L';
     }
 
     const rawImage = p.image_url || p.image || '';
@@ -81,6 +105,9 @@ const mapProduct = (p) => {
         fitType: p.fit_type || '',
         careInstructions: p.care_instructions || '',
         care_instructions: p.care_instructions || '',
+        additionalInfo: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
+        additionalInfoText: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
+        additional_info: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
         sizeChartUrl: p.size_chart_url || '',
         styleCode: p.style_code || '',
         subCategory: p.subcategory_name || '',
