@@ -32,19 +32,39 @@ const PORT = process.env.PORT || 4000;
 // Only start the server if we're not running as a module (e.g., on Vercel)
 // Vercel imports the app and handles the listen part itself.
 if (require.main === module) {
-    const server = app.listen(PORT, () => {
-        console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-    }).on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            console.error(`❌ Port ${PORT} is already in use — a previous server instance may still be running. Please stop it and try again.`);
-        } else {
-            console.error('❌ Server startup error:', err.message);
-        }
-        process.exit(1);
-    });
+    const startServer = (portToUse, isRetry = false) => {
+        const server = app.listen(portToUse, () => {
+            console.log(`🚀 Server running on http://0.0.0.0:${portToUse}`);
+        }).on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                if (!isRetry) {
+                    console.warn(`⚠️ Port ${portToUse} is in use by a stale process. Automatically clearing port ${portToUse}...`);
+                    try {
+                        const { execSync } = require('child_process');
+                        if (process.platform === 'win32') {
+                            execSync(`powershell -Command "Get-NetTCPConnection -LocalPort ${portToUse} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`, { stdio: 'ignore' });
+                        } else {
+                            execSync(`fuser -k ${portToUse}/tcp || true`, { stdio: 'ignore' });
+                        }
+                        setTimeout(() => startServer(portToUse, true), 1200);
+                        return;
+                    } catch (killErr) {
+                        console.error(`❌ Could not auto-clear port ${portToUse}:`, killErr.message);
+                    }
+                } else {
+                    console.error(`❌ Port ${portToUse} is already in use. Please check running processes.`);
+                }
+            } else {
+                console.error('❌ Server startup error:', err.message);
+            }
+            process.exit(1);
+        });
 
-    // Increase timeout for large file uploads (10 minutes)
-    server.timeout = 600000;
+        // Increase timeout for large file uploads (10 minutes)
+        server.timeout = 600000;
+    };
+
+    startServer(PORT);
 } else {
     console.log('ℹ️ Server running in serverless/module mode');
 }
