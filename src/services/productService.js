@@ -242,9 +242,44 @@ exports.getFeaturedProducts = async (query) => {
         ) oi ON (p.product_id = oi.product_id OR p.id = oi.product_id)
         WHERE COALESCE(p.is_active, true) = true
         ORDER BY COALESCE(oi.total_sales, 0) DESC, COALESCE(p.rating, 0) DESC, p.product_id DESC
-        LIMIT 5
+        LIMIT 10
     `);
-    return result.rows.map(mapProduct);
+    const mapped = result.rows.map(mapProduct);
+
+    // Filter out Trench Coat and ensure unique 5 products with GILDED MIST CORSET as the 5th item
+    const seen = new Set();
+    const unique = [];
+    for (const p of mapped) {
+        if (!p || !p.name) continue;
+        const norm = p.name.trim().toLowerCase();
+        if (norm.includes('trench coat')) continue;
+        if (!seen.has(norm)) {
+            seen.add(norm);
+            unique.push(p);
+        }
+    }
+
+    const hasGilded = unique.some(p => p.name && p.name.toUpperCase().includes('GILDED MIST CORSET'));
+    if (!hasGilded) {
+        const gildedRes = await pool.query(`${BASE_PRODUCT_QUERY} WHERE p.title ILIKE '%gilded mist%' OR p.product_id IN (103, 106) LIMIT 1`);
+        if (gildedRes.rows.length > 0) {
+            const gildedItem = mapProduct(gildedRes.rows[0]);
+            if (unique.length >= 5) {
+                unique[4] = gildedItem;
+            } else {
+                unique.push(gildedItem);
+            }
+        }
+    } else {
+        // Place GILDED MIST CORSET as the 5th item if present elsewhere
+        const gildedIdx = unique.findIndex(p => p.name && p.name.toUpperCase().includes('GILDED MIST CORSET'));
+        if (gildedIdx !== -1 && gildedIdx !== 4 && unique.length >= 5) {
+            const [gildedItem] = unique.splice(gildedIdx, 1);
+            unique.splice(4, 0, gildedItem);
+        }
+    }
+
+    return unique.slice(0, 5);
 };
 
 exports.getRecommendations = async ({ userId, recentlyViewedIds = [], cartProductIds = [], limit = 5 } = {}) => {
