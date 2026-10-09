@@ -14,7 +14,7 @@ const poolConfig = connectionString
         ssl: { rejectUnauthorized: false },
         max: 10,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        connectionTimeoutMillis: 15000,
       }
     : {
         user: process.env.PGUSER,
@@ -27,7 +27,7 @@ const poolConfig = connectionString
         },
         max: 10,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        connectionTimeoutMillis: 15000,
       };
 
 const pool = new Pool(poolConfig);
@@ -37,11 +37,13 @@ pool.on('error', (err) => {
 });
 
 // Non-blocking auto migration check
-if (process.env.NODE_ENV !== 'production' || process.env.RUN_AUTO_MIGRATIONS === 'true') {
+if (process.env.RUN_AUTO_MIGRATIONS === 'true') {
     pool.query(`
         ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
     `).catch((err) => {
-        console.warn('[DB Auto Migration Warning] Could not check/add delivered_at column:', err.message);
+        if (!err.message?.includes('timeout')) {
+            console.warn('[DB Auto Migration Warning] Could not check/add delivered_at column:', err.message);
+        }
     });
 }
 

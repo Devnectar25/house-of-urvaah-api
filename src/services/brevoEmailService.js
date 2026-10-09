@@ -1,12 +1,43 @@
-const https = require('https');
+const nodemailer = require('nodemailer');
 
 /**
- * Send Transactional Email via Brevo API v3
+ * Send Transactional Email via SMTP (if configured) or Brevo API v3
  */
 const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
-  const apiKey = process.env.BREVO_API_KEY;
   const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SENDER_EMAIL || 'devnectar27@gmail.com';
   const senderName = process.env.BREVO_SENDER_NAME || process.env.SENDER_NAME || 'House of Urvaah';
+
+  // 1. Try Nodemailer SMTP if SMTP credentials are provided in .env
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      console.log(`[SMTP Email Request] Sending email via Nodemailer SMTP to ${toEmail}...`);
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT || '587', 10),
+        secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      });
+
+      const info = await transporter.sendMail({
+        from: `"${senderName}" <${process.env.SMTP_USER}>`,
+        to: toName ? `"${toName}" <${toEmail}>` : toEmail,
+        subject: subject,
+        html: htmlContent
+      });
+
+      console.log(`[SMTP Email Success] Dispatched to ${toEmail}, Message ID: ${info.messageId}`);
+      return { success: true, statusCode: 200, data: info.messageId };
+    } catch (smtpErr) {
+      console.error(`[SMTP Email Error]:`, smtpErr.message);
+      // Fallback to Brevo API if SMTP fails
+    }
+  }
+
+  // 2. Fallback / Default: Brevo API v3
+  const apiKey = process.env.BREVO_API_KEY;
 
   console.log(`[Brevo Email Request] Initiating transactional email:`);
   console.log(`  To: ${toEmail}`);
