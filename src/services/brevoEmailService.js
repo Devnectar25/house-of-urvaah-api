@@ -37,7 +37,39 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
     }
   }
 
-  // 2. Fallback / Default: Brevo API v3
+  // 2. If Brevo key is an SMTP key (starts with 'xsmtpsib-'), send via Brevo SMTP relay
+  if (process.env.BREVO_API_KEY && process.env.BREVO_API_KEY.startsWith('xsmtpsib-')) {
+    try {
+      console.log(`[Brevo SMTP Request] Sending email via Brevo SMTP relay to ${toEmail}...`);
+      const smtpUser = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SMTP_USER || 'bd851d001@smtp-brevo.com';
+      const transporter = nodemailer.createTransport({
+        host: 'smtp-relay.brevo.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: smtpUser,
+          pass: process.env.BREVO_API_KEY
+        }
+      });
+
+      const effectiveSender = senderEmail || 'devnectar27@gmail.com';
+
+      const info = await transporter.sendMail({
+        from: `"${senderName}" <${effectiveSender}>`,
+        replyTo: senderEmail || 'devnectar27@gmail.com',
+        to: toName ? `"${toName}" <${toEmail}>` : toEmail,
+        subject: subject,
+        html: htmlContent
+      });
+
+      console.log(`[Brevo SMTP Success] Dispatched to ${toEmail}, Message ID: ${info.messageId}`);
+      return { success: true, statusCode: 200, data: info.messageId };
+    } catch (smtpErr) {
+      console.error(`[Brevo SMTP Error]:`, smtpErr.message);
+    }
+  }
+
+  // 3. Fallback / Default: Brevo REST API v3
   const apiKey = process.env.BREVO_API_KEY;
 
   console.log(`[Brevo Email Request] Initiating transactional email:`);
@@ -52,8 +84,14 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
     return { success: false, error: 'BREVO_API_KEY environment variable is missing' };
   }
 
+  // If BREVO_SENDER_EMAIL is a @gmail.com address, use Brevo's verified relay subdomain to prevent DMARC bouncing
+  const effectiveSenderEmail = (senderEmail && !senderEmail.endsWith('@gmail.com'))
+    ? senderEmail
+    : 'devnectar27@12038968.brevosend.com';
+
   const payload = JSON.stringify({
-    sender: { name: senderName, email: senderEmail },
+    sender: { name: senderName, email: effectiveSenderEmail },
+    replyTo: { name: senderName, email: senderEmail || 'devnectar27@gmail.com' },
     to: [{ email: toEmail, name: toName || toEmail }],
     subject: subject,
     htmlContent: htmlContent
