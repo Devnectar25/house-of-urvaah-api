@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const https = require('https');
 
 /**
  * Send Transactional Email via SMTP (if configured) or Brevo API v3
