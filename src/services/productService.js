@@ -12,8 +12,9 @@ const mapProduct = (p) => {
         p.images = ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
     }
 
-    if (p.product_id == 102 && (!p.title || p.title.toLowerCase().includes('dark blue'))) {
-        p.title = 'CERULEAN GARDEN SET';
+    if (p.product_id == 102 || (p.title && (p.title.toLowerCase().includes('dark blue') || p.title.toLowerCase().includes('cerulean')))) {
+        p.product_id = 102;
+        p.title = 'Teal Embroidered Floral Co-Ord Set';
     }
 
     if (p.product_id == 104 && (!p.title || p.title.toLowerCase().includes('ribbed silk'))) {

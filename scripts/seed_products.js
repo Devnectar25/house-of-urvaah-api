@@ -32,7 +32,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 102,
-    title: 'CERULEAN GARDEN SET',
+    title: 'Teal Embroidered Floral Co-Ord Set',
     price: 10990,
     sale_price: 13990,
     category_id: 18,
