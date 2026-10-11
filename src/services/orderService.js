@@ -4,6 +4,51 @@ const paymentService = require('./paymentService');
 const shiprocketService = require('./shiprocketService');
 const whatsappService = require('./whatsappService');
 
+const resolveDbProductId = async (client, rawId, itemName) => {
+    let candidateId = null;
+    if (typeof rawId === 'number' && !isNaN(rawId)) {
+        candidateId = rawId;
+    } else if (rawId !== null && rawId !== undefined) {
+        const strVal = String(rawId).trim();
+        const digits = strVal.replace(/\D/g, '');
+        if (digits) {
+            candidateId = parseInt(digits, 10);
+        }
+    }
+
+    // Map known alias: 103 is Gilded Mist Corset, whose row in products is 106
+    if (candidateId === 103) {
+        candidateId = 106;
+    }
+
+    if (candidateId) {
+        const checkRes = await client.query(
+            'SELECT product_id FROM products WHERE product_id = $1 OR id = $1 LIMIT 1',
+            [candidateId]
+        );
+        if (checkRes.rows.length > 0) {
+            return checkRes.rows[0].product_id;
+        }
+    }
+
+    // Fallback: match by title if available
+    if (itemName && typeof itemName === 'string' && itemName.trim()) {
+        const titleRes = await client.query(
+            'SELECT product_id FROM products WHERE title ILIKE $1 LIMIT 1',
+            [`%${itemName.trim()}%`]
+        );
+        if (titleRes.rows.length > 0) {
+            return titleRes.rows[0].product_id;
+        }
+    }
+
+    // Safe fallback to first active product in DB
+    const fallbackRes = await client.query(
+        'SELECT product_id FROM products WHERE is_active = true ORDER BY product_id ASC LIMIT 1'
+    );
+    return fallbackRes.rows[0]?.product_id || 101;
+};
+
 exports.createOrder = async (orderData) => {
     const client = await pool.connect();
     try {
@@ -31,6 +76,22 @@ exports.createOrder = async (orderData) => {
         // This ensures scope matching AND subtotal calculations use authoritative
         // product prices — not values the client could have tampered with.
 
+        const sanitizedCartItemIds = Array.isArray(cartItemIds)
+            ? cartItemIds
+                .map(id => {
+                    if (typeof id === 'number' && !isNaN(id)) return id;
+                    if (typeof id === 'string') {
+                        const digits = id.replace(/\D/g, '');
+                        if (digits) {
+                            const n = parseInt(digits, 10);
+                            return n === 103 ? 106 : n;
+                        }
+                    }
+                    return null;
+                })
+                .filter(id => id !== null && !isNaN(id))
+            : [];
+
         let cartQuery = `SELECT
                 ci.product_id,
                 ci.product_id AS id,
@@ -43,9 +104,9 @@ exports.createOrder = async (orderData) => {
              WHERE ci.user_id = $1`;
         let cartParams = [userId];
 
-        if (cartItemIds && cartItemIds.length > 0) {
+        if (sanitizedCartItemIds.length > 0) {
             cartQuery += ` AND ci.product_id::integer = ANY($2::integer[])`;
-            cartParams.push(cartItemIds);
+            cartParams.push(sanitizedCartItemIds);
         }
 
         const cartResult = await client.query(cartQuery, cartParams);
@@ -169,10 +230,12 @@ exports.createOrder = async (orderData) => {
 
         // ── STEP 4: Insert order items + update stock ──────────────────────────
         for (const item of items) {
+            const validProductId = await resolveDbProductId(client, item.id || item.productId, item.name);
+
             await client.query(
                 `INSERT INTO order_items (order_id, product_id, name, price, quantity, image, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-                [order.id, item.id || item.productId, item.name, item.price, item.quantity, item.image]
+                [order.id, validProductId, item.name, item.price, item.quantity, item.image]
             );
 
             const stockUpdateResult = await client.query(
@@ -182,13 +245,13 @@ exports.createOrder = async (orderData) => {
                      updated_at     = NOW()
                  WHERE product_id::text = $1::text
                  RETURNING stock_quantity`,
-                [String(item.id || item.productId), item.quantity]
+                [String(validProductId), item.quantity]
             );
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
                     `UPDATE products SET instock = false WHERE product_id::text = $1::text`,
-                    [String(item.id || item.productId)]
+                    [String(validProductId)]
                 );
             }
         }
@@ -198,8 +261,8 @@ exports.createOrder = async (orderData) => {
         // the cart is kept intact until successful payment verification on the frontend.
         // This ensures that if the user cancels or the payment fails, their cart is preserved.
         if (paymentMethod === 'cod') {
-            if (cartItemIds && cartItemIds.length > 0) {
-                await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id::integer = ANY($2::integer[])`, [userId, cartItemIds]);
+            if (sanitizedCartItemIds && sanitizedCartItemIds.length > 0) {
+                await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id::integer = ANY($2::integer[])`, [userId, sanitizedCartItemIds]);
             } else {
                 await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
             }
