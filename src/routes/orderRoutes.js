@@ -20,6 +20,10 @@ router.patch('/:id/refund-status', authorize('admin'), checkPermission('orders')
 
 router.post('/:id/return-request', orderController.requestReturnReplace);
 router.post('/:id/cancel-item', orderController.requestItemCancellation);
+router.post('/:id/cancel', (req, res, next) => {
+    req.body.status = 'Cancelled';
+    return orderController.updateOrderStatus(req, res, next);
+});
 router.patch('/:id/restock', authorize('admin'), checkPermission('orders'), orderController.restockOrder);
 
 

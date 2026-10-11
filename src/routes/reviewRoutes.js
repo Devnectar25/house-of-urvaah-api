@@ -18,7 +18,7 @@ router.get('/', (req, res, next) => {
 
 router.get('/:productId', reviewController.getProductReviews);
 router.post('/', reviewController.addProductReview);
-router.delete('/:id', protect, authorize('admin'), checkPermission('reviews'), reviewController.deleteReview);
+router.delete('/:id', protect, authorize('admin', 'super_admin'), checkPermission('reviews'), reviewController.deleteReview);
 
 
 module.exports = router;
