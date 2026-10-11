@@ -1,88 +1,83 @@
 const pool = require("../config/db");
 
 exports.getReviewsByProduct = async (productId) => {
+    // Extract numeric ID if string (e.g. 'prod-102' -> 102, 'bs-101' -> 101, '104' -> 104)
+    const matches = String(productId || '').match(/\d+/);
+    const numericId = matches ? parseInt(matches[0], 10) : 0;
+
     const result = await pool.query(
-        `SELECT r.*, u.username as user_name
-         FROM review r
-         LEFT JOIN users u ON r.username = u.username
-         WHERE r.productid = $1
-         ORDER BY r.date DESC`,
-        [productId]
+        `SELECT r.id, r.product_id, r.user_id, r.rating, r.comment, r.created_at,
+                COALESCE(u.fullname, u.username, r.user_id, 'Verified Patron') as user_name
+         FROM reviews r
+         LEFT JOIN users u ON (u.username = r.user_id OR u.emailid = r.user_id)
+         WHERE r.product_id = $1
+         ORDER BY r.created_at DESC`,
+        [numericId]
     );
 
     return result.rows.map(row => ({
-        id: row.srno,
-        user: row.user_name || row.username || 'Anonymous',
-        rating: row.rating,
-        comment: row.review,
-        date: row.date,
+        id: row.id,
+        user: row.user_name || 'Verified Patron',
+        rating: Number(row.rating) || 5,
+        comment: row.comment || '',
+        date: row.created_at,
         verified: true
     }));
 };
 
 exports.createReview = async (data) => {
     const { productId, username, rating, review } = data;
+    const matches = String(productId || '').match(/\d+/);
+    const numericId = matches ? parseInt(matches[0], 10) : 0;
 
-    // Ensure user exists to satisfy FK constraint
-    let validUser = username;
-    const userCheck = await pool.query("SELECT username FROM users WHERE username = $1", [username]);
-
-    if (userCheck.rows.length === 0) {
-        try {
-            // Create the user on the fly to satisfy constraint
-            const email = `${(username || 'guest').toLowerCase().replace(/\s+/g, '')}@example.com`;
-            await pool.query(
-                "INSERT INTO users (username, emailid, password, active) VALUES ($1, $2, 'guest123', true)",
-                [username || 'guest', email]
-            );
-        } catch (userErr) {
-            console.warn("Could not create new user, falling back to existing:", userErr.message);
-            // Fallback to the first available user
-            const anyUser = await pool.query("SELECT username FROM users LIMIT 1");
-            if (anyUser.rows.length > 0) {
-                validUser = anyUser.rows[0].username;
-            } else {
-                throw new Error("Cannot create review: No valid user found.");
-            }
-        }
+    if (!numericId) {
+        throw new Error("Valid numeric product ID is required.");
     }
 
-    // Check if the user has already rated/reviewed this product
-    const existingCheck = await pool.query(
-        "SELECT srno FROM review WHERE productid = $1 AND username = $2",
-        [productId, validUser]
-    );
-
-    if (existingCheck.rows.length > 0) {
-        throw new Error("You have already reviewed this product.");
-    }
+    const validUser = username?.trim() || 'Verified Patron';
+    const numRating = Math.max(1, Math.min(5, parseInt(rating, 10) || 5));
+    const commentText = (review || '').trim();
 
     const result = await pool.query(
-        `INSERT INTO review (productid, username, rating, review, date)
-         VALUES ($1, $2, $3, $4, CURRENT_DATE)
+        `INSERT INTO reviews (product_id, user_id, rating, comment, created_at)
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
          RETURNING *`,
-        [productId, validUser, rating, review]
+        [numericId, validUser, numRating, commentText]
     );
 
-    // Update product rating and review count
-    await pool.query(
-        `UPDATE products 
-         SET rating = (SELECT AVG(rating) FROM review WHERE productid = $1),
-             reviews = (SELECT COUNT(*)::text FROM review WHERE productid = $1)
-         WHERE product_id = $1`,
-        [productId]
-    );
+    // Update product rating and reviews count if columns exist
+    try {
+        await pool.query(
+            `UPDATE products 
+             SET rating = COALESCE((SELECT ROUND(AVG(rating)::numeric, 2) FROM reviews WHERE product_id = $1), 0),
+                 reviews_count = COALESCE((SELECT COUNT(*) FROM reviews WHERE product_id = $1), 0)
+             WHERE product_id = $1`,
+            [numericId]
+        );
+    } catch (updateErr) {
+        console.warn("Could not sync rating in products table:", updateErr.message);
+    }
 
-    return result.rows[0];
+    return {
+        id: result.rows[0].id,
+        user: validUser,
+        rating: numRating,
+        comment: commentText,
+        date: result.rows[0].created_at,
+        verified: true
+    };
 };
 
 exports.getReviewSummary = async (productId) => {
+    const matches = String(productId || '').match(/\d+/);
+    const numericId = matches ? parseInt(matches[0], 10) : 0;
+
     const result = await pool.query(
         `SELECT rating, COUNT(*) as count
-         FROM review
-         WHERE productid = $1
+         FROM reviews
+         WHERE product_id = $1
          GROUP BY rating`,
-        [productId]
+        [numericId]
     );
 
     const distribution = {
@@ -93,8 +88,8 @@ exports.getReviewSummary = async (productId) => {
     let totalRating = 0;
 
     result.rows.forEach(row => {
-        const r = parseInt(row.rating);
-        const c = parseInt(row.count);
+        const r = parseInt(row.rating, 10);
+        const c = parseInt(row.count, 10);
         if (distribution[r] !== undefined) {
             distribution[r] = c;
         }
@@ -102,7 +97,7 @@ exports.getReviewSummary = async (productId) => {
         totalRating += (r * c);
     });
 
-    const average = totalReviews > 0 ? (totalRating / totalReviews).toFixed(1) : 0;
+    const average = totalReviews > 0 ? (totalRating / totalReviews).toFixed(1) : '0.0';
 
     return {
         average,

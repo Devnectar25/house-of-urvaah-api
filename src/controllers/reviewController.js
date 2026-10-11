@@ -4,11 +4,14 @@ const pool = require('../config/db');
 exports.getAllReviews = async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT r.srno as id, r.productid, COALESCE(p.productname, 'Product #' || r.productid) as product_name, r.username, u.emailid, r.rating, r.review as comment, r.date
-            FROM review r
-            LEFT JOIN products p ON r.productid = p.product_id
-            LEFT JOIN users u ON r.username = u.username
-            ORDER BY r.date DESC, r.srno DESC
+            SELECT r.id, r.product_id as productid, COALESCE(p.title, 'Product #' || r.product_id) as product_name,
+                   COALESCE(p.image_url, (p.images)[1], '') as product_image,
+                   r.user_id as username, COALESCE(u.emailid, '') as emailid,
+                   r.rating, r.comment, r.created_at as date
+            FROM reviews r
+            LEFT JOIN products p ON r.product_id = p.product_id
+            LEFT JOIN users u ON (u.username = r.user_id OR u.emailid = r.user_id)
+            ORDER BY r.created_at DESC, r.id DESC
         `);
         res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
     } catch (error) {
@@ -20,21 +23,22 @@ exports.getAllReviews = async (req, res) => {
 exports.deleteReview = async (req, res) => {
     try {
         const { id } = req.params;
-        const reviewRes = await pool.query('SELECT productid FROM review WHERE srno = $1', [id]);
+        const reviewRes = await pool.query('SELECT product_id FROM reviews WHERE id = $1', [id]);
         if (reviewRes.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'Review not found' });
         }
-        const productId = reviewRes.rows[0].productid;
-        await pool.query('DELETE FROM review WHERE srno = $1', [id]);
+        const productId = reviewRes.rows[0].product_id;
+        await pool.query('DELETE FROM reviews WHERE id = $1', [id]);
         
-        // Update product rating and review count
-        await pool.query(
-            `UPDATE products 
-             SET rating = COALESCE((SELECT AVG(rating) FROM review WHERE productid = $1), 0),
-                 reviews = (SELECT COUNT(*)::text FROM review WHERE productid = $1)
-             WHERE product_id = $1`,
-            [productId]
-        );
+        try {
+            await pool.query(
+                `UPDATE products 
+                 SET rating = COALESCE((SELECT ROUND(AVG(rating)::numeric, 2) FROM reviews WHERE product_id = $1), 0),
+                     reviews_count = COALESCE((SELECT COUNT(*) FROM reviews WHERE product_id = $1), 0)
+                 WHERE product_id = $1`,
+                [productId]
+            );
+        } catch (e) {}
 
         res.status(200).json({ success: true, message: 'Review deleted successfully' });
     } catch (error) {
@@ -72,7 +76,7 @@ exports.addProductReview = async (req, res) => {
 
         const newReview = await reviewService.createReview({
             productId,
-            username: username || 'Guest', // Fallback
+            username: username || req.user?.name || req.user?.username || 'Verified Patron',
             rating,
             review
         });
@@ -84,6 +88,6 @@ exports.addProductReview = async (req, res) => {
         });
     } catch (error) {
         console.error('Error adding review:', error);
-        res.status(500).json({ success: false, message: 'Server error' });
+        res.status(500).json({ success: false, message: error.message || 'Server error' });
     }
 };
