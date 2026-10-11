@@ -212,14 +212,26 @@ exports.getProductById = async (id) => {
     if (!id || (isNaN(id) && typeof id !== 'string')) {
         return null;
     }
+
+    let searchId = id;
+    let isNum = !isNaN(searchId);
+
+    if (!isNum && typeof searchId === 'string') {
+        const digits = searchId.replace(/\D/g, '');
+        if (digits) {
+            let numId = parseInt(digits, 10);
+            if (numId === 103) numId = 106;
+            searchId = numId;
+            isNum = true;
+        }
+    }
     
     // Check numeric vs text ID search
-    const isNum = !isNaN(id);
     const query = isNum
         ? `${BASE_PRODUCT_QUERY} WHERE p.product_id = $1::integer OR p.id = $1::integer`
         : `${BASE_PRODUCT_QUERY} WHERE p.style_code = $1 OR p.title ILIKE $1`;
 
-    const result = await pool.query(query, [id]);
+    const result = await pool.query(query, [searchId]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
 
