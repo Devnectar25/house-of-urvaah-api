@@ -6,7 +6,7 @@ exports.getAllReviews = async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT r.id, r.product_id as productid, COALESCE(p.title, 'Product #' || r.product_id) as product_name,
-                   COALESCE(p.image_url, (p.images)[1], '') as product_image,
+                   p.image_url, p.images,
                    r.user_id as username, COALESCE(u.emailid, '') as emailid,
                    r.rating, r.comment, r.created_at as date
             FROM reviews r
@@ -16,10 +16,17 @@ exports.getAllReviews = async (req, res) => {
         `);
 
         const formattedRows = result.rows.map(row => {
-            const rawImg = row.product_image || '';
+            const firstImage = (Array.isArray(row.images) && row.images[0]) || row.image_url || '';
             return {
-                ...row,
-                product_image: rawImg ? storageService.getPublicMediaUrl(rawImg) : ''
+                id: row.id,
+                productid: row.productid,
+                product_name: row.product_name,
+                product_image: storageService.getPublicMediaUrl(firstImage),
+                username: row.username,
+                emailid: row.emailid,
+                rating: row.rating,
+                comment: row.comment,
+                date: row.date
             };
         });
 
