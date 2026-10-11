@@ -1,4 +1,5 @@
 const reviewService = require('../services/reviewService');
+const storageService = require('../services/storageService');
 const pool = require('../config/db');
 
 exports.getAllReviews = async (req, res) => {
@@ -13,7 +14,16 @@ exports.getAllReviews = async (req, res) => {
             LEFT JOIN users u ON (u.username = r.user_id OR u.emailid = r.user_id)
             ORDER BY r.created_at DESC, r.id DESC
         `);
-        res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
+
+        const formattedRows = result.rows.map(row => {
+            const rawImg = row.product_image || '';
+            return {
+                ...row,
+                product_image: rawImg ? storageService.getPublicMediaUrl(rawImg) : ''
+            };
+        });
+
+        res.status(200).json({ success: true, count: formattedRows.length, data: formattedRows });
     } catch (error) {
         console.error('Error fetching all reviews:', error);
         res.status(500).json({ success: false, message: 'Server error' });
