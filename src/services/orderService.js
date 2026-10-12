@@ -291,6 +291,7 @@ exports.createOrder = async (orderData) => {
                 `UPDATE products
                  SET stock_quantity = GREATEST(0, COALESCE(stock_quantity, 0) - $2),
                      quantity       = GREATEST(0, COALESCE(quantity, 0) - $2),
+                     instock        = (CASE WHEN GREATEST(0, COALESCE(stock_quantity, 0) - $2) > 0 THEN true ELSE false END),
                      updated_at     = NOW()
                  WHERE product_id::text = $1::text
                  RETURNING stock_quantity`,
@@ -333,23 +334,40 @@ exports.getAllOrders = async (options = {}) => {
     const { limit = 10, offset = 0, status, paymentStatus } = options;
 
     let baseQuery = `FROM orders o LEFT JOIN user_addresses a ON o.address_id = a.id LEFT JOIN users u ON o.user_id = u.username WHERE 1=1`;
-    const { type = 'successful' } = options;
+    const { type = 'all' } = options;
 
     if (type === 'successful') {
         baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
     } else if (type === 'potential') {
         baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
     }
-    // 'all' includes both successful and potential (DRAFTs/ABANDONED)
+    // 'all' includes both successful and potential (DRAFTs/ABANDONED/Online Pending)
 
     const params = [];
     let paramIndex = 1;
 
     if (status && status !== 'all') {
-        if (status === 'Cancelled') {
-            baseQuery += ` AND o.status IN ('Cancelled', 'Returned', 'Refunded')`;
-        } else if (status === 'Cancellation Requested') {
+        const sLower = status.toLowerCase();
+        if (sLower === 'cancelled' || sLower === 'canceled') {
+            baseQuery += ` AND (o.status ILIKE 'Cancelled' OR o.status ILIKE 'Cancellation Requested' OR o.status ILIKE 'CANCEL_REQUESTED' OR o.status ILIKE 'Refunded')`;
+        } else if (sLower === 'cancellation requested') {
             baseQuery += ` AND (o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')))`;
+        } else if (sLower === 'confirmed') {
+            baseQuery += ` AND o.status ILIKE 'Confirmed'`;
+        } else if (sLower === 'processing' || sLower === 'packed') {
+            baseQuery += ` AND (o.status ILIKE 'Processing' OR o.status ILIKE 'Packed')`;
+        } else if (sLower === 'pending' || sLower === 'placed') {
+            baseQuery += ` AND (o.status ILIKE 'Pending' OR o.status ILIKE 'Placed')`;
+        } else if (sLower === 'shipped' || sLower === 'dispatched') {
+            baseQuery += ` AND (o.status ILIKE 'Shipped' OR o.status ILIKE 'Dispatched')`;
+        } else if (sLower === 'out for delivery') {
+            baseQuery += ` AND o.status ILIKE 'Out for Delivery'`;
+        } else if (sLower === 'delivered') {
+            baseQuery += ` AND o.status ILIKE 'Delivered'`;
+        } else if (sLower === 'returned' || sLower === 'return' || sLower === 'returns') {
+            baseQuery += ` AND (o.status ILIKE 'Returned' OR o.status ILIKE 'Return%' OR o.is_returned_order = true)`;
+        } else if (sLower === 'exchanged' || sLower === 'exchange' || sLower === 'exchanges') {
+            baseQuery += ` AND (o.status ILIKE 'Exchanged' OR o.status ILIKE 'Exchange%' OR o.return_type = 'exchange')`;
         } else {
             baseQuery += ` AND o.status = $${paramIndex}`;
             params.push(status);
@@ -358,8 +376,19 @@ exports.getAllOrders = async (options = {}) => {
     }
 
     if (paymentStatus && paymentStatus !== 'all') {
-        baseQuery += ` AND o.payment_status = $${paramIndex}`;
-        params.push(paymentStatus);
+        const pLower = paymentStatus.toLowerCase();
+        if (pLower === 'pending') {
+            baseQuery += ` AND (o.payment_status ILIKE 'Pending' OR o.payment_status ILIKE 'Failed')`;
+        } else {
+            baseQuery += ` AND o.payment_status ILIKE $${paramIndex}`;
+            params.push(paymentStatus);
+            paramIndex++;
+        }
+    }
+
+    if (options.paymentType && options.paymentType !== 'all') {
+        baseQuery += ` AND (o.payment_type ILIKE $${paramIndex} OR o.payment_method ILIKE $${paramIndex})`;
+        params.push(`%${options.paymentType}%`);
         paramIndex++;
     }
 
@@ -620,9 +649,9 @@ exports.getOrdersByUser = async (userId) => {
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON o.user_id = u.username
-         WHERE o.user_id = $1 
+         WHERE o.user_id = $1::text OR u.emailid = $1::text OR u.id::text = $1::text
          ORDER BY o.created_at DESC`,
-        [userId]
+        [String(userId)]
     );
 
     return orderResult.rows;
@@ -891,7 +920,8 @@ exports.getOrderStats = async () => {
         `SELECT 
             COUNT(*)::int as total,
             COUNT(*) FILTER (WHERE status ILIKE 'Pending' OR status ILIKE 'Placed')::int as pending,
-            COUNT(*) FILTER (WHERE status ILIKE 'Processing' OR status ILIKE 'Confirmed' OR status ILIKE 'Packed')::int as processing,
+            COUNT(*) FILTER (WHERE status ILIKE 'Confirmed')::int as confirmed,
+            COUNT(*) FILTER (WHERE status ILIKE 'Processing' OR status ILIKE 'Packed')::int as processing,
             COUNT(*) FILTER (WHERE status ILIKE 'Shipped' OR status ILIKE 'Dispatched')::int as shipped,
             COUNT(*) FILTER (WHERE status ILIKE 'Out for Delivery')::int as out_for_delivery,
             COUNT(*) FILTER (WHERE status ILIKE 'Delivered')::int as delivered,
@@ -906,6 +936,7 @@ exports.getOrderStats = async () => {
     return {
         total: parseInt(stats.total || 0),
         pending: parseInt(stats.pending || 0),
+        confirmed: parseInt(stats.confirmed || 0),
         processing: parseInt(stats.processing || 0),
         shipped: parseInt(stats.shipped || 0),
         outForDelivery: parseInt(stats.out_for_delivery || 0),
@@ -923,11 +954,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
     try {
         await client.query('BEGIN');
 
-        // Get current status to check for cancellation
-        const currentOrderRes = await client.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+        // Get current status to check for cancellation (supports UUID or order_number)
+        const currentOrderRes = await client.query(
+            `SELECT * FROM orders WHERE id::text = $1 OR order_number = $1`,
+            [orderId]
+        );
         if (currentOrderRes.rows.length === 0) throw new Error('Order not found');
 
         const oldOrder = currentOrderRes.rows[0];
+        orderId = oldOrder.id; // Normalize to valid DB UUID for all subsequent queries
         const oldStatus = oldOrder.status;
         const oldIsProductReceived = oldOrder.is_product_received;
 
@@ -1758,7 +1793,7 @@ exports.reorderOrder = async (orderId, userId) => {
 
         // 1. Fetch order items and current product stock/price
         const orderItemsResult = await client.query(
-            `SELECT oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, p.productname as name 
+            `SELECT oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, COALESCE(p.title, 'Product') as name 
              FROM order_items oi
              JOIN products p ON oi.product_id::text = p.product_id::text
              WHERE oi.order_id = $1`,

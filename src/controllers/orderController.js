@@ -19,11 +19,12 @@ exports.getAllOrders = async (req, res) => {
         const offset = (page - 1) * limit;
         const status = req.query.status;
         const paymentStatus = req.query.paymentStatus;
+        const paymentType = req.query.paymentType;
         const type = req.query.type;
         const userName = req.query.userName;
         const orderNumber = req.query.orderNumber;
 
-        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName, orderNumber });
+        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, paymentType, type, userName, orderNumber });
         res.status(200).json({
             success: true,
             data: result.orders,
@@ -84,10 +85,7 @@ exports.getOrderStats = async (req, res) => {
 
 exports.getOrdersByUser = async (req, res) => {
     try {
-        if (req.user?.role === 'admin') {
-            return res.status(200).json({ success: true, data: [] });
-        }
-        const userId = req.user.id;
+        const userId = req.user?.id || req.user?.username || req.user?.emailid;
         const orders = await orderService.getOrdersByUser(userId);
         res.status(200).json({ success: true, data: orders });
     } catch (error) {
@@ -102,7 +100,9 @@ exports.getOrderById = async (req, res) => {
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
         // Security check: only allow own user or admin
-        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isAdmin = req.user?.role === 'admin';
+        const isOwner = order.user_id == req.user?.id || order.user_id == req.user?.username || order.user_id == req.user?.emailid || order.customer_email == req.user?.emailid;
+        if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
@@ -121,8 +121,8 @@ exports.updateOrderStatus = async (req, res) => {
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
         // Security check
-        const isAdmin = req.user.role === 'admin';
-        const isOwner = order.user_id == req.user.id;
+        const isAdmin = req.user?.role === 'admin';
+        const isOwner = order.user_id == req.user?.id || order.user_id == req.user?.username || order.user_id == req.user?.emailid || order.customer_email == req.user?.emailid;
 
         if (!isAdmin) {
             if (!isOwner) {
@@ -144,7 +144,8 @@ exports.updateOrderStatus = async (req, res) => {
             }
         }
 
-        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds);
+        // Pass order.id (validated UUID) to ensure clean DB queries
+        const updatedOrder = await orderService.updateOrderStatus(order.id, status, cancelReason, bankDetails, paymentStatus, itemIds);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
