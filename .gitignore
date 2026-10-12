@@ -1,17 +1,49 @@
-# Ignore node_modules folder
+# Dependencies
 node_modules/
-
-# Ignore lock file
 package-lock.json
 
-# Ignore build output
+# Build outputs
 dist/
 build/
 
-# Ignore environment files
+# Environment & Local configuration
 .env
+.env.*
+!.env.example
+*.env
 
-
+# Credentials & Service accounts
 config/ga4-service-account.json
 src/ga/*.json
+*.pem
+*.key
+
+# Logs & Debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary, backup & cache files
+.cache/
+tmp/
+temp/
+*.tmp
 *.bak
+*.orig
+*.patch
+*.diff
+

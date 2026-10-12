@@ -472,7 +472,22 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     params.push(limit);
 
     const result = await pool.query(query, params);
-    return result.rows.map(mapProduct);
+    let products = result.rows.map(mapProduct);
+
+    // If matching category products are fewer than requested limit, backfill with other active products
+    if (products.length < limit) {
+        const existingIds = [isNum ? parseInt(productId) : null, ...products.map((p) => parseInt(p.id))].filter((id) => !isNaN(id) && id !== null);
+        const fallbackParams = [existingIds, limit - products.length];
+        const fallbackQuery = `${BASE_PRODUCT_QUERY} WHERE COALESCE(p.is_active, true) = true AND NOT (p.product_id = ANY($1::integer[])) ORDER BY p.rating DESC NULLS LAST, p.created_at DESC NULLS LAST LIMIT $2`;
+        try {
+            const fallbackResult = await pool.query(fallbackQuery, fallbackParams);
+            products = [...products, ...fallbackResult.rows.map(mapProduct)];
+        } catch (e) {
+            console.error('Fallback related products error:', e.message);
+        }
+    }
+
+    return products;
 };
 
 exports.createProduct = async (product) => {
@@ -638,3 +653,97 @@ exports.toggleProductStatus = async (id) => {
     `, [id]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
+
+// ── Chatbot Helper Methods ──────────────────────────────────────────────────
+
+exports.chatbotGetProducts = async (limit = 10) => {
+    try {
+        const result = await pool.query(`
+            ${BASE_PRODUCT_QUERY}
+            WHERE COALESCE(p.is_active, true) = true
+            ORDER BY p.updated_at DESC, p.product_id DESC
+            LIMIT $1
+        `, [limit]);
+        return result.rows.map(mapProduct).filter(Boolean);
+    } catch (err) {
+        console.error('Error in chatbotGetProducts:', err);
+        return [];
+    }
+};
+
+exports.chatbotSearchByCategory = async (categoryKeyword, limit = 10) => {
+    try {
+        const result = await pool.query(`
+            ${BASE_PRODUCT_QUERY}
+            WHERE COALESCE(p.is_active, true) = true
+              AND (c.name ILIKE $1 OR sc.name ILIKE $1 OR p.title ILIKE $1)
+            ORDER BY p.updated_at DESC, p.product_id DESC
+            LIMIT $2
+        `, [`%${categoryKeyword}%`, limit]);
+        return result.rows.map(mapProduct).filter(Boolean);
+    } catch (err) {
+        console.error('Error in chatbotSearchByCategory:', err);
+        return [];
+    }
+};
+
+exports.simpleChatbotSearch = async (searchTerm, limit = 10) => {
+    try {
+        if (!searchTerm || typeof searchTerm !== 'string') return [];
+        const cleanTerm = searchTerm.trim();
+        const result = await pool.query(`
+            ${BASE_PRODUCT_QUERY}
+            WHERE COALESCE(p.is_active, true) = true
+              AND (
+                p.title ILIKE $1 
+                OR p.description ILIKE $1 
+                OR p.short_description ILIKE $1 
+                OR c.name ILIKE $1
+                OR sc.name ILIKE $1
+              )
+            ORDER BY p.updated_at DESC, p.product_id DESC
+            LIMIT $2
+        `, [`%${cleanTerm}%`, limit]);
+        return result.rows.map(mapProduct).filter(Boolean);
+    } catch (err) {
+        console.error('Error in simpleChatbotSearch:', err);
+        return [];
+    }
+};
+
+exports.chatbotSearchByPrice = async (maxPrice, limit = 10) => {
+    try {
+        const result = await pool.query(`
+            ${BASE_PRODUCT_QUERY}
+            WHERE COALESCE(p.is_active, true) = true
+              AND CAST(COALESCE(p.price, 0) AS NUMERIC) <= $1
+            ORDER BY CAST(COALESCE(p.price, 0) AS NUMERIC) ASC
+            LIMIT $2
+        `, [maxPrice, limit]);
+        return result.rows.map(mapProduct).filter(Boolean);
+    } catch (err) {
+        console.error('Error in chatbotSearchByPrice:', err);
+        return [];
+    }
+};
+
+exports.chatbotSearchByPriceAbove = async (minPrice, limit = 10) => {
+    try {
+        const result = await pool.query(`
+            ${BASE_PRODUCT_QUERY}
+            WHERE COALESCE(p.is_active, true) = true
+              AND CAST(COALESCE(p.price, 0) AS NUMERIC) >= $1
+            ORDER BY CAST(COALESCE(p.price, 0) AS NUMERIC) ASC
+            LIMIT $2
+        `, [minPrice, limit]);
+        return result.rows.map(mapProduct).filter(Boolean);
+    } catch (err) {
+        console.error('Error in chatbotSearchByPriceAbove:', err);
+        return [];
+    }
+};
+
+exports.chatbotSearchProducts = async (query, limit = 10) => {
+    return exports.simpleChatbotSearch(query, limit);
+};
+
