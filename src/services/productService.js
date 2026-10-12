@@ -218,12 +218,36 @@ exports.getProductById = async (id) => {
     let isNum = !isNaN(searchId);
 
     if (!isNum && typeof searchId === 'string') {
-        const digits = searchId.replace(/\D/g, '');
-        if (digits) {
-            let numId = parseInt(digits, 10);
-            if (numId === 103) numId = 106;
-            searchId = numId;
+        const s = searchId.trim();
+        if (s === 'prod-105') {
+            searchId = 108;
             isNum = true;
+        } else if (s === 'bs-105' || s === 'prod-109') {
+            searchId = 109;
+            isNum = true;
+        } else if (s === 'bs-101' || s === 'prod-101') {
+            searchId = 105;
+            isNum = true;
+        } else if (s === 'bs-103' || s === 'prod-102') {
+            searchId = 106;
+            isNum = true;
+        } else if (s === 'prod-103') {
+            searchId = 107;
+            isNum = true;
+        } else if (s === 'bs-104') {
+            searchId = 104;
+            isNum = true;
+        } else if (s === 'bs-102') {
+            searchId = 102;
+            isNum = true;
+        } else {
+            const digits = searchId.replace(/\D/g, '');
+            if (digits) {
+                let numId = parseInt(digits, 10);
+                if (numId === 103) numId = 106;
+                searchId = numId;
+                isNum = true;
+            }
         }
     }
     

@@ -84,6 +84,9 @@ exports.getOrderStats = async (req, res) => {
 
 exports.getOrdersByUser = async (req, res) => {
     try {
+        if (req.user?.role === 'admin') {
+            return res.status(200).json({ success: true, data: [] });
+        }
         const userId = req.user.id;
         const orders = await orderService.getOrdersByUser(userId);
         res.status(200).json({ success: true, data: orders });

@@ -15,7 +15,14 @@ exports.getUserAddresses = async (req, res) => {
 
 exports.createAddress = async (req, res) => {
     try {
-        const address = await addressService.addAddress(req.body);
+        const payload = { ...req.body };
+        if (!payload.user_id && req.user) {
+            payload.user_id = req.user.id || req.user.username || req.user.email;
+        }
+        if (!payload.user_id || String(payload.user_id).trim() === '' || payload.user_id === 'undefined') {
+            return res.status(400).json({ success: false, message: 'User ID is required to create address' });
+        }
+        const address = await addressService.addAddress(payload);
         res.status(201).json({ success: true, data: address });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

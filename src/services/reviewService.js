@@ -1,9 +1,20 @@
 const pool = require("../config/db");
 
+const resolveNumericProductId = (productId) => {
+    const s = String(productId || '').trim();
+    if (s === 'prod-105') return 108;
+    if (s === 'bs-105' || s === 'prod-109') return 109;
+    if (s === 'bs-101' || s === 'prod-101') return 105;
+    if (s === 'bs-103' || s === 'prod-102') return 106;
+    if (s === 'prod-103') return 107;
+    if (s === 'bs-104') return 104;
+    if (s === 'bs-102') return 102;
+    const matches = s.match(/\d+/);
+    return matches ? parseInt(matches[0], 10) : 0;
+};
+
 exports.getReviewsByProduct = async (productId) => {
-    // Extract numeric ID if string (e.g. 'prod-102' -> 102, 'bs-101' -> 101, '104' -> 104)
-    const matches = String(productId || '').match(/\d+/);
-    const numericId = matches ? parseInt(matches[0], 10) : 0;
+    const numericId = resolveNumericProductId(productId);
 
     const result = await pool.query(
         `SELECT r.id, r.product_id, r.user_id, r.rating, r.comment, r.created_at,
@@ -27,8 +38,7 @@ exports.getReviewsByProduct = async (productId) => {
 
 exports.createReview = async (data) => {
     const { productId, username, rating, review } = data;
-    const matches = String(productId || '').match(/\d+/);
-    const numericId = matches ? parseInt(matches[0], 10) : 0;
+    const numericId = resolveNumericProductId(productId);
 
     if (!numericId) {
         throw new Error("Valid numeric product ID is required.");
@@ -69,8 +79,7 @@ exports.createReview = async (data) => {
 };
 
 exports.getReviewSummary = async (productId) => {
-    const matches = String(productId || '').match(/\d+/);
-    const numericId = matches ? parseInt(matches[0], 10) : 0;
+    const numericId = resolveNumericProductId(productId);
 
     const result = await pool.query(
         `SELECT rating, COUNT(*) as count
