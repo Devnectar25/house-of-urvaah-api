@@ -64,7 +64,8 @@ exports.checkPermission = (permission) => {
                 if (
                     permissions.includes(permission) ||
                     (permission === 'refunds' && (permissions.includes('refunds') || permissions.includes('refund-desk'))) ||
-                    (permission === 'refund-desk' && (permissions.includes('refunds') || permissions.includes('refund-desk')))
+                    (permission === 'refund-desk' && (permissions.includes('refunds') || permissions.includes('refund-desk'))) ||
+                    (permission === 'stock-notifications' && (permissions.includes('stock-notifications') || permissions.includes('products')))
                 ) {
                     hasAccess = true;
                 }
@@ -86,5 +87,24 @@ exports.checkPermission = (permission) => {
             res.status(500).json({ success: false, message: 'Server error checking permissions' });
         }
     };
+};
+
+exports.optionalUser = (req, res, next) => {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization?.split(' ')[1];
+    } else if (req.cookies && req.cookies.token) {
+        token = req.cookies.token;
+    }
+
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            req.user = decoded;
+        } catch (e) {
+            // Ignore invalid token for optional auth
+        }
+    }
+    next();
 };
 

@@ -57,14 +57,23 @@ CREATE TABLE IF NOT EXISTS public.ui_fabric_video (
     id SERIAL PRIMARY KEY,
     video_url TEXT NOT NULL,
     poster_url TEXT,
-    heading TEXT DEFAULT 'THE ART OF REFINED TAILORING',
-    description TEXT DEFAULT 'Defined by oversized silhouettes, fluid draping, and uncompromised material integrity. Designed for timeless elegance across seasonal transitions.',
-    button_text VARCHAR(100) DEFAULT 'DISCOVER THE COLLECTION',
-    button_link TEXT DEFAULT '#lookbook',
+    heading TEXT DEFAULT 'LUXURY TEXTILE ARTISTRY',
+    description TEXT DEFAULT 'Discover the sensory elegance of our mastercrafted fabrics: mulberry silk, structured linens, and couture jacquards.',
+    button_text VARCHAR(100) DEFAULT 'EXPLORE FABRICS',
+    button_link TEXT DEFAULT '/clothing',
     autoplay BOOLEAN DEFAULT true,
     muted BOOLEAN DEFAULT true,
     loop_video BOOLEAN DEFAULT true,
     is_active BOOLEAN DEFAULT true,
+    videos JSONB DEFAULT '[]'::jsonb,
+    subheading VARCHAR(255) DEFAULT 'EDITORIAL VISION',
+    secondary_button_text VARCHAR(100) DEFAULT 'VIEW CAMPAIGN FILM',
+    secondary_button_link TEXT DEFAULT '#campaign',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE public.ui_fabric_video ADD COLUMN IF NOT EXISTS videos JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.ui_fabric_video ADD COLUMN IF NOT EXISTS subheading VARCHAR(255) DEFAULT 'EDITORIAL VISION';
+ALTER TABLE public.ui_fabric_video ADD COLUMN IF NOT EXISTS secondary_button_text VARCHAR(100) DEFAULT 'VIEW CAMPAIGN FILM';
+ALTER TABLE public.ui_fabric_video ADD COLUMN IF NOT EXISTS secondary_button_link TEXT DEFAULT '#campaign';

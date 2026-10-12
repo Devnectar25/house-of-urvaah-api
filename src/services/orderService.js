@@ -3,6 +3,7 @@ const couponService = require('./couponService');
 const paymentService = require('./paymentService');
 const shiprocketService = require('./shiprocketService');
 const whatsappService = require('./whatsappService');
+const stockNotificationService = require('./stockNotificationService');
 
 const resolveDbProductId = async (client, rawId, itemName) => {
     let candidateId = null;
@@ -1797,8 +1798,14 @@ exports.restockOrder = async (orderId) => {
 
         console.log(`[RESTOCK] Restoring stock for COD order ${orderId}. Items count: ${itemsResult.rows.length}`);
 
-        // 3. Increment stock for each item
+        // 3. Increment stock for each item and trigger restock alert evaluation
         for (const item of itemsResult.rows) {
+            const prevStockRes = await client.query(
+                `SELECT stock_quantity FROM products WHERE product_id = $1::integer`,
+                [item.product_id]
+            );
+            const prevStock = prevStockRes.rows[0]?.stock_quantity || 0;
+
             await client.query(
                 `UPDATE products 
                  SET stock_quantity = stock_quantity + $2,
@@ -1808,6 +1815,15 @@ exports.restockOrder = async (orderId) => {
                  WHERE product_id = $1::integer`,
                 [item.product_id, item.quantity]
             );
+
+            if (prevStock <= 0 && item.quantity > 0) {
+                stockNotificationService.triggerRestockEvent({
+                    productId: item.product_id,
+                    previousStock: prevStock,
+                    newStock: prevStock + item.quantity,
+                    size: null
+                }).catch(err => console.error('[OrderRestock Alert Error]:', err));
+            }
         }
 
         // 4. Update order statuses

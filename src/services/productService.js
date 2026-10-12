@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const storageService = require("./storageService");
+const stockNotificationService = require("./stockNotificationService");
 
 // Helper to map DB columns to camelCase frontend fields
 const mapProduct = (p) => {
@@ -597,6 +598,21 @@ exports.updateProduct = async (id, product) => {
         try { prodDetailsVal = JSON.parse(prodDetailsVal); } catch(e) {}
     }
 
+    // Fetch previous stock before update to detect restock transition
+    let previousStock = null;
+    try {
+        const prevRes = await pool.query(
+            "SELECT product_id, stock_quantity, stock, quantity, is_active FROM products WHERE product_id = $1::integer OR id = $1::integer",
+            [id]
+        );
+        if (prevRes.rows.length > 0) {
+            const p = prevRes.rows[0];
+            previousStock = (p.is_active === false) ? 0 : (p.stock_quantity ?? p.quantity ?? p.stock ?? 0);
+        }
+    } catch (e) {
+        console.warn('[updateProduct] Error fetching prev stock:', e.message);
+    }
+
     const result = await pool.query(
         `UPDATE products 
         SET title = COALESCE($2, title),
@@ -636,6 +652,23 @@ exports.updateProduct = async (id, product) => {
             prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null
         ]
     );
+
+    if (result.rows[0]) {
+        const updatedRow = result.rows[0];
+        const newStock = (updatedRow.is_active === false)
+            ? 0
+            : (updatedRow.stock_quantity ?? updatedRow.quantity ?? 0);
+
+        if (previousStock !== null && previousStock <= 0 && newStock > 0) {
+            stockNotificationService.triggerRestockEvent({
+                productId: updatedRow.product_id,
+                previousStock,
+                newStock,
+                size: null
+            }).catch(err => console.error('[RestockTrigger Error]:', err));
+        }
+    }
+
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
 
