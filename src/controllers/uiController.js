@@ -397,7 +397,8 @@ exports.reorderTrendingGramPosts = async (req, res) => {
 exports.getPublicFabricVideo = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT video_url, poster_url, heading, description, button_text, button_link, autoplay, muted, loop_video 
+      `SELECT video_url, poster_url, heading, subheading, description, button_text, button_link, 
+              secondary_button_text, secondary_button_link, autoplay, muted, loop_video, videos 
        FROM ui_fabric_video 
        WHERE is_active = true 
        ORDER BY id ASC 
@@ -424,7 +425,33 @@ exports.getAdminFabricVideo = async (req, res) => {
 // Admin Update (single row configuration)
 exports.updateFabricVideo = async (req, res) => {
   try {
-    const { video_url, poster_url, heading, description, button_text, button_link, autoplay, muted, loop_video, is_active } = req.body;
+    const {
+      video_url,
+      poster_url,
+      heading,
+      subheading,
+      description,
+      button_text,
+      button_link,
+      secondary_button_text,
+      secondary_button_link,
+      autoplay,
+      muted,
+      loop_video,
+      is_active,
+      videos
+    } = req.body;
+
+    let sanitizedVideos = null;
+    if (Array.isArray(videos)) {
+      sanitizedVideos = videos.slice(0, 3).map((v, idx) => ({
+        id: v?.id || `video-${idx + 1}`,
+        tag: typeof v?.tag === 'string' ? v.tag.trim() : '',
+        title: typeof v?.title === 'string' ? v.title.trim() : (typeof v?.name === 'string' ? v.name.trim() : ''),
+        video_url: typeof v?.video_url === 'string' ? v.video_url.trim() : (typeof v?.url === 'string' ? v.url.trim() : ''),
+        poster_url: typeof v?.poster_url === 'string' ? v.poster_url.trim() : ''
+      }));
+    }
 
     const existing = await pool.query('SELECT * FROM ui_fabric_video ORDER BY id ASC LIMIT 1');
 
@@ -432,20 +459,25 @@ exports.updateFabricVideo = async (req, res) => {
     if (existing.rows.length === 0) {
       result = await pool.query(
         `INSERT INTO ui_fabric_video 
-          (video_url, poster_url, heading, description, button_text, button_link, autoplay, muted, loop_video, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          (video_url, poster_url, heading, subheading, description, button_text, button_link, 
+           secondary_button_text, secondary_button_link, autoplay, muted, loop_video, is_active, videos)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
          RETURNING *`,
         [
           video_url || '',
           poster_url || '',
-          heading || 'THE ART OF REFINED TAILORING',
-          description || '',
-          button_text || 'DISCOVER THE COLLECTION',
-          button_link || '#lookbook',
+          heading || 'LUXURY TEXTILE ARTISTRY',
+          subheading || 'EDITORIAL VISION',
+          description || 'Discover the sensory elegance of our mastercrafted fabrics: mulberry silk, structured linens, and couture jacquards.',
+          button_text || 'EXPLORE FABRICS',
+          button_link || '/clothing',
+          secondary_button_text || 'VIEW CAMPAIGN FILM',
+          secondary_button_link || '#campaign',
           autoplay !== undefined ? autoplay : true,
           muted !== undefined ? muted : true,
           loop_video !== undefined ? loop_video : true,
-          is_active !== undefined ? is_active : true
+          is_active !== undefined ? is_active : true,
+          sanitizedVideos ? JSON.stringify(sanitizedVideos) : '[]'
         ]
       );
     } else {
@@ -455,27 +487,35 @@ exports.updateFabricVideo = async (req, res) => {
          SET video_url = COALESCE($1, video_url),
              poster_url = COALESCE($2, poster_url),
              heading = COALESCE($3, heading),
-             description = COALESCE($4, description),
-             button_text = COALESCE($5, button_text),
-             button_link = COALESCE($6, button_link),
-             autoplay = COALESCE($7, autoplay),
-             muted = COALESCE($8, muted),
-             loop_video = COALESCE($9, loop_video),
-             is_active = COALESCE($10, is_active),
+             subheading = COALESCE($4, subheading),
+             description = COALESCE($5, description),
+             button_text = COALESCE($6, button_text),
+             button_link = COALESCE($7, button_link),
+             secondary_button_text = COALESCE($8, secondary_button_text),
+             secondary_button_link = COALESCE($9, secondary_button_link),
+             autoplay = COALESCE($10, autoplay),
+             muted = COALESCE($11, muted),
+             loop_video = COALESCE($12, loop_video),
+             is_active = COALESCE($13, is_active),
+             videos = COALESCE($14::jsonb, videos),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $11
+         WHERE id = $15
          RETURNING *`,
         [
-          video_url,
-          poster_url,
-          heading,
-          description,
-          button_text,
-          button_link,
-          autoplay,
-          muted,
-          loop_video,
-          is_active,
+          video_url !== undefined ? video_url : current.video_url,
+          poster_url !== undefined ? poster_url : current.poster_url,
+          heading !== undefined ? heading : current.heading,
+          subheading !== undefined ? subheading : current.subheading,
+          description !== undefined ? description : current.description,
+          button_text !== undefined ? button_text : current.button_text,
+          button_link !== undefined ? button_link : current.button_link,
+          secondary_button_text !== undefined ? secondary_button_text : current.secondary_button_text,
+          secondary_button_link !== undefined ? secondary_button_link : current.secondary_button_link,
+          autoplay !== undefined ? autoplay : current.autoplay,
+          muted !== undefined ? muted : current.muted,
+          loop_video !== undefined ? loop_video : current.loop_video,
+          is_active !== undefined ? is_active : current.is_active,
+          sanitizedVideos ? JSON.stringify(sanitizedVideos) : null,
           current.id
         ]
       );
