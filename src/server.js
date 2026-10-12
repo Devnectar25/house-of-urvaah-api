@@ -1,3 +1,4 @@
+// House of Urvaah API Server
 // 1. Immediate error handling at the very top to catch ANY require failures
 process.on('uncaughtException', (err) => {
     console.error('CRITICAL STARTUP ERROR - UNCAUGHT EXCEPTION! 💥');

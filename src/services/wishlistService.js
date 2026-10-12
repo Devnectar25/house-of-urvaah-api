@@ -28,7 +28,7 @@ exports.getWishlistByUser = async (userId) => {
         const result = await pool.query(
             `SELECT w.*, COALESCE(p.title, p.productname, 'Product') AS productname, COALESCE(p.image_url, p.image, '') AS image, p.price, p.instock, p.stock_quantity, p.quantity
              FROM wishlist w
-             JOIN products p ON w.product_id::text = p.product_id::text
+             LEFT JOIN products p ON (w.product_id::text = p.product_id::text OR w.product_id::text = p.id::text)
              WHERE w.user_id = $1
              ORDER BY w.created_at DESC`,
             [userId]

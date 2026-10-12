@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const productService = require('./productService');
+const groqService = require('./groqService');
 
 /**
  * Chatbot Service — Enhanced NLP Pipeline
@@ -9,18 +10,18 @@ const productService = require('./productService');
  *  2.   Detect "alternative product" intent (needs session context)
  *  3.   Detect greetings / farewells
  *  4.   Detect price-filter intents (regex)
- *  4.5  Detect product listing intent ← NEW: "show me products", "list ayurvedic products"
- *  5.   Detect company/people info intent (blocks false product search)
+ *  4.5  Detect product listing intent ← "show me products", "list corsets"
+ *  5.   Detect company/people info intent
  *  6.   Detect navigation/static intents (regex)
  *  7.   Knowledge-base lookup (DB regex matching)
  *  8.   Direct product search (ILIKE) — only for product-likely queries
  *  9.   Keyword-level product search
- *  10.  Fuzzy product search (word_similarity ≥ 0.35)
- *  11.  Fallback — log to unanswered_queries, always answer politely
+ *  10.  Fuzzy product search
+ *  11.  Groq LLM Fashion Concierge (3-key fallback switch, website-only scope)
  */
 
 // ─── In-Memory Session Context ────────────────────────────────────────────────
-// Stores per-session: last products shown, last search keyword, last category
+// Stores per-session: last products shown, last search keyword, last category, conversation history
 // Expires after 30 minutes of inactivity.
 
 const sessionStore = new Map();
@@ -28,7 +29,8 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 function getSession(sessionId) {
     const s = sessionStore.get(sessionId);
-    if (!s) return { lastProducts: [], lastKeyword: '', lastCategory: '', lastQuery: '' };
+    if (!s) return { lastProducts: [], lastKeyword: '', lastCategory: '', lastQuery: '', history: [] };
+    if (!s.history) s.history = [];
     return s;
 }
 
@@ -69,9 +71,9 @@ function detectIntentFromTokens(tokens) {
         product_search: ['find', 'search', 'show', 'list', 'give', 'suggest', 'recommend', 'need', 'want', 'looking', 'buy', 'purchase', 'खोजें', 'दिखाएं', 'सूची', 'दें', 'चाहिए', 'खरीदना', 'ਖੋਜੋ', 'ਦਿਖਾਓ', 'ਸੂਚੀ', 'ਚਾਹੀਦਾ', 'ਖਰੀਦੋ'],
         health_query: ['stress', 'anxiety', 'sleep', 'insomnia', 'immunity', 'immune', 'digestion', 'stomach', 'pain', 'joint', 'arthritis', 'तनाव', 'चिंता', 'नींद', 'प्रतिरक्षा', 'पाचन', 'पेट', 'दर्द', 'गठिया', 'ਤਣਾਅ', 'ਚਿੰਤਾ', 'ਨੀਂਦ', 'ਪਾਚਨ', 'ਦਰਦ'],
         pricing_info: ['price', 'cost', 'expensive', 'cheap', 'affordable', 'budget', 'कीमत', 'मूल्य', 'कितना', 'सस्ता', 'महंगा', 'बजट', 'ਕੀਮਤ', 'ਮੁੱਲ', 'ਕਿੰਨਾ', 'ਸਸਤਾ', 'ਮਹਿੰਗਾ'],
-        website_info: ['order', 'shipping', 'delivery', 'return', 'refund', 'payment', 'checkout', 'track', 'ऑर्डर', 'शिपिंग', 'डिलिवरी', 'वापसी', 'भुगतान', 'ट्रैक', 'ਆਰਡਰ', 'ਸ਼ਿਪਿੰਗ', 'ਵਾਪਸੀ', 'ਭੁਗਤਾਨ'],
+        website_info: ['order', 'shipping', 'delivery', 'return', 'refund', 'payment', 'checkout', 'track', 'size', 'sizing', 'fabric', 'care', 'ऑर्डर', 'शिपिंग', 'डिलिवरी', 'वापसी', 'भुगतान', 'ट्रैक', 'ਆਰਡਰ', 'ਸ਼ਿਪਿੰਗ', 'ਵਾਪਸੀ', 'ਭੁਗਤਾਨ'],
         contact_info: ['contact', 'support', 'email', 'phone', 'call', 'help', 'संपर्क', 'सहायता', 'ईमेल', 'फोन', 'कॉल', 'मदद', 'ਸੰਪਰਕ', 'ਸਹਾਇਤਾ', 'ਮਦਦ'],
-        about_info: ['about', 'company', 'who', 'mediveda', 'homeveda', 'urvaah', 'house', 'founder', 'owner', 'ceo', 'team', 'बारे', 'कंपनी', 'कौन', 'मालिक', 'संस्थापक', 'ਬਾਰੇ', 'ਕੌਣ', 'ਮਾਲਕ'],
+        about_info: ['about', 'company', 'urvaah', 'house', 'founder', 'owner', 'ceo', 'team', 'brand', 'atelier', 'बारे', 'कंपनी', 'मालिक', 'संस्थापक', 'ਬਾਰੇ', 'ਮਾਲਕ'],
     };
 
     const scores = {};
@@ -109,52 +111,32 @@ function extractKeywords(tokens) {
     ]);
     return tokens.filter(t => t.length > 1 && !stopWords.has(t));
 }
-/**
- * Maps Hindi/Punjabi keywords to English for database searching.
- */
 function normalizeKeyword(keyword) {
+    if (!keyword) return '';
+    let kw = keyword.toLowerCase().trim();
+    if (kw.endsWith('s') && kw.length > 4 && !kw.endsWith('ss')) {
+        kw = kw.slice(0, -1);
+    }
     const mapping = {
-        'अश्वगंधा': 'ashwagandha', 'ਅਸ਼ਵਗੰਧਾ': 'ashwagandha',
-        'त्रिफला': 'triphala', 'ਤ੍ਰਿਫਲਾ': 'triphala',
-        'ब्राह्मी': 'brahmi', 'ਬ੍ਰਾਹਮੀ': 'brahmi',
-        'शतावरी': 'shatavari', 'ਸ਼ਤਾਵਰੀ': 'shatavari',
-        'गिलोय': 'giloy', 'ਗਿਲੋਏ': 'giloy',
-        'आंवला': 'amla', 'ਆਮਲਾ': 'amla',
-        'शिलाजीत': 'shilajit', 'ਸ਼ਿਲਾਜੀਤ': 'shilajit',
-        'हल्दी': 'turmeric', 'ਹਲਦੀ': 'turmeric',
-        'तुलसी': 'tulsi', 'ਤੁਲਸੀ': 'tulsi',
-        'चूर्ण': 'churna', 'ਚੂਰਨ': 'churna',
-        'तेल': 'oil', 'ਤੇਲ': 'oil',
-        'कैप्सूल': 'capsule', 'ਕੈਪਸੂਲ': 'capsule',
-        'गोली': 'tablet', 'ਗੋਲੀ': 'tablet',
-        'नींद': 'sleep', 'ਨੀਂਦ': 'sleep',
-        'दर्द': 'pain', 'ਦਰਦ': 'pain',
-        'पाचन': 'digestion', 'ਪਾਚਨ': 'digestion',
-        'पेट': 'stomach', 'ਪੇਟ': 'stomach',
-        'तनाव': 'stress', 'ਤਣਾਅ': 'stress',
-        'चिंता': 'anxiety', 'ਚਿੰਤਾ': 'anxiety',
-        'त्वचा': 'skin', 'ਤਵਚਾ': 'skin',
-        'बाल': 'hair', 'ਵਾਲ': 'hair',
-        'ऊर्जा': 'energy', 'ਊਰਜਾ': 'energy',
-        'वजन': 'weight', 'ਵਜ਼ਨ': 'weight',
-        'गठिया': 'arthritis', 'ਗਠੀਆ': 'arthritis',
-        'आयुर्वेदिक': 'ayurvedic', 'ਆਯੁਰਵੈਦਿਕ': 'ayurvedic',
-        'जड़ी-बूटी': 'herbal', 'ਜੜੀ-ਬੂਟੀ': 'herbal',
-        'दवा': 'medicine', 'ਦਵਾਈ': 'medicine',
-        'उत्पाद': 'product', 'ਉਤਪਾਦ': 'product',
-        'डाबर': 'dabur', 'ਡਾਬਰ': 'dabur',
-        'च्यवनप्राश': 'chyawanprakash', 'ਚਯਵਨਪ੍ਰਾਸ਼': 'chyawanprakash',
-        'झंडू': 'zandu', 'ਜ਼ੰਡੂ': 'zandu',
-        'हिमालय': 'himalaya', 'ਹਿਮਾਲਿਆ': 'himalaya',
-        'पतंजलि': 'patanjali', 'ਪਤੰਜਲੀ': 'patanjali',
-        'बैद्यनाथ': 'baidyanath', 'ਬੈਦਿਆਨਾਥ': 'baidyanath',
-        'चरक': 'charak', 'ਚਰਕ': 'charak',
-        'हर्बल': 'herbal', 'ਹਰਬਲ': 'herbal',
-        'सिरप': 'syrup', 'ਸੀਰਪ': 'syrup',
-        'गैस': 'gas', 'ਗੈਸ': 'gas',
-        'एसिडिटी': 'acidity', 'ਐਸੀਡਿਟੀ': 'acidity'
+        'corsets': 'corset',
+        'kurtis': 'kurti',
+        'dresses': 'dress',
+        'suits': 'suit',
+        'blazers': 'blazer',
+        'skirts': 'skirt',
+        'tops': 'top',
+        'sets': 'set',
+        'co-ords': 'co-ord',
+        'coords': 'co-ord',
+        'sarees': 'saree',
+        'blouses': 'blouse',
+        'कोर्सेट': 'corset',
+        'कुर्ती': 'kurti',
+        'साड़ी': 'saree',
+        'ड्रेस': 'dress',
+        'ब्लाउज': 'blouse'
     };
-    return mapping[keyword] || keyword;
+    return mapping[keyword] || mapping[kw] || kw;
 }
 
 /**
@@ -225,37 +207,33 @@ function localizeText(text, language) {
  * Returns false for queries that are clearly not product searches.
  */
 function isLikelyProductQuery(lowerQuery, tokens) {
-    // ── Pre-check: Ayurvedic Keywords ──
-    // If it contains a known Ayurvedic term, it's likely okay to search
-    const ayurvedicTerms = [
-        'ashwagandha', 'triphala', 'brahmi', 'shatavari', 'giloy', 'amla', 'shilajit', 
-        'turmeric', 'haldi', 'curcumin', 'neem', 'tulsi', 'guggul', 'honey', 'capsule',
-        'tablet', 'syrup', 'oil', 'powder', 'churna', 'rasa', 'bhasma',
-        'अश्वगंधा', 'त्रिफला', 'ब्राह्मी', 'शतावरी', 'गिलोय', 'आंवला', 'शिलाजीत', 'हल्दी', 'तुलसी', 'चूर्ण',
-        'ਅਸ਼ਵਗੰਧਾ', 'ਤ੍ਰਿਫਲਾ', 'ਬ੍ਰਾਹਮੀ', 'ਸ਼ਤਾਵਰੀ', 'ਗਿਲੋਏ', 'ਆਮਲਾ', 'ਸ਼ਿਲਾਜੀਤ', 'ਹਲਦੀ', 'ਤੁਲਸੀ',
-        'नींद', 'दर्द', 'पाचन', 'तनाव', 'ਚਿੰਤਾ', 'ਦਰਦ', 'ਨੀਂਦ',
-        'डाबर', 'च्यवनप्राश', 'ਡਾਬਰ', 'ਚਯਵਨਪ੍ਰਾਸ਼',
-        'झंडू', 'हिमालय', 'पतंजलि', 'बैद्यनाथ', 'सिरप', 'गैस', 'एसिडिटी'
+    // ── Pre-check: House of Urvaah Fashion Keywords ──
+    const fashionTerms = [
+        'corset', 'kurti', 'dress', 'set', 'bloom', 'silk', 'cora', 'cotton', 'blazer', 'skirt',
+        'co-ord', 'floral', 'gilded', 'rosewood', 'chestnut', 'teal', 'top', 'bottom', 'palazzo',
+        'saree', 'embroidery', 'lace', 'trench', 'zari', 'sequin', 'potli', 'couture', 'atelier',
+        'peach', 'ivory', 'blouse', 'clothes', 'clothing', 'garment', 'fashion', 'collection',
+        'कुर्ती', 'साड़ी', 'ड्रेस', 'सेट', 'सिल्क', 'ब्लाउज'
     ];
     const containsIndic = /[\u0900-\u097F\u0A00-\u0A7F]/.test(lowerQuery);
-    const hasAyurvedicTerm = tokens.some(t => ayurvedicTerms.includes(t));
-    if (hasAyurvedicTerm || containsIndic) return true;
+    const hasFashionTerm = tokens.some(t => fashionTerms.includes(t.toLowerCase()));
+    if (hasFashionTerm || containsIndic) return true;
 
     // ── Intent Check ──
     const { intent } = detectIntentFromTokens(tokens);
-    const productIntents = ['product_search', 'product_info', 'product_listing', 'pricing_info', 'health_query'];
+    const productIntents = ['product_search', 'product_info', 'product_listing', 'pricing_info'];
     const isExplicitProductIntent = productIntents.includes(intent);
 
-    // If it's a short query and not an explicit product intent or ayurvedic term, block it
-    if (tokens.length < 3 && !isExplicitProductIntent && !hasAyurvedicTerm) return false;
+    // If it's a short query and not an explicit product intent or fashion term, block it
+    if (tokens.length < 3 && !isExplicitProductIntent && !hasFashionTerm) return false;
 
     // Patterns that signal a NON-product query — block product search for these
     const nonProductPatterns = [
         /who\s+(is|are|was|owns|founded|runs|leads)/i,
         /\b(owner|founder|ceo|director|president|chairman|manager|head)\b/i,
-        /^(what|how|where|when|why)\s+(is|are|was|were|do|does)\b(?!.*(product|ayurveda|ayurvedic|medicine|tablet|syrup|oil|powder|capsule|brand))/i,
-        /\b(is|are|was|were|do|does)\b.*\b(you|your|me|my)\b(?!.*(product|ayurveda|ayurvedic))/i,
-        /tell\s+me\s+about\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah|the\s+company|your\s+company)/i,
+        /^(what|how|where|when|why)\s+(is|are|was|were|do|does)\b(?!.*(product|corset|kurti|dress|suit|blazer|skirt|top|bloom|silk|clothing|collection|brand))/i,
+        /\b(is|are|was|were|do|does)\b.*\b(you|your|me|my)\b(?!.*(product|dress|corset|kurti))/i,
+        /tell\s+me\s+about\s+(urvaah|house\s+of\s+urvaah|the\s+company|your\s+company)/i,
         /\b(when\s+was|when\s+did|how\s+many\s+employees|headquarters|location|address\s+of)\b/i,
     ];
 
@@ -334,9 +312,8 @@ function detectProductListingIntent(query) {
     // ── Category-specific listing patterns ────────────────────────────────────
     // e.g. "show me ayurvedic products", "list herbal items", "find immunity products"
     const categoryPatterns = [
-        // show/list/display/find/get [me] [all] [your] [available] <KEYWORD> products/items
-        /(?:show|list|display|find|get|search|browse)\s+(?:me\s+)?(?:all\s+)?(?:your\s+)?(?:available\s+)?([\w]+(?:\s+[\w]+)?)\s+products?/i,
-        /(?:show|list|display|find|get|search|browse)\s+(?:me\s+)?(?:all\s+)?(?:your\s+)?(?:available\s+)?([\w]+(?:\s+[\w]+)?)\s+items?/i,
+        // show/list/display/find/get [me] [all] [your] [available] <KEYWORD> [products/items]
+        /(?:show|list|display|find|get|search|browse|explore|see)\s+(?:me\s+)?(?:all\s+)?(?:your\s+)?(?:available\s+)?([\w]+(?:\s+[\w]+)?)\s*(?:products?|items?)?$/i,
         // products for/related to/about <KEYWORD>
         /products?\s+(?:for|related\s+to|about|in)\s+([\w]+(?:\s+[\w]+)?)/i,
         // do you have <KEYWORD> products
@@ -567,6 +544,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     const sanitizedQuery = query.trim();
     const lowerQuery = sanitizedQuery.toLowerCase();
+    const session = getSession(sessionId);
 
     // ── Stage 1: Tokenize & Extract Keywords ─────────────────────────────────
     const tokens = tokenize(sanitizedQuery);
@@ -577,7 +555,6 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     // ── Stage 2: Alternative Product Request ─────────────────────────────────
     if (isAlternativeRequest(lowerQuery)) {
-        const session = getSession(sessionId);
         const alternatives = await getAlternativeProducts(session);
 
         if (alternatives.length > 0) {
@@ -764,51 +741,43 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
     // ── Stage 5: Company / People Info Guard ──────────────────────────────────
     const companyInfoPatterns = [
         {
-            pattern: /(who\s+(is|are|was)\s+(the\s+)?(owner|founder|ceo|director|head|president|co-founder)|कौन\s+है\s+(मालिक|संस्थापक|प्रमुख))/i,
+            pattern: /(who\s+(is|are|was)\s+(the\s+)?(owner|founder|ceo|director|co-founder)(\s+of\s+(this\s+company|urvaah|house\s+of\s+urvaah|your\s+company|the\s+brand))?|who\s+(started|runs|owns|founded)\s+(urvaah|house\s+of\s+urvaah|this\s+company|this\s+brand)|about\s+(urvaah|house\s+of\s+urvaah|your\s+company|your\s+brand)|who\s+created\s+(urvaah|house\s+of\s+urvaah)|कौन\s+है\s+(मालिक|संस्थापक)\s*(उर्वाह|कंपनी)?)/i,
             answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह एक प्रीमियम फैशन और लाइफस्टाइल कंपनी है जिसे एक उत्साही टीम द्वारा बनाया गया है जो हर घर में सुरुचिपूर्ण उत्पाद लाने के लिए समर्पित है।\n\nविशिष्ट नेतृत्व या स्वामित्व की जानकारी के लिए, कृपया हमारी आधिकारिक वेबसाइट देखें या support@houseofurvaah.com पर हमसे संपर्क करें।\n📞 +91 1800-123-4567"
-                : "House of Urvaah is a premium fashion & lifestyle company built by a passionate team dedicated to bringing elegant products to every home.\n\nFor specific leadership or ownership information, please visit our official website or contact us at support@houseofurvaah.com.\n📞 +91 1800-123-4567"
+                ? "हाउस ऑफ उर्वाह (House of Urvaah) एक विशेष लक्जरी फैशन लेबल है जिसे एक समर्पित टीम द्वारा सुरुचिपूर्ण, कालातीत परिधान लाने के लिए बनाया गया है।\n\nविशिष्ट नेतृत्व या पूछताछ के लिए, कृपया support@houseofurvaah.com पर संपर्क करें।"
+                : "House of Urvaah is a luxury fashion label founded and curated by a dedicated design team committed to bringing timeless, architectural couture and contemporary silhouettes to life.\n\nFor specific leadership, press, or atelier inquiries, please visit our About page or contact us at support@houseofurvaah.com."
         },
         {
-            pattern: /(\b(owner|founder|ceo|chairman|president|co-founder|director)\b.*\b(homeved|mediveda|urvaah|house\s+of\s+urvaah|company|of)\b|(मालिक|संस्थापक|प्रमुख).*(होमवेद|उर्वाह|कंपनी))/i,
+            pattern: /(\b(owner|founder|ceo|director|co-founder)\b.*\b(urvaah|house\s+of\s+urvaah|company|brand)\b|(मालिक|संस्थापक|प्रमुख).*(उर्वाह|कंपनी))/i,
             answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह की स्थापना और प्रबंधन एक समर्पित टीम द्वारा किया जाता है।\n\nनेतृत्व के विवरण के लिए, कृपया हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं या support@houseofurvaah.com पर हमसे संपर्क करें।"
-                : "House of Urvaah is founded and managed by a dedicated team.\n\nFor leadership details, please visit our About page or contact us at support@houseofurvaah.com."
+                ? "हाउस ऑफ उर्वाह की स्थापना और प्रबंधन एक समर्पित डिजाइन टीम द्वारा किया जाता है।\n\nनेतृत्व के विवरण के लिए, कृपया हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं या support@houseofurvaah.com पर हमसे संपर्क करें।"
+                : "House of Urvaah is founded and designed by a passionate creative atelier team.\n\nFor brand stories and leadership details, please visit our About page or contact us at support@houseofurvaah.com."
         },
         {
-            pattern: /(\b(homeved|mediveda|urvaah|house\s+of\s+urvaah)\b.*\b(owner|founder|ceo|founded|established|started|created)\b|(होमवेद|उर्वाह).*(शुरू|बनाया|मालिक))/i,
+            pattern: /(about\s+(urvaah|house\s+of\s+urvaah|the\s+company|your\s+brand|your\s+company)|(उर्वाह|कंपनी|हमारे)\s+बारे\s+में)/i,
             answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह एक प्रीमियम फैशन और स्टाइल मंच है जो प्रामाणिक, उच्च-गुणवत्ता वाले उत्पादों के लिए प्रतिबद्ध है।\n\nविशिष्ट कंपनी या नेतृत्व की जानकारी के लिए, कृपया हमसे support@houseofurvaah.com या +91 1800-123-4567 पर संपर्क करें।"
-                : "House of Urvaah is a premium fashion & style platform committed to authentic, high-quality products.\n\nFor specific company or leadership information, please contact us at support@houseofurvaah.com or +91 1800-123-4567."
+                ? "हाउस ऑफ उर्वाह के बारे में:\n\nमिशन: कालातीत, सुरुचिपूर्ण और प्रामाणिक शिल्प कौशल लाना।\nदृष्टि: भारतीय शिल्प और आधुनिक सिल्हूट के संगम के लिए सबसे भरोसेमंद लक्जरी फैशन मंच बनना।\n\nसंपर्क: support@houseofurvaah.com | +91 1800-123-4567"
+                : "About House of Urvaah:\n\nMission: Celebrating modern femininity with architectural silhouettes, pure tissue silks, cora cottons, and handcrafted embroidery.\nVision: To be the premier destination for versatile day-to-evening luxury garments.\n\nContact us: support@houseofurvaah.com | +91 1800-123-4567"
         },
         {
-            pattern: /(about\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah|us|the\s+company|our\s+company)|(होमवेद|उर्वाह|कंपनी|हमारे)\s+बारे\s+में)/i,
+            pattern: /(what\s+(is|are)\s+(urvaah|house\s+of\s+urvaah)|(उर्वाह)\s+क्या\s+है)/i,
             answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह के बारे में:\n\nमिशन: हर किसी के लिए सुरुचिपूर्ण और प्रामाणिक फैशन लाना।\nदृष्टि: गुणवत्ता और शैली के लिए सबसे भरोसेमंद मंच बनना।\n\nसंपर्क करें: support@houseofurvaah.com | +91 1800-123-4567"
-                : "About House of Urvaah:\n\nMission: To bring elegant and authentic fashion to everyone.\nVision: To become the most trusted platform for premium quality and style.\n\nContact us: support@houseofurvaah.com | +91 1800-123-4567"
-        },
-        {
-            pattern: /(what\s+(is|are)\s+(homeved|mediveda|urvaah|house\s+of\s+urvaah)|(होमवेद|उर्वाह|मेडिवेद)\s+क्या\s+है|(ਹੋਮਵੇਦ|ਉਰਵਾਹ|ਮੇਡੀਵੇਦਾ)\s+ਕੀ\s+ਹੈ)/i,
-            answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह (House of Urvaah) एक भरोसेमंद फैशन मंच है जो प्रदान करता है:\n• 100% प्रामाणिक उत्पाद\n• गुणवत्ता-परीक्षित सामग्री\n• विशेष डिज़ाइन\n\nअधिक जानने के लिए हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं!"
-                : language === 'pa'
-                ? "ਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ (House of Urvaah) ਇੱਕ ਭਰੋਸੇਮੰਦ ਫੈਸ਼ਨ ਪਲੇਟਫਾਰਮ ਹੈ ਜੋ ਪੇਸ਼ ਕਰਦਾ ਹੈ:\n• 100% ਪ੍ਰਮਾਣਿਕ ਉਤਪਾਦ\n• ਗੁਣਵੱਤਾ-ਪ੍ਰੀਖਿਆ ਸਮੱਗਰੀ\n\nਹੋਰ ਜਾਣਨ ਲਈ ਸਾਡੇ 'ਸਾਡੇ ਬਾਰੇ' (About) ਪੰਨੇ 'ਤੇ ਜਾਓ!"
-                : "House of Urvaah is a trusted fashion platform offering:\n• 100% authentic products\n• Quality-tested materials\n• Exclusive designs\n\nVisit our About page to learn more!"
+                ? "हाउस ऑफ उर्वाह (House of Urvaah) एक प्रीमियम लक्जरी फैशन लेबल है जो प्रदान करता है:\n• 100% प्रामाणिक, उच्च-गुणवत्ता वाले परिधान\n• हाथ से कढ़ाई किए गए कोर्सेट और आधुनिक कुर्तियां\n• बहुमुखी दिन-से-शाम को-ऑर्ड सेट्स\n\nअधिक जानने के लिए हमारे 'About' पृष्ठ पर जाएं!"
+                : "House of Urvaah is an exclusive Indian luxury fashion label offering:\n• 100% authentic, designer-crafted garments\n• Hand-embroidered raw silk corsets & cora cotton kurtis\n• Versatile day-to-evening couture & bloom sets\n\nExplore our catalog to discover the full collection!"
         },
     ];
-    // ── Stage 5.5: Inventory Count Queries (NEW) ───────────────────────────────
+    // ── Stage 5.5: Inventory Count Queries ─────────────────────────────────────
     const isHowMany = lowerQuery.includes('how many') || lowerQuery.includes('total') || lowerQuery.includes('list of all') || lowerQuery.includes('count') || lowerQuery.includes('कितने') || lowerQuery.includes('कुल');
-    const mentionsProducts = lowerQuery.includes('product') || lowerQuery.includes('उत्पाद');
+    const mentionsProducts = lowerQuery.includes('product') || lowerQuery.includes('उत्पाद') || lowerQuery.includes('item') || lowerQuery.includes('dress') || lowerQuery.includes('clothes');
     const mentionsCategories = lowerQuery.includes('categor') || lowerQuery.includes('श्रेणी');
 
     if (isHowMany && mentionsProducts && !mentionsCategories) {
         try {
-            const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE active = true');
+            const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE COALESCE(is_active, true) = true');
             const total = countRes.rows[0].count;
             return {
                 answer: language === 'hi'
-                    ? `हमारे पास कुल ${total} प्रीमियम आयुर्वेदिक उत्पाद उपलब्ध हैं। आप विशिष्ट वस्तुओं की खोज कर सकते हैं या मुझसे श्रेणी के अनुसार उत्पादों को सूचीबद्ध करने के लिए कह सकते हैं!`
-                    : `We have a total of ${total} premium Ayurvedic products available. You can search for specific items or ask me to list products by category!`,
+                    ? `हाउस ऑफ उर्वाह संग्रह में वर्तमान में ${total} विशेष लक्जरी परिधान उपलब्ध हैं। आप कोर्सेट, ब्लूम सेट, या कुर्तियों के बारे में पूछ सकते हैं!`
+                    : `We currently have ${total} exclusive luxury designer pieces available in the House of Urvaah atelier collection. You can search for specific silhouettes like corsets, bloom sets, or kurtis!`,
                 intent: 'inventory_info',
                 confidence: 1.0,
                 products: []
@@ -818,14 +787,12 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     if (isHowMany && mentionsCategories) {
         try {
-            const countRes = await pool.query('SELECT COUNT(*) FROM category WHERE active = true');
+            const countRes = await pool.query('SELECT COUNT(*) FROM category WHERE COALESCE(is_active, true) = true');
             const total = countRes.rows[0].count;
-            const namesRes = await pool.query('SELECT name FROM category WHERE active = true ORDER BY name LIMIT 6');
-            const names = namesRes.rows.map(r => r.name).join(', ');
             return {
                 answer: language === 'hi'
-                    ? `हमारे पास आयुर्वेदिक कल्याण उत्पादों की ${total} श्रेणियां हैं, जिनमें ${names} और बहुत कुछ शामिल हैं। आपकी किस श्रेणी में रुचि है?`
-                    : `We have ${total} categories of Ayurvedic wellness products, including ${names}, and more. Which category are you interested in?`,
+                    ? `हमारे पास फैशन शैलियों की श्रेणियां उपलब्ध हैं। आप किसी भी श्रेणी को देखने के लिए कह सकते हैं!`
+                    : `We feature specialized fashion categories including Corsets, Bloom Sets, Co-Ords, and Kurtis. Which collection would you like to explore?`,
                 intent: 'inventory_info',
                 confidence: 1.0,
                 products: []
@@ -850,71 +817,92 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             pattern: /privacy\s*policy/i,
             answer: language === 'hi'
                 ? "गोपनीयता नीति (Privacy Policy):\n\nहाउस ऑफ उर्वाह आपकी गोपनीयता की रक्षा के लिए प्रतिबद्ध है। हम आपकी व्यक्तिगत जानकारी (जैसे नाम, ईमेल और पता) केवल आपके आदेशों को संसाधित करने और आपके खरीदारी अनुभव को बेहतर बनाने के लिए एकत्र और उपयोग करते हैं। हम विपणन उद्देश्यों के लिए तीसरे पक्ष के साथ आपका डेटा नहीं बेचते या साझा नहीं करते हैं। सभी लेनदेन उद्योग-मानक एन्क्रिप्शन के साथ सुरक्षित हैं।"
-                : language === 'pa'
-                ? "ਗੋਪਨੀਯਤਾ ਨੀਤੀ (Privacy Policy):\n\nਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ ਤੁਹਾਡੀ ਗੋਪਨੀਯਤਾ ਦੀ ਰੱਖਿਆ ਲਈ ਵਚਨਬੱਧ ਹੈ। ਅਸੀਂ ਤੁਹਾਡੀ ਨਿੱਜੀ ਜਾਣਕਾਰੀ (ਜਿਵੇਂ ਕਿ ਨਾਮ, ਈਮੇਲ ਅਤੇ ਪਤਾ) ਸਿਰਫ਼ ਤੁਹਾਡੇ ਆਰਡਰਾਂ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕਰਨ ਅਤੇ ਤੁਹਾਡੇ ਖਰੀਦਦਾਰੀ ਅਨੁਭਵ ਨੂੰ ਬਿਹਤਰ ਬਣਾਉਣ ਲਈ ਇਕੱਤਰ ਕਰਦੇ ਅਤੇ ਵਰਤਦੇ ਹਾਂ। ਅਸੀਂ ਮਾਰਕੀਟਿੰਗ ਉਦੇਸ਼ਾਂ ਲਈ ਤੀਜੀ ਧਿਰਾਂ ਨਾਲ ਤੁਹਾਡਾ ਡੇਟਾ ਵੇਚਦੇ ਜਾਂ ਸਾਂਝਾ ਨਹੀਂ ਕਰਦੇ ਹਾਂ। ਸਾਰੇ ਲੈਣ-ਦੇਣ ਉਦਯੋਗ-ਮਿਆਰੀ ਐਨਕ੍ਰਿਪਸ਼ਨ ਨਾਲ ਸੁਰੱਖਿਅਤ ਹਨ।"
                 : "Privacy Policy:\n\nHouse of Urvaah is committed to protecting your privacy. We collect and use your personal information (such as name, email, and address) solely to process your orders and improve your shopping experience. We do not sell or share your data with third parties for marketing purposes. All transactions are secured with industry-standard encryption.",
             intent: 'navigation'
         },
         {
-            pattern: /return\s*policy|refund\s*policy/i,
+            pattern: /\b(return\s*policy|refund\s*policy|returns?|refunds?|exchange\s*policy|exchange)\b/i,
             answer: language === 'hi'
-                ? "वापसी नीति (Return Policy):\n\nहम चाहते हैं कि आप अपनी खरीदारी से पूरी तरह संतुष्ट हों। यदि आप किसी उत्पाद से खुश नहीं हैं, तो आप उसे वितरण के 7 दिनों के भीतर वापस कर सकते हैं। वस्तु अप्रयुक्त (unused), अपनी मूल पैकेजिंग में और सभी टैगों के साथ होनी चाहिए। 5-7 व्यावसायिक दिनों के भीतर आपके मूल भुगतान माध्यम में पूर्ण धनवापसी (refund) संसाधित की जाएगी।"
-                : language === 'pa'
-                ? "ਵਾਪਸੀ ਨੀਤੀ (Return Policy):\n\nਅਸੀਂ ਚਾਹੁੰਦੇ ਹਾਂ ਕਿ ਤੁਸੀਂ ਆਪਣੀ ਖਰੀਦ ਤੋਂ ਪੂਰੀ ਤਰ੍ਹਾਂ ਸੰਤੁਸ਼ਟ ਹੋਵੋ। ਜੇਕਰ ਤੁਸੀਂ ਕਿਸੇ ਉਤਪਾਦ ਤੋਂ ਖੁਸ਼ ਨਹੀਂ ਹੋ, ਤਾਂ ਤੁਸੀਂ ਉਸਨੂੰ ਡਿਲੀਵਰੀ ਦੇ 7 ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਵਾਪਸ ਕਰ ਸਕਦੇ ਹੋ। ਵਸਤੂ ਅਣਵਰਤੀ (unused), ਆਪਣੀ ਅਸਲ ਪੈਕੇਜਿੰਗ ਵਿੱਚ ਅਤੇ ਸਾਰੇ ਟੈਗਾਂ ਦੇ ਨਾਲ ਹੋਣੀ ਚਾਹੀਦੀ ਹੈ। 5-7 ਕੰਮਕਾਜੀ ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਤੁਹਾਡੇ ਅਸਲ ਭੁਗਤਾਨ ਵਿਧੀ ਵਿੱਚ ਪੂਰੀ ਰਿਫੰਡ (refund) ਦੀ ਪ੍ਰਕਿਰਿਆ ਕੀਤੀ ਜਾਵੇਗੀ।"
-                : "Return Policy:\n\nWe want you to be completely satisfied with your purchase. If you're not happy with a product, you can return it within 7 days of delivery. The item must be unused, in its original packaging, and with all tags intact. A full refund will be processed back to your original payment method within 5-7 business days.",
+                ? "वापसी और धनवापसी नीति (Return & Refund Policy):\n\nहम चाहते हैं कि आप अपनी खरीदारी से पूरी तरह संतुष्ट हों। यदि आप किसी उत्पाद से खुश नहीं हैं, तो आप उसे डिलीवरी के 7 दिनों के भीतर वापस या बदल (exchange) सकते हैं। वस्तु अप्रयुक्त (unused), अपनी मूल पैकेजिंग में और सभी ब्रांड टैगों के साथ होनी चाहिए। 5-7 व्यावसायिक दिनों के भीतर आपके मूल भुगतान माध्यम में पूर्ण धनवापसी संसाधित की जाएगी।"
+                : "Return & Refund Policy:\n• 7-day hassle-free return and exchange window from delivery.\n• Items must be unwashed, unworn, and in original luxury packaging with all tags intact.\n• Contact support@houseofurvaah.com or call +91 1800-123-4567 to initiate an easy pickup.\n• Full refund will be processed back to your original payment method within 5-7 business days.",
             intent: 'navigation'
         },
         {
-            pattern: /login|sign\s*in|how\s*to\s*login/i,
+            pattern: /\b(login|sign\s*in|how\s*to\s*login|sign\s*up|register|account)\b/i,
             answer: language === 'hi'
-                ? "हाउस ऑफ उर्वाह में लॉगिन करने के लिए:\n1. हाउस ऑफ उर्वाह वेबसाइट पर जाएं।\n2. ऊपर दाईं ओर 'अकाउंट' (Account) आइकन या 'लॉगिन' (Login) बटन पर क्लिक करें।\n3. अपना पंजीकृत ईमेल और पासवर्ड दर्ज करें।\n4. अपने खाते तक पहुँचने के लिए 'सबमिट' (Submit) या 'लॉगिन' पर क्लिक करें।\n5. यदि आप अपना पासवर्ड भूल गए हैं, तो 'फॉरगॉट पासवर्ड' (Forgot Password) विकल्प का उपयोग करें।"
-                : "To login to House of Urvaah:\n1. Go to the House of Urvaah website.\n2. Click on the 'Account' icon or 'Login' button at the top right.\n3. Enter your registered email and password.\n4. Click 'Submit' or 'Login' to access your account.\n5. If you forgot your password, use the 'Forgot Password' option.",
+                ? "हाउस ऑफ उर्वाह में लॉगिन / अकाउंट:\n1. हाउस ऑफ उर्वाह वेबसाइट पर जाएं।\n2. ऊपर दाईं ओर 'अकाउंट' (Account) आइकन पर क्लिक करें।\n3. अपना पंजीकृत ईमेल और पासवर्ड दर्ज करें।\n4. नए ग्राहक 'साइन अप' (Sign Up) करके नया खाता बना सकते हैं।"
+                : "To access your House of Urvaah Account:\n1. Click the 'Account' icon in the top header navigation.\n2. Enter your registered email address and password to log in.\n3. New clients can select 'Sign Up' to create an account for faster checkout and order tracking.\n4. Use 'Forgot Password' if you need a quick reset link.",
             intent: 'navigation'
         },
         {
-            pattern: /how\s*(to\s*)?order|place\s*(an?\s*)?order|ordering|how\s*to\s*buy/i,
+            pattern: /\b(how\s*(to\s*)?order|place\s*(an?\s*)?order|ordering|how\s*to\s*buy)\b/i,
             answer: language === 'hi'
-                ? "ऑर्डर करना आसान है! 🛒\n1. हमारे उत्पादों को ब्राउज़ करें\n2. अपनी पसंद की वस्तुओं पर 'कार्ट में जोड़ें' (Add to Cart) पर क्लिक करें\n3. कार्ट में जाएं और 'चेकआउट' (Checkout) पर क्लिक करें\n4. अपना शिपिंग विवरण दर्ज करें\n5. सुरक्षित रूप से भुगतान पूरा करें\n\nकिसी विशिष्ट कदम में मदद चाहिए?"
-                : language === 'pa'
-                ? "ਆਰਡਰ ਕਰਨਾ ਆਸਾਨ ਹੈ! 🛒\n1. ਸਾਡੇ ਉਤਪਾਦਾਂ ਨੂੰ ਬ੍ਰਾਊਜ਼ ਕਰੋ\n2. ਆਪਣੀ ਪਸੰਦ ਦੀਆਂ ਵਸਤੂਆਂ 'ਤੇ 'ਕਾਰਟ ਵਿੱਚ ਜੋੜੋ' (Add to Cart) 'ਤੇ ਕਲਿੱਕ ਕਰੋ\n3. ਕਾਰਟ ਵਿੱਚ ਜਾਓ ਅਤੇ 'ਚੈੱਕਆਉਟ' (Checkout) 'ਤੇ ਕਲਿੱਕ ਕਰੋ\n4. ਆਪਣੇ ਸ਼ਿਪਿੰਗ ਵੇਰਵੇ ਦਰਜ ਕਰੋ\n5. ਸੁਰੱਖਿਅਤ ਢੰਗ ਨਾਲ ਭੁਗਤਾਨ ਪੂਰਾ ਕਰੋ\n\nਕਿਸੇ ਖਾਸ ਕਦਮ ਵਿੱਚ ਮਦਦ ਚਾਹੀਦੀ ਹੈ?"
-                : "Ordering is easy! 🛒\n1. Browse our products\n2. Click 'Add to Cart' on items you like\n3. Go to Cart and click 'Checkout'\n4. Enter your shipping details\n5. Complete payment securely\n\nNeed help with a specific step?",
+                ? "ऑर्डर करना आसान है! 🛒\n1. हमारे संग्रह को ब्राउज़ करें\n2. अपने पसंदीदा परिधान पर 'Add to Cart' पर क्लिक करें\n3. कार्ट खोलें और 'Checkout' पर क्लिक करें\n4. शिपिंग पता दर्ज करें और Razorpay के माध्यम से सुरक्षित भुगतान करें।"
+                : "Ordering with House of Urvaah is seamless! 🛒\n1. Browse our collections and select your preferred size (XS to XL).\n2. Click 'Add to Bag' / 'Add to Cart'.\n3. Proceed to Checkout and enter your shipping address.\n4. Complete payment securely via Razorpay (UPI, Cards, Net Banking).\n5. You will receive an instant order confirmation via email and WhatsApp!",
             intent: 'navigation'
         },
         {
-            pattern: /shipping|delivery|how\s*long/i,
+            pattern: /\b(shipping|delivery|delivery\s*charges|courier|dispatch)\b|how\s*long\s*(does\s*it\s*take|to\s*deliver)/i,
             answer: language === 'hi'
-                ? "शिपिंग जानकारी:\n• सभी ऑर्डर पर मुफ़्त डिलीवरी\n• 5-7 व्यावसायिक दिनों के भीतर वितरण\n• 'मेरे आदेश' (My Orders) से कभी भी अपने ऑर्डर को ट्रैक करें\n• प्रामाणिक उत्पादों की गारंटी"
-                : language === 'pa'
-                ? "ਸ਼ਿਪਿੰਗ ਜਾਣਕਾਰੀ:\n• ਸਾਰੇ ਆਰਡਰਾਂ 'ਤੇ ਮੁਫ਼ਤ ਡਿਲੀਵਰੀ\n• 5-7 ਕੰਮਕਾਜੀ ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਡਿਲੀਵਰੀ\n• 'ਮੇਰੇ ਆਰਡਰ' (My Orders) ਤੋਂ ਕਿਸੇ ਵੀ ਸਮੇਂ ਆਪਣੇ ਆਰਡਰ ਨੂੰ ਟ੍ਰੈਕ ਕਰੋ\n• ਪ੍ਰਮਾਣਿਕ ਉਤਪਾਦਾਂ ਦੀ ਗਰੰਟੀ"
-                : "Shipping Information:\n• FREE delivery on all orders\n• Delivery within 5-7 business days\n• Track your order anytime from 'My Orders'\n• Authentic products guaranteed",
+                ? "शिपिंग और डिलीवरी जानकारी:\n• ₹2,999 से अधिक के सभी ऑर्डर पर पूरे भारत में मुफ़्त डिलीवरी (FREE Delivery)\n• मानक डिलीवरी 3-5 व्यावसायिक दिनों में पूरी होती है\n• डिस्पैच के बाद रीयल-टाइम ट्रैकिंग उपलब्ध रहती है"
+                : "Shipping & Delivery Information:\n• Complimentary FREE delivery across India on orders above ₹2,999.\n• Standard nationwide delivery takes 3 to 5 business days.\n• Orders are dispatched within 24–48 hours in signature luxury garment boxes.\n• Real-time tracking link is sent via SMS, WhatsApp, and email upon dispatch.",
             intent: 'navigation'
         },
         {
-            pattern: /contact|support|email|phone|call\s*us/i,
+            pattern: /\b(contact|support|email|phone|call\s*us|customer\s*care|helpline)\b/i,
             answer: language === 'hi'
-                ? "हमसे संपर्क करें:\n📧 ईमेल: support@houseofurvaah.com\n📞 फोन: +91 1800-123-4567\n⏰ समय: सोम-शनि, सुबह 9 बजे - शाम 6 बजे\n\nहम आमतौर पर 24 घंटों के भीतर जवाब देते हैं!"
-                : language === 'pa'
-                ? "ਸਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੋ:\n📧 ਈਮੇਲ: support@houseofurvaah.com\n📞 ਫ਼ੋਨ: +91 1800-123-4567\n⏰ ਸਮਾਂ: ਸੋਮ-ਸ਼ਨਿ, ਸਵੇਰੇ 9 ਵਜੇ - ਸ਼ਾਮ 6 ਵਜੇ\n\nਅਸੀਂ ਆਮ ਤੌਰ 'ਤੇ 24 ਘੰਟਿਆਂ ਦੇ ਅੰਦਰ ਜਵਾਬ ਦਿੰਦੇ ਹਾਂ!"
-                : "Contact Us:\n📧 Email: support@houseofurvaah.com\n📞 Phone: +91 1800-123-4567\n⏰ Hours: Mon-Sat, 9 AM – 6 PM\n\nWe typically respond within 24 hours!",
+                ? "हमसे संपर्क करें:\n📧 ईमेल: support@houseofurvaah.com\n📞 फोन: +91 1800-123-4567\n⏰ समय: सोमवार से शनिवार, सुबह 9:00 बजे से शाम 6:00 बजे तक\n\nहमारी कंसीयर्ज टीम सहायता के लिए सदैव तत्पर है!"
+                : "House of Urvaah Concierge Support:\n📧 Email: support@houseofurvaah.com\n📞 Phone: +91 1800-123-4567\n⏰ Hours: Monday – Saturday, 9:00 AM – 6:00 PM IST\n\nOur client service team typically responds within 24 business hours!",
             intent: 'contact_info'
         },
         {
-            pattern: /payment|pay|payment\s*method/i,
+            pattern: /\b(payment|payment\s*methods?|how\s*to\s*pay|pay\s*online|cod|cash\s*on\s*delivery|upi|razorpay|net\s*banking)\b/i,
             answer: language === 'hi'
-                ? "स्वीकार किए गए भुगतान के तरीके:\n• क्रेडिट / डेबिट कार्ड\n• UPI (Google Pay, PhonePe, आदि)\n• नेट बैंकिंग\n• डिजिटल वॉलेट\n\nसभी भुगतान 100% सुरक्षित और एन्क्रिप्टेड हैं। 🔒"
-                : language === 'pa'
-                ? "ਭੁਗਤਾਨ ਦੇ ਤਰੀਕੇ:\n• ਕ੍ਰੈਡਿਟ / ਡੈਬਿਟ ਕਾਰਡ\n• UPI (Google Pay, PhonePe, ਆਦਿ)\n• ਨੈੱਟ ਬੈਂਕਿੰਗ\n• ਡਿਜੀਟਲ ਵਾਲਿਟ\n\nਸਾਰੇ ਭੁਗਤਾਨ 100% ਸੁਰੱਖਿਅਤ ਅਤੇ ਐਨਕ੍ਰਿਪਟਡ ਹਨ। 🔒"
-                : "Payment Methods Accepted:\n• Credit / Debit Cards\n• UPI (Google Pay, PhonePe, etc.)\n• Net Banking\n• Digital Wallets\n\nAll payments are 100% secure and encrypted. 🔒",
+                ? "स्वीकार किए गए भुगतान विकल्प:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• क्रेडिट एवं डेबिट कार्ड (Visa, Mastercard, RuPay, Amex)\n• नेट बैंकिंग\n• सभी लेनदेन 256-बिट SSL एन्क्रिप्शन के साथ Razorpay द्वारा 100% सुरक्षित हैं।"
+                : "Payment Methods Accepted:\n• UPI (Google Pay, PhonePe, Paytm, BHIM)\n• All major Credit & Debit Cards (Visa, Mastercard, RuPay, Amex)\n• Net Banking across 50+ banks\n• Digital Wallets\n\nAll transactions are 100% secure, processed via Razorpay with banking-grade 256-bit encryption.",
             intent: 'navigation'
         },
         {
-            pattern: /return|refund|exchange/i,
+            pattern: /(discount|coupon|promo\s*code|voucher|offers?|sale|deal|छूट|ऑफ़र)/i,
             answer: language === 'hi'
-                ? "वापसी और धनवापसी नीति:\n• वितरण से 7 दिन की वापसी अवधि\n• वस्तुएं अप्रयुक्त और मूल पैकेजिंग में होनी चाहिए\n• वापसी शुरू करने के लिए support@houseofurvaah.com पर संपर्क करें\n• 5-7 व्यावसायिक दिनों के भीतर पूर्ण धनवापसी संसाधित की जाएगी"
-                : language === 'pa'
-                ? "ਵਾਪਸੀ ਅਤੇ ਰਿਫੰਡ ਨੀਤੀ:\n• ਡਿਲੀਵਰੀ ਤੋਂ 7-ਦਿਨਾਂ ਦੀ ਵਾਪਸੀ ਦੀ ਮਿਆਦ\n• ਵਸਤੂਆਂ ਅਣਵਰਤੀਆਂ ਅਤੇ ਅਸਲ ਪੈਕੇਜਿੰਗ ਵਿੱਚ ਹੋਣੀਆਂ ਚਾਹੀਦੀਆਂ ਹਨ\n• ਵਾਪਸੀ ਸ਼ੁਰੂ ਕਰਨ ਲਈ support@houseofurvaah.com 'ਤੇ ਸੰਪਰਕ ਕਰੋ\n• 5-7 ਕੰਮਕਾਜੀ ਦਿਨਾਂ ਦੇ ਅੰਦਰ ਪੂਰੀ ਰਿਫੰਡ ਦੀ ਪ੍ਰਕਿਰਿਆ ਕੀਤੀ ਜਾਵੇਗੀ"
-                : "Return & Refund Policy:\n• 7-day return window from delivery\n• Items must be unused and in original packaging\n• Contact support@houseofurvaah.com to initiate a return\n• Full refund processed within 5-7 business days",
-            intent: 'navigation'
+                ? "ऑफ़र और विशेषाधिकार:\n• ₹2,999 से अधिक के सभी ऑर्डर पर निःशुल्क शिपिंग।\n• पहले निजी संग्रह पूर्वावलोकन और मौसमी प्रचार प्राप्त करने के लिए हमारे न्यूज़लेटर की सदस्यता लें।\n• आगामी त्यौहारों के लिए हमारे होमपेज पर नज़र रखें!"
+                : "Exclusive Privileges & Offers:\n• Complimentary shipping nationwide on all orders above ₹2,999.\n• Subscribe to the House of Urvaah newsletter for private trunk show access and seasonal preview codes.\n• Check our website homepage for ongoing festive collections!",
+            intent: 'offers_info'
+        },
+        {
+            pattern: /(cancel\s*order|order\s*cancellation|how\s*to\s*cancel|can\s*i\s*cancel)/i,
+            answer: language === 'hi'
+                ? "ऑर्डर रद्द करना:\n• आप ऑर्डर देने के 12 घंटों के भीतर support@houseofurvaah.com या +91 1800-123-4567 पर संपर्क करके रद्द कर सकते हैं।\n• डिस्पैच के बाद, आप 7-दिवसीय आसान वापसी नीति का लाभ ले सकते हैं।"
+                : "Order Cancellation:\n• Orders can be cancelled within 12 hours of placement before entering our atelier dispatch process.\n• Email support@houseofurvaah.com or call +91 1800-123-4567 with your Order ID.\n• If already shipped, you can simply utilize our 7-day hassle-free return upon delivery.",
+            intent: 'cancellation_info'
+        },
+        {
+            pattern: /(store\s*location|physical\s*store|offline\s*store|where\s*(is|are)\s*(your\s*store|you\s*located)|address\s*of\s*(urvaah|store))/i,
+            answer: language === 'hi'
+                ? "स्टोर की जानकारी:\n• हाउस ऑफ उर्वाह एक विशेष डिजाइनर बुटीक है जो houseofurvaah.com के माध्यम से संचालित होता है और पूरे भारत में सुरक्षित डिलीवरी करता है।\n• निजी कंसीयर्ज पूछताछ के लिए, support@houseofurvaah.com पर संपर्क करें।"
+                : "Store & Atelier Information:\n• House of Urvaah operates exclusively via our official online flagship boutique (houseofurvaah.com), delivering nationwide with premium express couriers.\n• For bespoke styling appointments, bridal consultations, or press inquiries, please write to us at support@houseofurvaah.com or call +91 1800-123-4567.",
+            intent: 'store_location'
+        },
+        {
+            pattern: /(size\s*chart|sizing|size\s*guide|fit\s*guide|what\s*size|measurements?)/i,
+            answer: language === 'hi'
+                ? "आकार और फिटिंग गाइड (Size Guide):\n• हमारे उत्पाद XS, S, M, L, XL आकारों में उपलब्ध हैं।\n• हमारे कई विशेष टॉप्स और कोर्सेट में एडजस्टेबल लेस-अप बैक दिया गया है ताकि आपको सही और आरामदायक फिटिंग मिले।\n• प्रत्येक उत्पाद पृष्ठ पर विस्तृत साइज चार्ट उपलब्ध है।"
+                : "Size & Fit Guide:\n• Standard sizing: XS, S, M, L, XL\n• Many of our signature tops and corsets feature adjustable lace-up backs for a custom, tailored silhouette.\n• Detailed bust, waist, and hip measurements are available on each product page under 'Size Guide'.\n• If you are between sizes, we recommend sizing up for structured pieces or contacting our concierge for bespoke sizing advice!",
+            intent: 'size_guide'
+        },
+        {
+            pattern: /(track\s*order|order\s*status|where\s*(is|are)\s*my\s*order|track\s*my\s*(package|item))/i,
+            answer: language === 'hi'
+                ? "ऑर्डर ट्रैकिंग:\n• आप 'अकाउंट' (Account) -> 'ऑर्डर्स' (Orders) में जाकर अपना ऑर्डर ट्रैक कर सकते हैं।\n• डिस्पैच होने के बाद ट्रैकिंग लिंक आपके ईमेल और व्हाट्सएप पर भी भेजा जाता है।"
+                : "Track Your Order:\n• Go to 'My Account' -> 'Orders' to view real-time tracking.\n• A tracking link is also sent to your registered email and WhatsApp once your order is dispatched.\n• Standard dispatch takes place within 24–48 hours.",
+            intent: 'order_tracking'
+        },
+        {
+            pattern: /(fabric|material|care\s*instructions?|wash\s*care|dry\s*clean)/i,
+            answer: language === 'hi'
+                ? "कपड़ा और देखभाल निर्देश:\n• हम शुद्ध कच्चा टिशू सिल्क, सांस लेने योग्य कोरा कॉटन और सुनहरी ज़री कढ़ाई का उपयोग करते हैं।\n• जटिल कढ़ाई वाले सिल्क और कोर्सेट टुकड़ों के लिए केवल ड्राई क्लीन की सिफारिश की जाती है।"
+                : "Fabrics & Care Guidance:\n• We use pure raw tissue silk, breathable cora cotton, and handcrafted golden zari embroidery.\n• Dry clean is strongly recommended for all embroidered silk and structured corset pieces to preserve the delicate handwork.\n• Cora cotton pieces can be gently hand-washed in cold water.",
+            intent: 'fabric_care'
         },
     ];
 
@@ -997,7 +985,9 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             };
         }
     } catch (err) {
-        console.error('Knowledge-base lookup error:', err.message);
+        if (err.code !== '42P01') {
+            console.error('Knowledge-base lookup error:', err.message);
+        }
     }
 
     // ── Stages 8–10: Product Search (only if likely a product query) ──────────
@@ -1057,9 +1047,9 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
         // Stage 10: Fuzzy product search — RAISED threshold to 0.45 to reduce false positives
         const fuzzySql = `
-            SELECT product_id, productname, word_similarity($1, productname) AS score
+            SELECT product_id, title AS productname, word_similarity($1, title) AS score
             FROM products
-            WHERE active = true AND word_similarity($1, productname) > 0.45
+            WHERE COALESCE(is_active, true) = true AND word_similarity($1, title) > 0.45
             ORDER BY score DESC
             LIMIT 1
         `;
@@ -1101,15 +1091,58 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         }
     }
 
-    // ── Stage 11: Fallback — always answer, never leave unanswered ────────────
+    // ── Stage 11: Groq LLM Fashion Concierge (3-key fallback switch, website-only scope) ─────
+    try {
+        console.log(`🤖 Invoking Groq LLM Concierge for query: "${sanitizedQuery}"...`);
+        const sessionHistory = session?.history || [];
+        const llmResult = await groqService.generateChatResponse(sanitizedQuery, sessionHistory, language);
+
+        if (llmResult && llmResult.success && llmResult.answer) {
+            // Find any relevant products mentioned in query
+            let relatedProducts = [];
+            try {
+                relatedProducts = await productService.simpleChatbotSearch(sanitizedQuery, 5);
+                if (relatedProducts.length === 0 && keywords && keywords.length > 0) {
+                    relatedProducts = await productService.simpleChatbotSearch(keywords[0], 5);
+                }
+            } catch (e) {
+                // ignore product search error
+            }
+
+            const updatedHistory = [
+                ...sessionHistory,
+                { sender: 'user', text: sanitizedQuery },
+                { sender: 'bot', text: llmResult.answer }
+            ].slice(-10);
+
+            setSession(sessionId, {
+                history: updatedHistory,
+                lastProducts: relatedProducts.length > 0 ? relatedProducts : (session?.lastProducts || []),
+                lastKeyword: keywords?.[0] || sanitizedQuery
+            });
+
+            return {
+                answer: llmResult.answer,
+                intent: 'llm_concierge',
+                confidence: 1.0,
+                products: relatedProducts,
+                keyUsed: llmResult.keyUsed,
+                model: llmResult.model
+            };
+        }
+    } catch (llmErr) {
+        console.error('❌ Groq LLM Stage 11 invocation failed:', llmErr.message);
+    }
+
+    // ── Graceful Fallback if LLM keys are exhausted ────────────
     await logUnansweredQuery(sanitizedQuery, detectedIntent);
 
     return {
         answer: language === 'hi'
-            ? "मुझे क्षमा करें, लेकिन वह उत्तर मेरे ज्ञान में नहीं है। मैं हाउस ऑफ उर्वाह के फैशन उत्पादों में विशेषज्ञता रखता हूँ।"
+            ? "मुझे क्षमा करें, लेकिन मैं केवल हाउस ऑफ उर्वाह के लक्जरी फैशन, उत्पादों, स्टाइलिंग और ऑर्डर्स में सहायता कर सकता हूँ।"
             : language === 'pa'
-            ? "ਮੈਨੂੰ ਮਾਫ਼ ਕਰੋ, ਪਰ ਉਹ ਜਵਾਬ ਮੇਰੇ ਗਿਆਨ ਵਿੱਚ ਨਹੀਂ ਹੈ। ਮੈਂ ਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ ਉਤਪਾਦਾਂ ਵਿੱਚ ਮੁਹਾਰਤ ਰੱਖਦਾ ਹਾਂ।"
-            : "I am sorry, but that answer is not in my knowledge base. I specialize in House of Urvaah products.",
+            ? "ਮੈਨੂੰ ਮਾਫ਼ ਕਰੋ, ਪਰ ਮੈਂ ਸਿਰਫ਼ ਹਾਊਸ ਆਫ਼ ਉਰਵਾਹ ਲਗਜ਼ਰੀ ਫੈਸ਼ਨ, ਉਤਪਾਦਾਂ, ਸਟਾਈਲਿੰਗ ਅਤੇ ਆਰਡਰਾਂ ਵਿੱਚ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ।"
+            : "I am happy to assist you with House of Urvaah fashion collections, styling guidance, sizing, or order details. Feel free to ask about our corsets, bloom sets, or delivery policies!",
         intent: 'fallback',
         confidence: 0.0,
         products: []

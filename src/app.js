@@ -128,6 +128,7 @@ app.use('/api', require('./routes/couponRoutes'));
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.get('/api/admin/dashboard-summary', require('./controllers/analyticsController').getDashboardSummary);
 app.use('/api/contact', require('./routes/contactRoutes'));
+app.use('/api/leads', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
 app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
 
