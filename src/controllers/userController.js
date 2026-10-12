@@ -35,6 +35,26 @@ exports.getUsers = async (req, res) => {
 
         const result = await pool.query(query, queryParams);
         
+        // Fetch addresses for users and group by user_id
+        const addressMap = new Map();
+        try {
+            const addrResult = await pool.query(`
+                SELECT id, user_id, address_label, full_address, city, state, postal_code, is_default, recipient_name, phone, created_at
+                FROM public.user_addresses
+                ORDER BY is_default DESC, created_at DESC
+            `);
+            for (const addr of addrResult.rows) {
+                const uKey = (addr.user_id || '').toLowerCase().trim();
+                if (!uKey) continue;
+                if (!addressMap.has(uKey)) {
+                    addressMap.set(uKey, []);
+                }
+                addressMap.get(uKey).push(addr);
+            }
+        } catch (addrErr) {
+            console.error('Error fetching addresses in getUsers:', addrErr.message);
+        }
+
         // In-memory deduplication & phone sanitization
         const userMap = new Map();
         for (const row of result.rows) {
@@ -57,6 +77,20 @@ exports.getUsers = async (req, res) => {
                     existing.name = row.fullname;
                 }
             } else {
+                const userAddrs = addressMap.get(emailKey) || 
+                                  addressMap.get((row.username || '').toLowerCase().trim()) || 
+                                  [];
+                const primary = userAddrs.find(a => a.is_default) || userAddrs[0] || null;
+                let formattedAddr = null;
+                if (primary) {
+                    const parts = [primary.full_address, primary.city, primary.state].filter(Boolean);
+                    const pin = primary.postal_code ? ` - ${primary.postal_code}` : '';
+                    formattedAddr = parts.join(', ') + pin;
+                    if (!phoneVal && primary.phone) {
+                        phoneVal = primary.phone;
+                    }
+                }
+
                 userMap.set(emailKey, {
                     id: row.username,
                     name: row.fullname || row.username,
@@ -65,7 +99,10 @@ exports.getUsers = async (req, res) => {
                     active: row.active !== false,
                     createdAt: row.createdate || row.member_since,
                     totalOrders: parseInt(row.total_orders) || 0,
-                    totalSpent: parseFloat(row.total_spent) || 0
+                    totalSpent: parseFloat(row.total_spent) || 0,
+                    addresses: userAddrs,
+                    primaryAddress: primary,
+                    formattedAddress: formattedAddr
                 });
             }
         }
@@ -79,7 +116,8 @@ exports.getUsers = async (req, res) => {
                 (u.name && u.name.toLowerCase().includes(q)) ||
                 (u.email && u.email.toLowerCase().includes(q)) ||
                 (u.phone && u.phone.toLowerCase().includes(q)) ||
-                (u.id && u.id.toLowerCase().includes(q))
+                (u.id && u.id.toLowerCase().includes(q)) ||
+                (u.formattedAddress && u.formattedAddress.toLowerCase().includes(q))
             );
         }
 
@@ -130,6 +168,9 @@ exports.toggleUserStatus = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
     try {
+        if (req.user?.role === 'admin') {
+            return res.status(403).json({ success: false, message: 'Admin accounts cannot update customer profile' });
+        }
         const { fullName, phone, avatar } = req.body;
         const username = req.user.id;
 
@@ -174,53 +215,84 @@ exports.updateProfile = async (req, res) => {
 
 exports.getProfile = async (req, res) => {
     try {
-        const username = req.user.id;
+        let username;
+        // If caller is an admin, look for username / email / userId in query parameters
+        if (req.user?.role === 'admin') {
+            username = req.query.username || req.query.userId || req.query.email;
+            if (!username) {
+                return res.status(400).json({ success: false, message: 'Username/Email query parameter is required for admin' });
+            }
+        } else {
+            username = req.user?.id || req.user?.username || req.user?.email;
+        }
+
         if (!username) {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
+        const cleanUsername = String(username).trim();
+
         const userResult = await pool.query(`
             SELECT username, emailid, fullname, contactno, avatar_url, member_since
             FROM public.users
-            WHERE username = $1 OR emailid = $1
-        `, [username]);
+            WHERE LOWER(username) = LOWER($1) OR LOWER(emailid) = LOWER($1)
+        `, [cleanUsername]);
 
-        if (userResult.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'User profile not found' });
-        }
+        let userRow = userResult.rows[0];
 
-        const userRow = userResult.rows[0];
-        const user = {
-            id: userRow.username,
-            userid: userRow.username,
-            email: userRow.emailid,
-            fullName: userRow.fullname || userRow.username,
-            phone: userRow.contactno || '',
-            avatar: userRow.avatar_url || '',
-            memberSince: userRow.member_since
-        };
-
+        // Fetch user addresses from user_addresses matching either username or email
         let addresses = [];
         try {
             const addressResult = await pool.query(`
                 SELECT * FROM public.user_addresses 
-                WHERE user_id = $1 
+                WHERE LOWER(user_id) = LOWER($1) OR LOWER(user_id) = LOWER($2)
                 ORDER BY is_default DESC, created_at DESC
-            `, [username]);
+            `, [userRow?.username || cleanUsername, userRow?.emailid || cleanUsername]);
             addresses = addressResult.rows;
         } catch (e) {
             console.error('Failed to fetch user addresses in profile:', e.message);
         }
 
+        if (!userRow) {
+            if (addresses.length > 0) {
+                const firstAddr = addresses[0];
+                return res.json({
+                    success: true,
+                    user: {
+                        id: cleanUsername,
+                        userid: cleanUsername,
+                        email: cleanUsername,
+                        fullName: firstAddr.recipient_name || cleanUsername,
+                        phone: firstAddr.phone || '',
+                        avatar: '',
+                        memberSince: firstAddr.created_at
+                    },
+                    addresses,
+                    ordersSummary: []
+                });
+            }
+            return res.status(404).json({ success: false, message: 'User profile not found' });
+        }
+
+        const user = {
+            id: userRow.username,
+            userid: userRow.username,
+            email: userRow.emailid,
+            fullName: userRow.fullname || userRow.username,
+            phone: userRow.contactno || (addresses.length > 0 ? addresses[0].phone : '') || '',
+            avatar: userRow.avatar_url || '',
+            memberSince: userRow.member_since
+        };
+
         let ordersSummary = [];
         try {
             const ordersResult = await pool.query(`
-                SELECT id, order_number, total_amount, status, created_at
+                SELECT id, order_number, total as total_amount, total, status, created_at
                 FROM public.orders
-                WHERE user_id = $1
+                WHERE LOWER(user_id) = LOWER($1) OR LOWER(user_id) = LOWER($2)
                 ORDER BY created_at DESC
                 LIMIT 5
-            `, [username]);
+            `, [userRow.username, userRow.emailid]);
             ordersSummary = ordersResult.rows;
         } catch (e) {
             console.error('Failed to fetch user orders in profile:', e.message);

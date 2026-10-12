@@ -70,7 +70,7 @@ exports.getRelatedProducts = async (req, res) => {
         // I will update the SERVICE in next step to handle this correctly if needed.
         // For now, sticking to standard controller pattern.
 
-        const data = await productService.getRelatedProducts(id, category, limit);
+        const data = await productService.getRelatedProducts(id, category, limit ? parseInt(limit) : 16);
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getRelatedProducts:", error);

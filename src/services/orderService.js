@@ -183,6 +183,54 @@ exports.createOrder = async (orderData) => {
             sanitizedAddressId = null;
         }
 
+        // If no valid addressId, but shippingAddress was provided in orderData, save to user_addresses
+        if (!sanitizedAddressId && orderData.shippingAddress) {
+            const sa = orderData.shippingAddress;
+            const fullAddr = sa.full_address || sa.street || sa.address || '';
+            if (fullAddr || sa.city || sa.postal_code || sa.pincode) {
+                try {
+                    const addrRes = await client.query(
+                        `INSERT INTO public.user_addresses 
+                        (user_id, address_label, full_address, city, state, postal_code, is_default, recipient_name, phone) 
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                        RETURNING id`,
+                        [
+                            String(userId).trim(),
+                            sa.address_label || sa.type || 'Home',
+                            fullAddr,
+                            sa.city || '',
+                            sa.state || '',
+                            sa.postal_code || sa.pincode || '',
+                            true,
+                            sa.recipient_name || sa.fullName || sa.name || '',
+                            sa.phone || ''
+                        ]
+                    );
+                    if (addrRes.rows[0]?.id) {
+                        sanitizedAddressId = addrRes.rows[0].id;
+                        console.log(`[OrderService] Auto-saved new shippingAddress with ID ${sanitizedAddressId} for user ${userId}`);
+                    }
+                } catch (addrInsertErr) {
+                    console.error('[OrderService] Could not auto-save shippingAddress:', addrInsertErr.message);
+                }
+            }
+        }
+
+        // Fallback: if sanitizedAddressId is still null, link user's default address if one exists
+        if (!sanitizedAddressId && userId) {
+            try {
+                const defAddr = await client.query(
+                    `SELECT id FROM public.user_addresses WHERE LOWER(user_id) = LOWER($1) ORDER BY is_default DESC, created_at DESC LIMIT 1`,
+                    [String(userId).trim()]
+                );
+                if (defAddr.rows[0]?.id) {
+                    sanitizedAddressId = defAddr.rows[0].id;
+                }
+            } catch (fallbackErr) {
+                console.error('[OrderService] Fallback address query failed:', fallbackErr.message);
+            }
+        }
+
         const orderResult = await client.query(
             `INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
