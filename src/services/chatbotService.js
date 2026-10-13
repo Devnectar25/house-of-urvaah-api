@@ -210,7 +210,7 @@ function isLikelyProductQuery(lowerQuery, tokens) {
     // ── Pre-check: House of Urvaah Fashion Keywords ──
     const fashionTerms = [
         'corset', 'kurti', 'dress', 'set', 'bloom', 'silk', 'cora', 'cotton', 'blazer', 'skirt',
-        'co-ord', 'floral', 'gilded', 'rosewood', 'chestnut', 'teal', 'top', 'bottom', 'palazzo',
+        'co-ord', 'floral', 'gilded', 'rosewood', 'blush', 'chestnut', 'mocha', 'teal', 'top', 'bottom', 'palazzo',
         'saree', 'embroidery', 'lace', 'trench', 'zari', 'sequin', 'potli', 'couture', 'atelier',
         'peach', 'ivory', 'blouse', 'clothes', 'clothing', 'garment', 'fashion', 'collection',
         'कुर्ती', 'साड़ी', 'ड्रेस', 'सेट', 'सिल्क', 'ब्लाउज'

@@ -15,7 +15,7 @@ const SEED_CATEGORIES = [
 const SEED_PRODUCTS = [
   {
     product_id: 101,
-    title: 'CHESTNUT BLOOM SET',
+    title: 'Mocha Brown Embroidered Co-Ord Set',
     price: 8990,
     sale_price: 11990,
     category_id: 14,
@@ -50,7 +50,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 103,
-    title: 'GILDED MIST CORSET',
+    title: 'Sage Bloom Embroidered Corset',
     price: 12990,
     sale_price: 15990,
     category_id: 18,
@@ -67,7 +67,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 104,
-    title: 'ROSEWOOD BLOOM SET',
+    title: 'Blush Pink Embroidered Floral Co-Ord Set',
     price: 4990,
     sale_price: 6490,
     category_id: 12,
@@ -84,7 +84,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 105,
-    title: 'CHESTNUT BLOOM SET',
+    title: 'Mocha Brown Embroidered Co-Ord Set',
     price: 8990,
     sale_price: 11990,
     category_id: 14,
@@ -101,7 +101,7 @@ const SEED_PRODUCTS = [
   },
   {
     product_id: 106,
-    title: 'GILDED MIST CORSET',
+    title: 'Sage Bloom Embroidered Corset',
     price: 12990,
     sale_price: 15990,
     category_id: 11,

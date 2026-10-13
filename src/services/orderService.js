@@ -4,6 +4,7 @@ const paymentService = require('./paymentService');
 const shiprocketService = require('./shiprocketService');
 const whatsappService = require('./whatsappService');
 const stockNotificationService = require('./stockNotificationService');
+const orderEmailService = require('./orderEmailService');
 
 const resolveDbProductId = async (client, rawId, itemName) => {
     let candidateId = null;
@@ -17,7 +18,7 @@ const resolveDbProductId = async (client, rawId, itemName) => {
         }
     }
 
-    // Map known alias: 103 is Gilded Mist Corset, whose row in products is 106
+    // Map known alias: 103 is Sage Bloom Embroidered Corset (formerly Gilded Mist Corset), whose row in products is 106
     if (candidateId === 103) {
         candidateId = 106;
     }
@@ -319,6 +320,12 @@ exports.createOrder = async (orderData) => {
 
         await client.query('COMMIT');
         order.items = items;
+
+        // Trigger Workflow 1: Order Confirmation Email (strictly separated, asynchronous, non-blocking)
+        orderEmailService.sendOrderConfirmationWorkflow(order.id).catch(emailErr => {
+            console.error(`[OrderService] Order confirmation email trigger error for ${order.id}:`, emailErr.message);
+        });
+
         return order;
 
     } catch (error) {
@@ -1735,10 +1742,15 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             }
         }
 
-        // Placeholder for Notification Logic
-        if (notifyCustomer) {
-            console.log(`[Notification] Would send notification to user for order ${orderId} with status ${refundStatus}`);
-            // e.g., msgService.sendRefundUpdate(order.user_id, refundStatus, adminNote);
+        // Notification Logic: Trigger Payment Status Email for Refund
+        if (refundStatus === 'Refunded' || refundStatus === 'Completed' || (notifyCustomer && refundStatus !== 'Rejected')) {
+            orderEmailService.sendPaymentStatusWorkflow(orderId, 'Refunded', {
+                transactionId: finalTxnId,
+                amount: refundAmount,
+                reason: refundData.customerReason || adminNote
+            }).catch(emailErr => {
+                console.error(`[OrderService] Refund notification email trigger failed for ${orderId}:`, emailErr.message);
+            });
         }
 
         await client.query('COMMIT');

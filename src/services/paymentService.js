@@ -1,6 +1,7 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const pool = require('../config/db');
+const orderEmailService = require('./orderEmailService');
 require('dotenv').config();
 
 let razorpayInstance = null;
@@ -99,6 +100,12 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                 `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id::text = $1 OR order_number = $1`,
                 [String(internalOrderId)]
             ).catch(err => console.warn('[verifyPayment] Cancel update note:', err.message));
+
+            // Trigger Workflow 2: Payment Status Email (Failed)
+            orderEmailService.sendPaymentStatusWorkflow(internalOrderId, 'Failed', {
+                transactionId: razorpay_payment_id || null,
+                message: 'Payment verification failed'
+            }).catch(e => console.error('[PaymentService] Failed payment notification error:', e.message));
         }
         return { success: false, message: 'Invalid signature' };
     }
@@ -144,6 +151,20 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
         await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
 
         await client.query('COMMIT');
+
+        // Asynchronously trigger Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+        const targetOrderId = orderRow?.id || internalOrderId;
+        if (targetOrderId) {
+            orderEmailService.sendPaymentStatusWorkflow(targetOrderId, 'Paid', {
+                transactionId: razorpay_payment_id,
+                amount: amount || orderRow?.total
+            }).catch(e => console.error('[PaymentService] Payment status email error:', e.message));
+
+            orderEmailService.sendInvoiceWorkflow(targetOrderId).catch(e => {
+                console.error('[PaymentService] Invoice email workflow error:', e.message);
+            });
+        }
+
         return { success: true, order: orderRow };
     } catch (error) {
         await client.query('ROLLBACK');
@@ -206,12 +227,63 @@ exports.handleWebhook = async (payload, signature) => {
                 }
             }
             await client.query('COMMIT');
+
+            // Asynchronously trigger Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+            if (orderRes.rows.length > 0) {
+                const targetOrder = orderRes.rows[0];
+                orderEmailService.sendPaymentStatusWorkflow(targetOrder.id, 'Paid', {
+                    transactionId: razorpayPaymentId,
+                    amount: amount
+                }).catch(e => console.error('[Webhook] Payment status email error:', e.message));
+
+                orderEmailService.sendInvoiceWorkflow(targetOrder.id).catch(e => {
+                    console.error('[Webhook] Invoice delivery email error:', e.message);
+                });
+            }
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Webhook processing failed:', error);
             throw error;
         } finally {
             client.release();
+        }
+    }
+
+    if (event === 'payment.failed') {
+        const payment = payload.payload?.payment?.entity;
+        const razorpayOrderId = payment?.order_id;
+        if (razorpayOrderId) {
+            try {
+                const orderRes = await pool.query(`SELECT id FROM orders WHERE razorpay_order_id = $1`, [razorpayOrderId]);
+                if (orderRes.rows.length > 0) {
+                    orderEmailService.sendPaymentStatusWorkflow(orderRes.rows[0].id, 'Failed', {
+                        transactionId: payment?.id,
+                        amount: (payment?.amount || 0) / 100,
+                        message: payment?.error_description || 'Payment was declined.'
+                    }).catch(err => console.error('[Webhook] Failed payment notification error:', err.message));
+                }
+            } catch (err) {
+                console.error('[Webhook] Error processing payment.failed event:', err.message);
+            }
+        }
+    }
+
+    if (event === 'refund.processed' || event === 'refund.created') {
+        const refund = payload.payload?.refund?.entity;
+        const paymentId = refund?.payment_id;
+        if (paymentId) {
+            try {
+                const orderRes = await pool.query(`SELECT id FROM orders WHERE razorpay_payment_id = $1`, [paymentId]);
+                if (orderRes.rows.length > 0) {
+                    orderEmailService.sendPaymentStatusWorkflow(orderRes.rows[0].id, 'Refunded', {
+                        transactionId: refund?.id,
+                        amount: (refund?.amount || 0) / 100,
+                        message: refund?.notes?.reason || 'Refund processed successfully.'
+                    }).catch(err => console.error('[Webhook] Refund notification error:', err.message));
+                }
+            } catch (err) {
+                console.error('[Webhook] Error processing refund event:', err.message);
+            }
         }
     }
 

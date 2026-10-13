@@ -4,7 +4,7 @@ const https = require('https');
 /**
  * Send Transactional Email via SMTP (if configured) or Brevo API v3
  */
-const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
+const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachments }) => {
   const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SENDER_EMAIL || 'devnectar27@gmail.com';
   const senderName = process.env.BREVO_SENDER_NAME || process.env.SENDER_NAME || 'House of Urvaah';
 
@@ -22,12 +22,17 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
         }
       });
 
-      const info = await transporter.sendMail({
+      const mailOptions = {
         from: `"${senderName}" <${process.env.SMTP_USER}>`,
         to: toName ? `"${toName}" <${toEmail}>` : toEmail,
         subject: subject,
         html: htmlContent
-      });
+      };
+      if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+        mailOptions.attachments = attachments;
+      }
+
+      const info = await transporter.sendMail(mailOptions);
 
       console.log(`[SMTP Email Success] Dispatched to ${toEmail}, Message ID: ${info.messageId}`);
       return { success: true, statusCode: 200, data: info.messageId };
@@ -54,13 +59,18 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
 
       const effectiveSender = senderEmail || 'devnectar27@gmail.com';
 
-      const info = await transporter.sendMail({
+      const mailOptions = {
         from: `"${senderName}" <${effectiveSender}>`,
         replyTo: senderEmail || 'devnectar27@gmail.com',
         to: toName ? `"${toName}" <${toEmail}>` : toEmail,
         subject: subject,
         html: htmlContent
-      });
+      };
+      if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+        mailOptions.attachments = attachments;
+      }
+
+      const info = await transporter.sendMail(mailOptions);
 
       console.log(`[Brevo SMTP Success] Dispatched to ${toEmail}, Message ID: ${info.messageId}`);
       return { success: true, statusCode: 200, data: info.messageId };
@@ -89,13 +99,22 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
     ? senderEmail
     : 'devnectar27@12038968.brevosend.com';
 
-  const payload = JSON.stringify({
+  const payloadData = {
     sender: { name: senderName, email: effectiveSenderEmail },
     replyTo: { name: senderName, email: senderEmail || 'devnectar27@gmail.com' },
     to: [{ email: toEmail, name: toName || toEmail }],
     subject: subject,
     htmlContent: htmlContent
-  });
+  };
+
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    payloadData.attachment = attachments.map((att) => ({
+      name: att.filename || att.name || 'document.pdf',
+      content: Buffer.isBuffer(att.content) ? att.content.toString('base64') : att.content
+    }));
+  }
+
+  const payload = JSON.stringify(payloadData);
 
   return new Promise((resolve, reject) => {
     const req = https.request(
@@ -279,6 +298,7 @@ const sendStockAlertEmail = async ({
   productTitle,
   productImage,
   productUrl,
+  clientUrl,
   size,
   color,
   price,
@@ -286,6 +306,7 @@ const sendStockAlertEmail = async ({
 }) => {
   const customerGreeting = toName ? `Dear ${toName.split(' ')[0]},` : 'Dear Valued Patron,';
   const sizeColorText = [size ? `Size: ${size}` : '', color ? `Color: ${color}` : ''].filter(Boolean).join(' &bull; ');
+  const websiteUrl = clientUrl || process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -299,7 +320,7 @@ const sendStockAlertEmail = async ({
         .brand-header { font-size: 24px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; color: #111111; }
         .status-badge { display: inline-block; background-color: #FAF8F3; border: 1px solid #D6D0C5; color: #111111; font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; padding: 6px 16px; margin-bottom: 20px; }
         .title { font-size: 20px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 18px; color: #111111; line-height: 1.4; }
-        .message { font-size: 14px; line-height: 1.8; color: #4A4A4A; margin-bottom: 30px; text-align: left; }
+        .message { font-size: 14px; line-height: 1.8; color: #4A4A4A; margin-bottom: 25px; text-align: left; }
         .product-card { background-color: #FCFBF9; border: 1px solid #EAE6DF; padding: 25px; margin: 25px 0; text-align: center; }
         .product-img { max-width: 240px; width: 100%; height: auto; object-fit: cover; border: 1px solid #EAE6DF; margin-bottom: 15px; display: inline-block; }
         .product-name { font-size: 16px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; color: #111111; }
@@ -319,7 +340,7 @@ const sendStockAlertEmail = async ({
         
         <div class="message">
           <p>${customerGreeting}</p>
-          <p>We are delighted to inform you that your coveted silhouette is once again available in our atelier. As requested, you are among the first to receive this private notification.</p>
+          <p>We are delighted to inform you that your coveted silhouette is once again available in our atelier. As requested, you are among the first to receive this priority notification.</p>
         </div>
 
         <div class="product-card">
@@ -329,6 +350,18 @@ const sendStockAlertEmail = async ({
           ${price ? `<div class="product-price">&#8377;${Number(price).toLocaleString('en-IN')}</div>` : ''}
           <div>
             <a href="${productUrl}" class="btn-shop">SECURE YOUR PIECE</a>
+          </div>
+        </div>
+
+        <!-- Explicit Website & Product URL Mention -->
+        <div style="background-color: #FAF8F3; border: 1px solid #EAE6DF; padding: 14px 18px; margin: 25px 0; text-align: left; font-size: 13px; line-height: 1.8;">
+          <div style="margin-bottom: 6px;">
+            <strong style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: #111111;">Website:</strong> 
+            <a href="${websiteUrl}" style="color: #111111; font-weight: 600; text-decoration: underline;">${websiteUrl}</a>
+          </div>
+          <div>
+            <strong style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: #111111;">Product Link:</strong> 
+            <a href="${productUrl}" style="color: #111111; font-weight: 600; text-decoration: underline;">${productUrl}</a>
           </div>
         </div>
 
@@ -364,7 +397,7 @@ const sendStockSubscriptionConfirmationEmail = async ({
   color,
   unsubscribeUrl
 }) => {
-  const sizeColorText = [size ? `Size: ${size}` : '', color ? `Color: ${color}` : ''].filter(Boolean).join(' &bull; ');
+  const sizeColorText = [size ? `Size: ${size}` : '', color ? `Color: ${color}` : 'Color: Default'].filter(Boolean).join(' &bull; ');
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -374,10 +407,10 @@ const sendStockSubscriptionConfirmationEmail = async ({
       <style>
         body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 15px; }
         .container { max-width: 550px; margin: 0 auto; background: #ffffff; border: 1px solid #EAE6DF; padding: 40px 30px; text-align: center; }
-        .brand-header { font-size: 22px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; }
-        .title { font-size: 17px; font-weight: 400; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 18px; color: #111111; }
-        .content { font-size: 13px; line-height: 1.8; color: #444444; margin-bottom: 25px; text-align: left; }
-        .item-box { background: #FAF8F3; border: 1px solid #EAE6DF; padding: 18px; margin: 20px 0; font-size: 13px; text-align: center; }
+        .brand-header { font-size: 20px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; color: #111111; }
+        .title { font-size: 15px; font-weight: 400; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 20px; color: #111111; }
+        .content { font-size: 13px; line-height: 1.8; color: #333333; margin-bottom: 25px; text-align: center; }
+        .item-box { background: #FAF8F3; border: 1px solid #EAE6DF; padding: 18px; margin: 22px auto; max-width: 440px; font-size: 13px; text-align: center; }
         .footer { margin-top: 30px; font-size: 10px; letter-spacing: 0.15em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 20px; }
       </style>
     </head>
@@ -389,13 +422,13 @@ const sendStockSubscriptionConfirmationEmail = async ({
           <p>Thank you. Your back-in-stock alert has been registered successfully.</p>
           <div class="item-box">
             <strong>${productTitle}</strong><br/>
-            ${sizeColorText ? `<span style="color:#666; font-size:12px;">${sizeColorText}</span>` : ''}
+            <span style="color:#666; font-size:12px; display:inline-block; margin-top:4px;">${sizeColorText}</span>
           </div>
           <p>The moment this item returns to our atelier inventory, you will receive priority notification directly in your inbox.</p>
         </div>
         <div class="footer">
           HOUSE OF URVAAH CONCIERGE<br/>
-          <a href="${unsubscribeUrl}" style="color: #888888; text-decoration: underline;">Cancel Alert Request</a>
+          <a href="${unsubscribeUrl}" style="color: #888888; text-decoration: underline; font-size: 10px; letter-spacing: 0.15em;">CANCEL ALERT REQUEST</a>
         </div>
       </div>
     </body>

@@ -65,7 +65,8 @@ exports.checkPermission = (permission) => {
                     permissions.includes(permission) ||
                     (permission === 'refunds' && (permissions.includes('refunds') || permissions.includes('refund-desk'))) ||
                     (permission === 'refund-desk' && (permissions.includes('refunds') || permissions.includes('refund-desk'))) ||
-                    (permission === 'stock-notifications' && (permissions.includes('stock-notifications') || permissions.includes('products')))
+                    (permission === 'stock-notifications' && (permissions.includes('stock-notifications') || permissions.includes('products'))) ||
+                    (permission === 'email-notifications' && (permissions.includes('email-notifications') || permissions.includes('orders')))
                 ) {
                     hasAccess = true;
                 }

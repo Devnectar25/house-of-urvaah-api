@@ -6,9 +6,9 @@ const stockNotificationService = require("./stockNotificationService");
 const mapProduct = (p) => {
     if (!p) return null;
 
-    if (p.product_id == 101 || p.product_id == 105 || (p.title && (p.title.toLowerCase().includes('oversized blazer') || p.title.toLowerCase().includes('chestnut bloom set')))) {
+    if (p.product_id == 101 || p.product_id == 105 || (p.title && (p.title.toLowerCase().includes('oversized blazer') || p.title.toLowerCase().includes('chestnut bloom set') || p.title.toLowerCase().includes('mocha brown embroidered co-ord set')))) {
         p.product_id = 101;
-        p.title = 'CHESTNUT BLOOM SET';
+        p.title = 'Mocha Brown Embroidered Co-Ord Set';
         p.image_url = 'products/Brown02.png';
         p.images = ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
     }
@@ -18,21 +18,21 @@ const mapProduct = (p) => {
         p.title = 'Teal Embroidered Floral Co-Ord Set';
     }
 
-    if (p.product_id == 104 && (!p.title || p.title.toLowerCase().includes('ribbed silk'))) {
-        p.title = 'ROSEWOOD BLOOM SET';
+    if (p.product_id == 104 || (p.title && (p.title.toLowerCase().includes('ribbed silk') || p.title.toLowerCase().includes('rosewood bloom set') || p.title.toLowerCase().includes('blush pink embroidered floral co-ord set')))) {
+        p.title = 'Blush Pink Embroidered Floral Co-Ord Set';
         p.description = 'A cap-sleeve top and mini skirt set in a soft peach-pink floral embroidered fabric with delicate sequin work throughout. The skirt hem finishes in a hand-detailed potli trim, and a corset-style lace-up back on the top gives it a fitted, flattering silhouette.\nFully lined, with a side-zip closure on the skirt for easy wear.\nSoft enough for daytime, sharp enough for evening.';
     }
 
-    if (p.product_id == 106 || p.product_id == 103 || (p.title && p.title.toLowerCase().includes('asymmetrical')) || (p.title && p.title.toLowerCase().includes('peach bloom')) || (p.title && p.title.toLowerCase().includes('gilded mist'))) {
+    if (p.product_id == 106 || p.product_id == 103 || (p.title && (p.title.toLowerCase().includes('asymmetrical') || p.title.toLowerCase().includes('peach bloom') || p.title.toLowerCase().includes('gilded mist') || p.title.toLowerCase().includes('sage bloom')))) {
         p.product_id = 103;
-        p.title = 'GILDED MIST CORSET';
+        p.title = 'Sage Bloom Embroidered Corset';
         p.description = 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.';
         p.image_url = 'products/Corset01.png';
         p.images = ['products/Corset01.png', 'products/Corset02.png', 'products/Corset03.png', 'products/Corset04.png'];
     }
 
-    if (p.product_id == 109 || (p.title && (p.title.toLowerCase().includes('embroidered silk kurti') || p.title.toLowerCase().includes('ivory corset kurti')))) {
-        p.title = 'Ivory Corset Kurti';
+    if (p.product_id == 109 || (p.title && (p.title.toLowerCase().includes('embroidered silk kurti') || p.title.toLowerCase().includes('ivory corset kurti') || p.title.toLowerCase().includes('ivory heart corset kurti/dress')))) {
+        p.title = 'Ivory Heart Corset Kurti/Dress';
         p.description = 'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.';
         p.additional_info = 'Fabric: Cora cotton (breathable, all-day wear)\nLining: Cotton lining\nNeckline: Square neck with floral lace trim\nClosure: Front button placket, corset-style lace-up back\nEmbroidery: All-over heart-shaped butti embroidery\nStyling: Wear buttoned as a dress, or open-front as a kurti\nAvailable sizes: XS, S, M, L';
     }
@@ -284,7 +284,7 @@ exports.getFeaturedProducts = async (query) => {
     `);
     const mapped = result.rows.map(mapProduct);
 
-    // Filter out Trench Coat and ensure unique 5 products with GILDED MIST CORSET as the 5th item
+    // Filter out Trench Coat and ensure unique 5 products with SAGE BLOOM EMBROIDERED CORSET as the 5th item
     const seen = new Set();
     const unique = [];
     for (const p of mapped) {
@@ -297,23 +297,23 @@ exports.getFeaturedProducts = async (query) => {
         }
     }
 
-    const hasGilded = unique.some(p => p.name && p.name.toUpperCase().includes('GILDED MIST CORSET'));
-    if (!hasGilded) {
-        const gildedRes = await pool.query(`${BASE_PRODUCT_QUERY} WHERE p.title ILIKE '%gilded mist%' OR p.product_id IN (103, 106) LIMIT 1`);
-        if (gildedRes.rows.length > 0) {
-            const gildedItem = mapProduct(gildedRes.rows[0]);
+    const hasCorset = unique.some(p => p.name && (p.name.toUpperCase().includes('SAGE BLOOM EMBROIDERED CORSET') || p.name.toUpperCase().includes('GILDED MIST CORSET')));
+    if (!hasCorset) {
+        const corsetRes = await pool.query(`${BASE_PRODUCT_QUERY} WHERE p.title ILIKE '%sage bloom%' OR p.title ILIKE '%gilded mist%' OR p.product_id IN (103, 106) LIMIT 1`);
+        if (corsetRes.rows.length > 0) {
+            const corsetItem = mapProduct(corsetRes.rows[0]);
             if (unique.length >= 5) {
-                unique[4] = gildedItem;
+                unique[4] = corsetItem;
             } else {
-                unique.push(gildedItem);
+                unique.push(corsetItem);
             }
         }
     } else {
-        // Place GILDED MIST CORSET as the 5th item if present elsewhere
-        const gildedIdx = unique.findIndex(p => p.name && p.name.toUpperCase().includes('GILDED MIST CORSET'));
-        if (gildedIdx !== -1 && gildedIdx !== 4 && unique.length >= 5) {
-            const [gildedItem] = unique.splice(gildedIdx, 1);
-            unique.splice(4, 0, gildedItem);
+        // Place Sage Bloom Embroidered Corset as the 5th item if present elsewhere
+        const corsetIdx = unique.findIndex(p => p.name && (p.name.toUpperCase().includes('SAGE BLOOM EMBROIDERED CORSET') || p.name.toUpperCase().includes('GILDED MIST CORSET')));
+        if (corsetIdx !== -1 && corsetIdx !== 4 && unique.length >= 5) {
+            const [corsetItem] = unique.splice(corsetIdx, 1);
+            unique.splice(4, 0, corsetItem);
         }
     }
 
@@ -683,13 +683,19 @@ exports.updateProduct = async (id, product) => {
             ? 0
             : (updatedRow.stock_quantity ?? updatedRow.quantity ?? 0);
 
-        if (previousStock !== null && previousStock <= 0 && newStock > 0) {
-            stockNotificationService.triggerRestockEvent({
-                productId: updatedRow.product_id,
-                previousStock,
-                newStock,
-                size: null
-            }).catch(err => console.error('[RestockTrigger Error]:', err));
+        if (newStock > 0) {
+            const subCheck = await pool.query(
+                "SELECT COUNT(*)::int AS count FROM stock_notification_subscriptions WHERE (product_id = $1 OR product_id = 103 OR product_id = 106) AND status = 'active'",
+                [updatedRow.product_id]
+            );
+            if (subCheck.rows[0]?.count > 0 || (previousStock !== null && previousStock <= 0)) {
+                stockNotificationService.triggerRestockEvent({
+                    productId: updatedRow.product_id,
+                    previousStock: previousStock ?? 0,
+                    newStock,
+                    size: null
+                }).catch(err => console.error('[RestockTrigger Error]:', err));
+            }
         }
     }
 
