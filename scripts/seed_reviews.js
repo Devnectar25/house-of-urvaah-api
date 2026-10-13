@@ -7,12 +7,12 @@ const reviewsToSeed = [
   { product_id: 108, user_id: 'Meera Kapoor', rating: 4, comment: '[Fit: Slightly Loose] The cashmere quality is exceptional. Sleeves are slightly relaxed which adds a chic effortless vibe.' },
   { product_id: 108, user_id: 'Pooja Varma', rating: 5, comment: '[Fit: True to Size] The hand-feel is heavenly. One of the best cashmere investments in my wardrobe.' },
 
-  // Product 105: CHESTNUT BLOOM SET
+  // Product 105: Mocha Brown Embroidered Co-Ord Set
   { product_id: 105, user_id: 'Kavya Menon', rating: 5, comment: '[Fit: True to Size] Exquisite hand-embroidered floral work. The potli trim on the skirt hem adds such an artisanal touch.' },
   { product_id: 105, user_id: 'Tanya Sen', rating: 5, comment: '[Fit: True to Size] The back tie detail is so flattering. Stood out at a sundowner dinner. Extremely happy with the quality.' },
   { product_id: 105, user_id: 'Simran Gill', rating: 4, comment: '[Fit: True to Size] Rich brown tone with delicate sequin shimmer. Fabric is comfortable and fully lined.' },
 
-  // Product 106: GILDED MIST CORSET
+  // Product 106: Sage Bloom Embroidered Corset
   { product_id: 106, user_id: 'Natasha Roy', rating: 5, comment: '[Fit: True to Size] Masterpiece. The golden zari embroidery on raw tissue silk is regal. Structured boning gives an immaculate silhouette without feeling restrictive.' },
   { product_id: 106, user_id: 'Zoya Merchant', rating: 5, comment: '[Fit: True to Size] Styled it over a vintage organza saree for a destination wedding. Absolute showstopper.' },
   { product_id: 106, user_id: 'Aditi Rao', rating: 5, comment: '[Fit: True to Size] Beautiful craftsmanship, padded bust support is very comfortable. The lace-up back allows a tailor-made fit.' },
@@ -22,7 +22,7 @@ const reviewsToSeed = [
   { product_id: 107, user_id: 'Sanjana Mehta', rating: 4, comment: '[Fit: True to Size] Modern oversized cut, storm flap and horn buttons look so sophisticated.' },
   { product_id: 107, user_id: 'Nandini Sen', rating: 5, comment: '[Fit: True to Size] Perfect architectural silhouette for travel and layering.' },
 
-  // Product 109: Ivory Corset Kurti
+  // Product 109: Ivory Heart Corset Kurti/Dress
   { product_id: 109, user_id: 'Avani Patel', rating: 5, comment: '[Fit: True to Size] Breathable cora cotton with heart-shaped butti embroidery. The lace-up back gives a snatched waist look.' },
   { product_id: 109, user_id: 'Shreya Joshi', rating: 5, comment: '[Fit: True to Size] Love that I can wear it buttoned as a dress or unbuttoned as a chic kurti over denim.' },
   { product_id: 109, user_id: 'Bhavna Chawla', rating: 4, comment: '[Fit: True to Size] Delicate floral lace trim and premium cotton lining. Perfect summer luxury.' },

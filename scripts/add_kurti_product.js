@@ -21,7 +21,7 @@ async function addKurtiProduct() {
       ) VALUES (
         109,
         109,
-        'Ivory Corset Kurti',
+        'Ivory Heart Corset Kurti/Dress',
         'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.',
         8990,
         11990,
