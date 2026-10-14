@@ -41,6 +41,11 @@ exports.addAddress = async (data) => {
         [cleanUserId]
     );
     const count = parseInt(countRes.rows[0]?.count || 0, 10);
+    if (count >= 4) {
+        const error = new Error('You can save a maximum of 4 delivery addresses. Please delete or edit an existing address.');
+        error.statusCode = 400;
+        throw error;
+    }
     const shouldBeDefault = is_default || count === 0;
 
     if (shouldBeDefault) {
@@ -104,7 +109,28 @@ exports.updateAddress = async (id, data) => {
     return result.rows[0];
 };
 
-exports.deleteAddress = async (id) => {
+exports.deleteAddress = async (id, userId) => {
+    let cleanUserId = userId ? String(userId).trim() : null;
+    if (!cleanUserId) {
+        const ownerRes = await pool.query("SELECT user_id FROM public.user_addresses WHERE id = $1", [id]);
+        if (ownerRes.rows.length > 0) {
+            cleanUserId = ownerRes.rows[0].user_id;
+        }
+    }
+
+    if (cleanUserId) {
+        const countRes = await pool.query(
+            "SELECT COUNT(*) FROM public.user_addresses WHERE LOWER(user_id) = LOWER($1)",
+            [cleanUserId]
+        );
+        const count = parseInt(countRes.rows[0]?.count || 0, 10);
+        if (count <= 1) {
+            const error = new Error('At least 1 delivery address is required. You cannot delete your only saved address.');
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
     await pool.query("DELETE FROM public.user_addresses WHERE id = $1", [id]);
     return { success: true };
 };
