@@ -19,9 +19,22 @@ router.patch('/:id/items/:itemId/status', authorize('admin'), checkPermission('o
 router.patch('/:id/refund-status', authorize('admin'), checkPermission('orders'), orderController.updateRefundStatus);
 
 router.post('/:id/return-request', orderController.requestReturnReplace);
+router.post('/:id/return', (req, res, next) => {
+    if (req.user?.role !== 'admin') {
+        req.body.status = 'Return Requested';
+    } else {
+        req.body.status = req.body.status || 'Return Approved';
+    }
+    return orderController.updateOrderStatus(req, res, next);
+});
 router.post('/:id/cancel-item', orderController.requestItemCancellation);
 router.post('/:id/cancel', (req, res, next) => {
-    req.body.status = 'Cancelled';
+    // If regular user requests cancellation, controller will route pre-delivery to 'Cancellation Requested' and post-delivery to 'Return Requested'
+    if (req.user?.role !== 'admin') {
+        req.body.status = req.body.status || 'Cancellation Requested';
+    } else {
+        req.body.status = req.body.status || 'Cancelled';
+    }
     return orderController.updateOrderStatus(req, res, next);
 });
 router.patch('/:id/restock', authorize('admin'), checkPermission('orders'), orderController.restockOrder);

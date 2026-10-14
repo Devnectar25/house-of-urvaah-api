@@ -285,7 +285,20 @@ exports.getProfile = async (req, res) => {
                     ordersSummary: []
                 });
             }
-            return res.status(404).json({ success: false, message: 'User profile not found' });
+            return res.json({
+                success: true,
+                user: {
+                    id: cleanUsername,
+                    userid: cleanUsername,
+                    email: cleanUsername.includes('@') ? cleanUsername : (req.user?.email || cleanUsername),
+                    fullName: cleanUsername.includes('@') ? cleanUsername.split('@')[0] : cleanUsername,
+                    phone: '',
+                    avatar: '',
+                    memberSince: new Date().toISOString()
+                },
+                addresses: [],
+                ordersSummary: []
+            });
         }
 
         const user = {

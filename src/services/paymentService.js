@@ -147,14 +147,23 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
             orderRow = orderResult.rows[0];
         }
 
-        // Clear user cart items in DB
-        await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
+        // Clear user cart items in DB (both cart base table and cart_items view)
+        try {
+            await client.query(`DELETE FROM cart WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
+        } catch (cartErr) {
+            console.warn('[PaymentService] Cart clear warning:', cartErr.message);
+        }
 
         await client.query('COMMIT');
 
-        // Asynchronously trigger Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+        // Asynchronously trigger Workflow 1 (Order Confirmation for online order), Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
         const targetOrderId = orderRow?.id || internalOrderId;
         if (targetOrderId) {
+            orderEmailService.sendOrderConfirmationWorkflow(targetOrderId).catch(e => {
+                console.error('[PaymentService] Order confirmation email workflow error:', e.message);
+            });
+
             orderEmailService.sendPaymentStatusWorkflow(targetOrderId, 'Paid', {
                 transactionId: razorpay_payment_id,
                 amount: amount || orderRow?.total
@@ -170,6 +179,61 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
         await client.query('ROLLBACK');
         console.error('Transaction failed:', error);
         throw error;
+    } finally {
+        client.release();
+    }
+};
+
+exports.recordPaymentFailure = async (internalOrderId, errorDetails = {}) => {
+    if (!internalOrderId) return null;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const orderRes = await client.query(
+            `UPDATE orders 
+             SET status = 'Cancelled', 
+                 payment_status = 'Failed', 
+                 updated_at = NOW() 
+             WHERE (id::text = $1 OR order_number = $1)
+               AND status != 'Confirmed' AND payment_status != 'Paid'
+             RETURNING *`,
+            [String(internalOrderId)]
+        );
+
+        const order = orderRes.rows[0];
+
+        // Restore product stock that was reserved during order creation
+        if (order) {
+            const itemsRes = await client.query(
+                `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
+                [order.id]
+            );
+            for (const item of itemsRes.rows) {
+                await client.query(
+                    `UPDATE products 
+                     SET stock_quantity = COALESCE(stock_quantity, 0) + $2,
+                         quantity = COALESCE(quantity, 0) + $2,
+                         instock = true,
+                         updated_at = NOW()
+                     WHERE product_id::text = $1::text`,
+                    [String(item.product_id), item.quantity]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+
+        if (order) {
+            orderEmailService.sendPaymentStatusWorkflow(order.id, 'Failed', {
+                message: errorDetails.error_description || errorDetails.reason || 'Payment was declined or cancelled.'
+            }).catch(e => console.error('[PaymentService] Failed payment email note:', e.message));
+        }
+
+        return order;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('[recordPaymentFailure] Error:', err);
+        throw err;
     } finally {
         client.release();
     }
@@ -223,14 +287,23 @@ exports.handleWebhook = async (payload, signature) => {
                         [order.id, razorpayPaymentId]
                     );
 
-                    await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [order.user_id]);
+                    try {
+                        await client.query(`DELETE FROM cart WHERE user_id = $1`, [order.user_id]);
+                        await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [order.user_id]);
+                    } catch (cartErr) {
+                        console.warn('[PaymentService Webhook] Cart clear warning:', cartErr.message);
+                    }
                 }
             }
             await client.query('COMMIT');
 
-            // Asynchronously trigger Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+            // Asynchronously trigger Workflow 1 (Order Confirmation), Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
             if (orderRes.rows.length > 0) {
                 const targetOrder = orderRes.rows[0];
+                orderEmailService.sendOrderConfirmationWorkflow(targetOrder.id).catch(e => {
+                    console.error('[Webhook] Order confirmation email error:', e.message);
+                });
+
                 orderEmailService.sendPaymentStatusWorkflow(targetOrder.id, 'Paid', {
                     transactionId: razorpayPaymentId,
                     amount: amount
@@ -254,13 +327,16 @@ exports.handleWebhook = async (payload, signature) => {
         const razorpayOrderId = payment?.order_id;
         if (razorpayOrderId) {
             try {
-                const orderRes = await pool.query(`SELECT id FROM orders WHERE razorpay_order_id = $1`, [razorpayOrderId]);
+                const orderRes = await pool.query(
+                    `SELECT id FROM orders WHERE razorpay_order_id = $1 AND status != 'Confirmed' AND payment_status != 'Paid'`,
+                    [razorpayOrderId]
+                );
                 if (orderRes.rows.length > 0) {
-                    orderEmailService.sendPaymentStatusWorkflow(orderRes.rows[0].id, 'Failed', {
-                        transactionId: payment?.id,
-                        amount: (payment?.amount || 0) / 100,
-                        message: payment?.error_description || 'Payment was declined.'
-                    }).catch(err => console.error('[Webhook] Failed payment notification error:', err.message));
+                    await exports.recordPaymentFailure(orderRes.rows[0].id, {
+                        reason: payment?.error_description || 'Payment was declined by payment gateway.',
+                        error_code: payment?.error_code,
+                        error_description: payment?.error_description
+                    });
                 }
             } catch (err) {
                 console.error('[Webhook] Error processing payment.failed event:', err.message);

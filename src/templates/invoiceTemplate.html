@@ -1,121 +1,917 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tax Invoice - House of Urvaah - #{{orderNumber}}</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; color: #2d3436; margin: 0; padding: 30px; }
-        .invoice-wrapper { border: 1px solid #f1f2f6; padding: 40px; border-radius: 8px; }
-        
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,400;1,500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        @page {
+            size: A4 portrait;
+            margin: 7mm 9mm;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1a1a1a;
+            font-size: 10.5px;
+            line-height: 1.4;
+            background-color: #f7f6f2;
+            padding: 16px;
+        }
+
+        /* Interactive browser print toolbar (hidden in print & PDF) */
+        .no-print-toolbar {
+            max-width: 820px;
+            margin: 0 auto 12px auto;
+            background: #111111;
+            color: #ffffff;
+            padding: 10px 18px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+        }
+
+        .toolbar-brand {
+            font-family: 'Cinzel', serif;
+            font-size: 12px;
+            letter-spacing: 0.15em;
+            color: #e5cfab;
+            font-weight: 600;
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .toolbar-btn {
+            background: #C5A880;
+            color: #111111;
+            border: none;
+            padding: 6px 14px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .toolbar-btn:hover {
+            background: #d9be99;
+        }
+
+        .toolbar-btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: #ffffff;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .toolbar-btn-secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Invoice Container */
+        .invoice-wrapper {
+            max-width: 820px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 1px solid #e5dfd5;
+            position: relative;
+            padding: 22px 26px;
+            border-radius: 4px;
+            box-sizing: border-box;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        /* Gold Decorative Accent Frame */
+        .invoice-wrapper::before {
+            content: '';
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            right: 6px;
+            bottom: 6px;
+            border: 1px solid rgba(197, 168, 128, 0.35);
+            pointer-events: none;
+            border-radius: 2px;
+        }
+
         /* Header */
-        .invoice-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; position: relative; }
-        .title { font-size: 28px; font-weight: 700; color: #1e272e; margin: 0; }
-        .meta { font-size: 12px; color: #7f8c8d; margin-top: 5px; display: flex; gap: 30px; }
-        .logo-container { text-align: right; flex-shrink: 0; }
-        .logo-container img { max-height: 38px; width: auto; display: block; margin-left: auto; }
-        
-        /* Info Grid */
-        .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin: 40px 0; font-size: 13px; line-height: 1.5; }
-        .label { font-weight: bold; color: #2d3436; font-size: 10px; text-transform: uppercase; margin-bottom: 5px; display: block; }
-        
-        /* Product Table */
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th { text-align: left; font-size: 11px; color: #7f8c8d; border-bottom: 1px solid #dfe6e9; padding: 10px 0; }
-        td { padding: 12px 0; border-bottom: 1px solid #f1f2f6; font-size: 13px; }
-        .text-right { text-align: right; }
+        .invoice-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 4px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #111111;
+            position: relative;
+        }
 
-        /* Totals */
-        .summary-container { display: flex; justify-content: flex-end; margin-top: 30px; }
-        .summary-table { width: 220px; font-size: 13px; }
-        .grand-total { font-size: 16px; font-weight: bold; color: #26B5AD; }
+        .brand-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+        }
 
-        /* Footer */
-        .footer-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 40px; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; }
-        .bank-info { background: #f9fbfb; padding: 15px; border-radius: 5px; font-size: 12px; border-left: 3px solid #26B5AD; }
+        .logo-image {
+            height: 58px;
+            max-width: 240px;
+            object-fit: contain;
+            object-position: left center;
+            display: block;
+        }
+
+        .brand-fallback-title {
+            font-family: 'Cinzel', Georgia, serif;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            color: #111111;
+            text-transform: uppercase;
+            line-height: 1.1;
+        }
+
+        .brand-subtitle {
+            font-family: 'Cinzel', serif;
+            font-size: 7.5px;
+            letter-spacing: 0.24em;
+            color: #8c734b;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        .invoice-badge-block {
+            text-align: right;
+        }
+
+        .tax-invoice-title {
+            font-family: 'Cinzel', serif;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            color: #111111;
+            text-transform: uppercase;
+            line-height: 1;
+        }
+
+        .tax-invoice-sub {
+            font-size: 8.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #777777;
+            margin-top: 3px;
+        }
+
+        .status-pill {
+            display: inline-block;
+            margin-top: 5px;
+            padding: 2.5px 9px;
+            font-size: 8.5px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            border-radius: 20px;
+        }
+
+        .status-paid {
+            background: #111111;
+            color: #e5cfab;
+            border: 1px solid #c5a880;
+        }
+
+        .status-pending {
+            background: #fdf5ea;
+            color: #8c5b16;
+            border: 1px solid #e8caa0;
+        }
+
+        /* Metadata Banner */
+        .meta-strip {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            background: #faf8f5;
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 8px 12px;
+            margin: 10px 0;
+        }
+
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .meta-label {
+            font-size: 7.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #8a8278;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .meta-value {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #111111;
+            letter-spacing: 0.02em;
+        }
+
+        /* Dossier (Atelier vs Client) */
+        .dossier-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .dossier-card {
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 9px 12px;
+            background: #ffffff;
+        }
+
+        .dossier-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'Cinzel', serif;
+            font-size: 7.5px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: #8c734b;
+            font-weight: 700;
+            padding-bottom: 4px;
+            margin-bottom: 5px;
+            border-bottom: 1px solid #f2ece4;
+        }
+
+        .dossier-name {
+            font-family: 'Cinzel', serif;
+            font-size: 11px;
+            font-weight: 700;
+            color: #111111;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .dossier-body {
+            font-size: 9.5px;
+            color: #4a4a4a;
+            line-height: 1.4;
+        }
+
+        .dossier-detail-row {
+            margin-top: 3px;
+            padding-top: 3px;
+            border-top: 1px dashed #eee8df;
+            font-size: 9px;
+            color: #666666;
+        }
+
+        /* Items Table */
+        .table-container {
+            margin-bottom: 10px;
+            border: 1px solid #111111;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .items-table thead th {
+            background: #111111;
+            color: #ffffff;
+            font-family: 'Cinzel', serif;
+            font-size: 8px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-weight: 700;
+            padding: 6px 8px;
+            text-align: left;
+            border: none;
+        }
+
+        .items-table tbody tr {
+            border-bottom: 1px solid #eee8df;
+        }
+
+        .items-table tbody tr:nth-child(even) {
+            background-color: #faf9f6;
+        }
+
+        .items-table tbody tr:last-child {
+            border-bottom: none;
+        }
+
+        .items-table tbody td {
+            padding: 6px 8px;
+            vertical-align: middle;
+            color: #222222;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .item-main-title {
+            font-weight: 700;
+            color: #111111;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            font-size: 10px;
+        }
+
+        .item-specs {
+            font-size: 8.5px;
+            color: #777777;
+            letter-spacing: 0.02em;
+            margin-top: 1px;
+        }
+
+        /* Ledger & Financial Breakdown */
+        .ledger-container {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .ledger-left-box {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .words-box {
+            background: #faf8f5;
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 7px 10px;
+        }
+
+        .words-label {
+            font-size: 7.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #8c734b;
+            font-weight: 700;
+            margin-bottom: 2px;
+            font-family: 'Cinzel', serif;
+        }
+
+        .words-text {
+            font-size: 9.5px;
+            font-weight: 700;
+            color: #111111;
+            line-height: 1.35;
+        }
+
+        .tax-summary-box {
+            background: #ffffff;
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 7px 10px;
+        }
+
+        .tax-summary-title {
+            font-family: 'Cinzel', serif;
+            font-size: 7.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #8c734b;
+            font-weight: 700;
+            padding-bottom: 3px;
+            margin-bottom: 4px;
+            border-bottom: 1px solid #f2ece4;
+        }
+
+        .tax-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9px;
+            color: #555555;
+        }
+
+        .tax-table td {
+            padding: 2px 0;
+        }
+
+        .tax-table td.amount {
+            text-align: right;
+            font-weight: 600;
+            color: #111111;
+        }
+
+        .bank-details-box {
+            background: #faf8f5;
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 6px 10px;
+            font-size: 8px;
+            color: #555555;
+            line-height: 1.35;
+        }
+
+        .bank-title {
+            font-family: 'Cinzel', serif;
+            font-size: 7.5px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #8c734b;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+
+        /* Right Column: Itemized Summary & Grand Total */
+        .ledger-right-card {
+            background: #faf8f5;
+            border: 1px solid #eee8df;
+            border-radius: 3px;
+            padding: 8px 12px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9.5px;
+        }
+
+        .ledger-table tr td {
+            padding: 3.5px 0;
+            color: #4a4a4a;
+        }
+
+        .ledger-table tr td:last-child {
+            text-align: right;
+            font-weight: 600;
+            color: #111111;
+        }
+
+        .ledger-table .discount-row td {
+            color: #047857 !important;
+            font-weight: 600;
+        }
+
+        .grand-total-row {
+            background: #111111;
+            margin-top: 6px;
+        }
+
+        .grand-total-row td {
+            padding: 7px 8px !important;
+            color: #ffffff !important;
+            border-bottom: none !important;
+        }
+
+        .grand-total-label {
+            font-family: 'Cinzel', serif;
+            font-size: 9.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #e5cfab;
+            font-weight: 700;
+            display: block;
+        }
+
+        .grand-total-sub {
+            font-size: 7px;
+            letter-spacing: 0.1em;
+            color: #a39c91;
+            text-transform: uppercase;
+        }
+
+        .grand-total-amount {
+            font-family: 'Cinzel', Georgia, serif;
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 0.04em;
+            text-align: right;
+        }
+
+        /* Authentication and Signature Section */
+        .auth-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 14px;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #eee8df;
+            align-items: center;
+        }
+
+        .seal-block {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .seal-crest {
+            width: 34px;
+            height: 34px;
+            border: 1.5px solid #c5a880;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Cinzel', serif;
+            font-size: 13px;
+            font-weight: 700;
+            color: #c5a880;
+            background: #faf8f5;
+            flex-shrink: 0;
+        }
+
+        .seal-text {
+            font-size: 8px;
+            color: #666666;
+            line-height: 1.35;
+        }
+
+        .seal-text strong {
+            color: #111111;
+            font-family: 'Cinzel', serif;
+            letter-spacing: 0.06em;
+            font-size: 8px;
+        }
+
+        .signature-block {
+            text-align: right;
+        }
+
+        .signature-for {
+            font-family: 'Cinzel', serif;
+            font-size: 8px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #8a8278;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .digital-sign-script {
+            font-family: 'Playfair Display', cursive, serif;
+            font-style: italic;
+            font-size: 16px;
+            color: #111111;
+            letter-spacing: 0.04em;
+            line-height: 1.2;
+            padding: 2px 0;
+        }
+
+        .signature-title {
+            font-size: 7.5px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #666666;
+            font-weight: 700;
+            border-top: 1px solid #e0dad0;
+            padding-top: 2px;
+            display: inline-block;
+            margin-top: 2px;
+        }
+
+        /* Terms & Atelier Care */
+        .invoice-footer {
+            margin-top: 10px;
+            padding-top: 6px;
+            padding-bottom: 4px;
+            border-top: 1.5px solid #111111;
+            font-size: 7.5px;
+            color: #777777;
+            text-align: center;
+            line-height: 1.4;
+        }
+
+        .footer-terms {
+            margin-bottom: 3px;
+            color: #555555;
+        }
+
+        .footer-legal {
+            font-family: 'Cinzel', serif;
+            font-size: 7px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #8c734b;
+            font-weight: 600;
+        }
+
+        /* Print media styles */
+        @media print {
+            body {
+                background-color: #ffffff;
+                padding: 0;
+            }
+            .no-print, .no-print-toolbar {
+                display: none !important;
+            }
+            .invoice-wrapper {
+                border: 1px solid #e5dfd5 !important;
+                box-shadow: none !important;
+                padding: 22px 26px !important;
+                max-width: 100% !important;
+            }
+            .invoice-wrapper::before {
+                border: 1px solid rgba(197, 168, 128, 0.35) !important;
+                top: 6px !important;
+                left: 6px !important;
+                right: 6px !important;
+                bottom: 6px !important;
+            }
+        }
     </style>
 </head>
 <body>
+
+    <!-- Browser Action Toolbar (Hidden when printing or compiling to PDF) -->
+    <div class="no-print-toolbar no-print">
+        <div class="toolbar-brand">HOUSE OF URVAAH &bull; TAX INVOICE</div>
+        <div class="toolbar-actions">
+            <button class="toolbar-btn" onclick="window.print()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                    <rect x="6" y="14" width="12" height="8"></rect>
+                </svg>
+                Print / Save PDF
+            </button>
+            <button class="toolbar-btn toolbar-btn-secondary" onclick="window.close()">Close</button>
+        </div>
+    </div>
+
+    <!-- Main Luxury Invoice Container -->
     <div class="invoice-wrapper">
+
+        <!-- Header -->
         <div class="invoice-header">
-            <div>
-                <h1 class="title">Invoice</h1>
-                <div class="meta">
-                    <span><span class="label">Invoice No:</span> #{{orderId}}</span>
-                    <span><span class="label">Date:</span> {{issueDate}}</span>
+            <div class="brand-section">
+                {{#if logoBase64}}
+                <img src="{{logoBase64}}" alt="House of Urvaah" class="logo-image">
+                {{else}}
+                <h1 class="brand-fallback-title">House of Urvaah</h1>
+                {{/if}}
+                <span class="brand-subtitle">Haute Couture &bull; Luxury Pret Atelier &bull; New Delhi</span>
+            </div>
+
+            <div class="invoice-badge-block">
+                <div class="tax-invoice-title">Tax Invoice</div>
+                <div class="tax-invoice-sub">Original for Recipient &bull; Rule 48 CGST</div>
+            </div>
+        </div>
+
+        <!-- Meta Summary Strip -->
+        <div class="meta-strip">
+            <div class="meta-item">
+                <span class="meta-label">Invoice Number</span>
+                <span class="meta-value">{{invoiceNumber}}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Order Reference</span>
+                <span class="meta-value">#{{orderNumber}}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Client / Patron</span>
+                <span class="meta-value" style="color: #8c734b;">{{userName}}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Date of Issue</span>
+                <span class="meta-value">{{issueDate}}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Place of Supply</span>
+                <span class="meta-value">{{placeOfSupply}} ({{stateCode}})</span>
+            </div>
+        </div>
+
+        <!-- Two-Column Dossier: Sold By Atelier & Billed/Shipped To Client -->
+        <div class="dossier-grid">
+            <div class="dossier-card">
+                <div class="dossier-card-header">
+                    <span>Sold By &bull; Registered Atelier</span>
+                    <span>GSTIN / CIN</span>
+                </div>
+                <div class="dossier-name">House of Urvaah Private Limited</div>
+                <div class="dossier-body">
+                    Ground Floor, Luxury Fashion Enclave, Mehrauli-Gurgaon Road<br>
+                    New Delhi, 110030, India<br>
+                    <strong>GSTIN:</strong> 07AAECH9988K1Z3 &bull; <strong>State Code:</strong> 07 (Delhi)<br>
+                    <strong>CIN:</strong> U18101DL2024PTC123456<br>
+                    <div class="dossier-detail-row">
+                        <strong>Concierge:</strong> concierge@houseofurvaah.com
+                    </div>
                 </div>
             </div>
-            {{#if logoBase64}}
-            <div class="logo-container">
-                <img src="{{logoBase64}}" alt="Logo">
+
+            <div class="dossier-card">
+                <div class="dossier-card-header">
+                    <span>Billed &amp; Shipped To &bull; Client</span>
+                    <span>Order Dispatch</span>
+                </div>
+                <div class="dossier-name">{{userName}}</div>
+                <div class="dossier-body">
+                    {{#if userStreet}}
+                    {{userStreet}}<br>
+                    {{#if userCityStatePin}}{{userCityStatePin}}<br>{{/if}}
+                    {{else}}
+                    {{userAddress}}<br>
+                    {{/if}}
+                    <strong>Contact:</strong> {{userPhone}}<br>
+                    <strong>Email:</strong> {{userEmail}}<br>
+                    <div class="dossier-detail-row">
+                        <strong>Payment Mode:</strong> {{paymentMethod}} &bull; <strong>Ref:</strong> {{paymentReference}}
+                    </div>
+                </div>
             </div>
-            {{/if}}
         </div>
 
-        <div class="info-grid">
-            <div>
-                <span class="label">Billed To</span>
-                {{userName}}<br>{{userAddress}}<br>{{userPhone}}
-            </div>
-            <div>
-                <span class="label">From</span>
-                House of Urvaah<br>Fashion & Apparel Studio<br>India
-            </div>
-            <div class="text-right">
-                <span class="label">Contact</span>
-                support@houseofurvaah.com<br>www.houseofurvaah.com
-            </div>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Description</th>
-                    <th class="text-right">Unit Cost</th>
-                    <th class="text-right">Qty</th>
-                    <th class="text-right">Amount</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{#each items}}
-                <tr>
-                    <td>{{this.name}}</td>
-                    <td class="text-right">{{currencySymbol}}{{this.price}}</td>
-                    <td class="text-right">{{this.quantity}}</td>
-                    <td class="text-right">{{currencySymbol}}{{this.total}}</td>
-                </tr>
-                {{/each}}
-            </tbody>
-        </table>
-
-        <div class="summary-container">
-            <table class="summary-table">
-                <tr><td>Subtotal</td><td class="text-right">{{currencySymbol}}{{subtotal}}</td></tr>
-                {{#if hasDiscount}}
-                <tr style="color: #26B5AD;">
-                    <td>
-                        <strong>{{discountLabel}}</strong><br>
-                        <span style="color: #7f8c8d; font-size: 10px;">Applied coupon: {{couponCode}}</span>
-                    </td>
-                    <td class="text-right">-{{currencySymbol}}{{discountAmount}}</td>
-                </tr>
-                {{/if}}
-                <tr><td>Shipping</td><td class="text-right">{{currencySymbol}}{{shippingFee}}</td></tr>
-                <tr><td>Tax ({{taxRate}}%)</td><td class="text-right">{{currencySymbol}}{{taxAmount}}</td></tr>
-                <tr class="grand-total"><td>Total Amount</td><td class="text-right">{{currencySymbol}}{{grandTotal}}</td></tr>
+        <!-- Couture Line Items Table -->
+        <div class="table-container">
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th class="text-center" style="width: 34px;">#</th>
+                        <th>Couture Item Description</th>
+                        <th class="text-center" style="width: 95px;">Size / Specs</th>
+                        <th class="text-center" style="width: 50px;">Qty</th>
+                        <th class="text-right" style="width: 105px;">Unit Rate</th>
+                        <th class="text-right" style="width: 115px;">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#each items}}
+                    <tr>
+                        <td class="text-center" style="color: #8c734b; font-weight: 700;">{{this.index}}</td>
+                        <td>
+                            <div class="item-main-title">{{this.name}}</div>
+                        </td>
+                        <td class="text-center" style="font-weight: 600; font-size: 9.5px;">{{this.size}}</td>
+                        <td class="text-center" style="font-weight: 700;">{{this.quantity}}</td>
+                        <td class="text-right">{{../currencySymbol}}{{this.price}}</td>
+                        <td class="text-right" style="font-weight: 700;">{{../currencySymbol}}{{this.total}}</td>
+                    </tr>
+                    {{/each}}
+                </tbody>
             </table>
         </div>
 
-        <div class="footer-grid">
-            <div class="bank-info">
-                <span class="label">Bank Details</span>
-                A/C Holder: HOUSE OF URVAAH INDUSTRIES<br>
-                A/C No: 208417367600<br>
-                IFSC: HDFC0001234
+        <!-- Ledger & Financial Breakdown -->
+        <div class="ledger-container">
+            <!-- Left Side: Amount in Words, Tax Breakdown, Bank Records -->
+            <div class="ledger-left-box">
+                <div class="words-box">
+                    <div class="words-label">Amount Chargeable (in words)</div>
+                    <div class="words-text">{{amountInWords}}</div>
+                </div>
+
+                <div class="tax-summary-box">
+                    <div class="tax-summary-title">GST Tax Analysis Breakdown</div>
+                    <table class="tax-table">
+                        <tr>
+                            <td>Taxable Value (Net):</td>
+                            <td class="amount">{{currencySymbol}}{{baseTaxableValue}}</td>
+                        </tr>
+                        {{#if isInterState}}
+                        <tr>
+                            <td>Integrated GST (IGST @ {{igstRate}}%):</td>
+                            <td class="amount">{{currencySymbol}}{{igstAmount}}</td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td>Central GST (CGST @ {{cgstRate}}%):</td>
+                            <td class="amount">{{currencySymbol}}{{cgstAmount}}</td>
+                        </tr>
+                        <tr>
+                            <td>State GST (SGST @ {{sgstRate}}%):</td>
+                            <td class="amount">{{currencySymbol}}{{sgstAmount}}</td>
+                        </tr>
+                        {{/if}}
+                        <tr style="border-top: 1px solid #eee8df; font-weight: 700;">
+                            <td style="color: #111111; padding-top: 3px;">Total Tax Value:</td>
+                            <td class="amount" style="padding-top: 3px;">{{currencySymbol}}{{taxAmount}}</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="bank-details-box">
+                    <div class="bank-title">Atelier Remittance &amp; Audit Reference</div>
+                    Beneficiary: <strong>HOUSE OF URVAAH PRIVATE LIMITED</strong><br>
+                    Bank: HDFC Bank Ltd &bull; Account No: 50200088923412<br>
+                    IFSC: HDFC0000123 &bull; Branch: Mehrauli, New Delhi
+                </div>
             </div>
-            <div class="terms">
-                <span class="label">Terms</span>
-                Invoice payable within 7 days. Thank you for your trust.
+
+            <!-- Right Side: Itemized Summary & Grand Total -->
+            <div class="ledger-right-card">
+                <table class="ledger-table">
+                    <tr>
+                        <td>Gross Item Total ({{totalItemsCount}} pcs)</td>
+                        <td>{{currencySymbol}}{{subtotal}}</td>
+                    </tr>
+
+                    {{#if hasDiscount}}
+                    <tr class="discount-row">
+                        <td>
+                            <strong>{{discountLabel}}</strong><br>
+                            <span style="font-size: 8px; text-transform: uppercase;">Coupon: {{couponCode}}</span>
+                        </td>
+                        <td>-{{currencySymbol}}{{discountAmount}}</td>
+                    </tr>
+                    {{/if}}
+
+                    <tr>
+                        <td>Insured White-Glove Shipping</td>
+                        <td>{{shippingFeeText}}</td>
+                    </tr>
+
+                    <tr>
+                        <td>Applicable Taxes (GST 18% Incl.)</td>
+                        <td>{{currencySymbol}}{{taxAmount}}</td>
+                    </tr>
+
+                    <tr class="grand-total-row">
+                        <td>
+                            <span class="grand-total-label">Grand Total</span>
+                            <span class="grand-total-sub">Inclusive of all taxes</span>
+                        </td>
+                        <td>
+                            <div class="grand-total-amount">{{currencySymbol}}{{grandTotal}}</div>
+                        </td>
+                    </tr>
+                </table>
             </div>
         </div>
+
+        <!-- Authentication and Signature -->
+        <div class="auth-grid">
+            <div class="seal-block">
+                <div class="seal-crest">U</div>
+                <div class="seal-text">
+                    <strong>Official Atelier Authenticated Document</strong><br>
+                    This is a digitally generated Tax Invoice issued in compliance with the Information Technology Act, 2000 and CGST Rules. No physical signature is required.
+                </div>
+            </div>
+
+            <div class="signature-block">
+                <div class="signature-for">For House of Urvaah Pvt. Ltd.</div>
+                <div class="digital-sign-script">House of Urvaah Atelier</div>
+                <div class="signature-title">Authorized Atelier Signatory &bull; {{authSignatoryDate}}</div>
+            </div>
+        </div>
+
+        <!-- Footer Terms & Brand Assurance -->
+        <div class="invoice-footer">
+            <div class="footer-terms">
+                Each piece by House of Urvaah is crafted with meticulous couture precision. Unworn pieces with security tags and original packaging intact are eligible for return/exchange within 7 days of delivery under our Atelier Care Policy.
+            </div>
+            <div class="footer-legal">
+                House of Urvaah &bull; Ground Floor, Luxury Fashion Enclave, Mehrauli-Gurgaon Road, New Delhi, 110030 &bull; www.houseofurvaah.com
+            </div>
+        </div>
+
     </div>
+
 </body>
 </html>

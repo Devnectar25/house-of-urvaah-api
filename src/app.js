@@ -144,6 +144,7 @@ app.use('/api/ui', require('./routes/uiRoutes'));
 app.use('/api/stock-notifications', require('./routes/stockNotificationRoutes'));
 app.use('/api/error-logs', require('./routes/errorLogRoutes'));
 app.use('/api/email-notifications', require('./routes/emailNotificationRoutes'));
+app.use('/api/newsletter', require('./routes/newsletterRoutes'));
 
 app.get('/', (req, res) => {
     res.send("House Of Urvaah API is running....");
