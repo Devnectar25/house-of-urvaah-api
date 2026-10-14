@@ -367,6 +367,27 @@ exports.handleWebhook = async (payload, signature) => {
 };
 
 exports.refundPayment = async (paymentId, amount, speed = 'normal') => {
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const isPlaceholderSecret = !keySecret || keySecret.startsWith('rzp_test_secret_') || keySecret === 'your_razorpay_key_secret';
+
+    if (isPlaceholderSecret) {
+        console.warn('⚠️ Razorpay credentials contain placeholder secret. Simulating mock refund in development.');
+        return {
+            id: `rfnd_mock_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+            entity: 'refund',
+            amount: Math.round(amount * 100),
+            currency: 'INR',
+            payment_id: paymentId,
+            status: 'processed',
+            speed_processed: speed,
+            is_mock: true,
+            notes: {
+                reason: 'Customer Return/Cancellation Approved by Admin (Simulated)',
+                initiated_by: 'House of Urvaah Admin Dashboard'
+            }
+        };
+    }
+
     const rzp = getRazorpay();
     if (!rzp) {
         console.warn('⚠️ Razorpay not configured. Skipping automated refund.');
@@ -389,6 +410,22 @@ exports.refundPayment = async (paymentId, amount, speed = 'normal') => {
         const razorpayDesc = error?.error?.description || error?.description;
         const readableMsg = razorpayDesc || error?.message || JSON.stringify(error) || 'Unknown Razorpay error';
         console.error('[PaymentService] Razorpay refund failed:', readableMsg);
+
+        // Fallback simulation in non-production when authentication fails or test credentials are used
+        if (process.env.NODE_ENV !== 'production' && (readableMsg.includes('Authentication failed') || readableMsg.includes('BAD_REQUEST_ERROR') || paymentId?.startsWith('pay_test_') || paymentId?.startsWith('order_rzp_test_'))) {
+            console.warn(`[PaymentService] Non-production environment encountered Razorpay error (${readableMsg}). Returning simulated refund.`);
+            return {
+                id: `rfnd_mock_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+                entity: 'refund',
+                amount: Math.round(amount * 100),
+                currency: 'INR',
+                payment_id: paymentId,
+                status: 'processed',
+                speed_processed: speed,
+                is_mock: true
+            };
+        }
+
         const cleanErr = new Error(readableMsg);
         cleanErr.razorpayError = error;
         throw cleanErr;

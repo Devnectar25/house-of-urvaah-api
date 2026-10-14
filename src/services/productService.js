@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const storageService = require("./storageService");
 const stockNotificationService = require("./stockNotificationService");
+const { filterValidSizes } = require("../utils/sizeValidator");
 
 // Map frontend/catalog IDs (e.g., 101, 103, bs-101) to actual DB product_id rows
 const resolveDbProductId = (id) => {
@@ -103,31 +104,43 @@ const mapProduct = (p) => {
     }
     if (!Array.isArray(parsedProdDetails)) parsedProdDetails = [];
 
-    return {
-        id: p.product_id?.toString() || p.id?.toString() || '',
-        name: p.title || p.productname || '',
-        title: p.title || p.productname || '',
-        brand: p.brand_name || p.brand || 'House of Urvaah',
-        category: p.category_name || 'CLOTHING',
-        categoryId: p.category_id || '',
-        category_id: p.category_id || '',
-        shortDescription: p.short_description || p.shortdescription || '',
-        short_description: p.short_description || p.shortdescription || '',
-        description: p.description || '',
-        fullDescription: p.full_description || p.fulldescription || '',
-        full_description: p.full_description || p.fulldescription || '',
-        price: currPrice,
-        originalPrice: origPrice,
-        discount: calcDiscount,
-        discountPercent: calcDiscount,
-        rating: parseFloat(p.rating) || 0,
-        reviews: parseInt(p.reviews_count || p.reviews) || 0,
-        image: mainImageUrl,
-        hoverImage: hoverImageUrl,
-        gallery: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
-        images: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
-        inStock: p.instock !== false && p.is_active !== false && (p.stock_quantity === undefined || p.stock_quantity === null || p.stock_quantity > 0),
-        stockQuantity: p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : (p.quantity || 0),
+        const qtyVal = (p.stock_quantity !== undefined && p.stock_quantity !== null)
+            ? Number(p.stock_quantity)
+            : (p.quantity !== undefined && p.quantity !== null ? Number(p.quantity) : (p.stock !== undefined && p.stock !== null ? Number(p.stock) : 0));
+
+        const isActive = p.active !== false && p.is_active !== false;
+        const computedInStock = isActive && (
+            qtyVal > 0 || (p.instock === true && qtyVal >= 0)
+        ) && qtyVal !== 0;
+
+        return {
+            id: p.product_id?.toString() || p.id?.toString() || '',
+            name: p.title || p.productname || '',
+            title: p.title || p.productname || '',
+            brand: p.brand_name || p.brand || 'House of Urvaah',
+            category: p.category_name || 'CLOTHING',
+            categoryId: p.category_id || '',
+            category_id: p.category_id || '',
+            shortDescription: p.short_description || p.shortdescription || '',
+            short_description: p.short_description || p.shortdescription || '',
+            description: p.description || '',
+            fullDescription: p.full_description || p.fulldescription || '',
+            full_description: p.full_description || p.fulldescription || '',
+            price: currPrice,
+            originalPrice: origPrice,
+            discount: calcDiscount,
+            discountPercent: calcDiscount,
+            rating: parseFloat(p.rating) || 0,
+            reviews: parseInt(p.reviews_count || p.reviews) || 0,
+            image: mainImageUrl,
+            hoverImage: hoverImageUrl,
+            gallery: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
+            images: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
+            inStock: computedInStock,
+            instock: computedInStock,
+            stockQuantity: qtyVal,
+            quantity: qtyVal,
+            stock: qtyVal,
         benefits: p.benefits,
         ingredients: p.ingredients,
         usage: p.usage,
@@ -530,9 +543,15 @@ exports.createProduct = async (product) => {
     const recVal = is_recommended !== undefined ? Boolean(is_recommended) : (isRecommended !== undefined ? Boolean(isRecommended) : true);
     const currPrice = parseFloat(price) || 0;
     const origPrice = parseFloat(originalPrice ?? originalprice ?? sale_price ?? price) || currPrice;
-    const imgList = Array.isArray(images) && images.length > 0
+    const imgList = (Array.isArray(images) && images.length > 0
         ? images
-        : (image_url || image ? [image_url || image] : []);
+        : (image_url || image ? [image_url || image] : [])
+    ).filter(img => typeof img === 'string' && img.trim().length > 0);
+
+    if (imgList.length === 0) {
+        throw new Error("At least 1 product image is required to create a product.");
+    }
+
     const imgUrl = imgList.length > 0 ? imgList[0] : '';
     const isFeatured = promoted !== undefined ? promoted : (is_featured || false);
     const stockQty = parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock) || 0;
@@ -559,15 +578,22 @@ exports.createProduct = async (product) => {
     }
     if (!Array.isArray(prodDetailsVal)) prodDetailsVal = [];
 
+    const cleanSizes = filterValidSizes(Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L']);
+    const initialInStock = activeVal !== false && (
+        product.instock !== undefined
+            ? Boolean(product.instock)
+            : (product.inStock !== undefined ? Boolean(product.inStock) : stockQty > 0)
+    );
+
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23::jsonb, $24::jsonb, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
             brand || 'House of Urvaah', imgUrl, imgList, isFeatured, recVal, activeVal !== false,
-            stockQty, Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L'],
+            stockQty, initialInStock, cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L'],
             Array.isArray(colors) ? colors : ['Default'],
             fabric || '', fit_type || '', careInst, style_code || '', parsedSubcatId,
             JSON.stringify(specsVal),
@@ -587,7 +613,8 @@ exports.updateProduct = async (id, product) => {
         category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
-        specifications, name_options, nameOptions, product_details, productDetails
+        specifications, name_options, nameOptions, product_details, productDetails,
+        instock, inStock
     } = product;
 
     const productTitle = title || productname;
@@ -605,6 +632,15 @@ exports.updateProduct = async (id, product) => {
     const stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
         ? parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock)
         : undefined;
+
+    const explicitInStock = instock !== undefined
+        ? Boolean(instock)
+        : (inStock !== undefined ? Boolean(inStock) : undefined);
+
+    const inStockVal = explicitInStock !== undefined
+        ? explicitInStock
+        : (stockQty !== undefined ? stockQty > 0 : undefined);
+
     const parsedCatId = category_id ? parseInt(category_id) : undefined;
     const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : undefined;
     const shortDesc = short_description !== undefined ? short_description : (shortDescription !== undefined ? shortDescription : shortdescription);
@@ -641,6 +677,8 @@ exports.updateProduct = async (id, product) => {
         console.warn('[updateProduct] Error fetching prev stock:', e.message);
     }
 
+    const cleanSizes = sizes !== undefined ? filterValidSizes(sizes) : undefined;
+
     const result = await pool.query(
         `UPDATE products 
         SET title = COALESCE($2, title),
@@ -659,6 +697,11 @@ exports.updateProduct = async (id, product) => {
             stock_quantity = COALESCE($15, stock_quantity),
             stock = COALESCE($15, stock),
             quantity = COALESCE($15, quantity),
+            instock = CASE
+                WHEN $26::boolean IS NOT NULL THEN $26::boolean
+                WHEN $15::integer IS NOT NULL THEN ($15::integer > 0)
+                ELSE instock
+            END,
             sizes = COALESCE($16, sizes),
             colors = COALESCE($17, colors),
             fabric = COALESCE($18, fabric),
@@ -688,7 +731,7 @@ exports.updateProduct = async (id, product) => {
             recVal !== undefined ? recVal : null,
             activeVal !== undefined ? activeVal : null,
             stockQty !== undefined && !isNaN(stockQty) ? stockQty : null,
-            sizes !== undefined ? sizes : null,
+            cleanSizes !== undefined ? (cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L']) : null,
             colors !== undefined ? colors : null,
             fabric !== undefined ? fabric : null,
             fit_type !== undefined ? fit_type : null,
@@ -697,7 +740,8 @@ exports.updateProduct = async (id, product) => {
             parsedSubcatId !== undefined && !isNaN(parsedSubcatId) ? parsedSubcatId : null,
             specsVal !== undefined ? JSON.stringify(specsVal) : null,
             nameOptsVal !== undefined ? JSON.stringify(nameOptsVal) : null,
-            prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null
+            prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null,
+            inStockVal !== undefined ? inStockVal : null
         ]
     );
 

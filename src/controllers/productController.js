@@ -81,6 +81,17 @@ exports.getRelatedProducts = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         const product = req.body;
+        const images = Array.isArray(product.images)
+            ? product.images.filter(img => typeof img === 'string' && img.trim().length > 0)
+            : (product.image || product.image_url ? [product.image || product.image_url] : []);
+
+        if (images.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "At least 1 product image is required to create a product."
+            });
+        }
+
         const data = await productService.createProduct(product);
         res.status(201).json({ success: true, data });
     } catch (error) {
@@ -93,6 +104,20 @@ exports.updateProduct = async (req, res) => {
     try {
         const id = req.params.id;
         const product = req.body;
+
+        if (product.images !== undefined) {
+            const images = Array.isArray(product.images)
+                ? product.images.filter(img => typeof img === 'string' && img.trim().length > 0)
+                : (product.image || product.image_url ? [product.image || product.image_url] : []);
+
+            if (images.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "At least 1 product image is required."
+                });
+            }
+        }
+
         const data = await productService.updateProduct(id, product);
 
         if (!data) {
