@@ -255,7 +255,8 @@ exports.updateDualCampaignCard = async (req, res) => {
 exports.getPublicTrendingGram = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, title, image, media_type, caption, post_link, display_order 
+      `SELECT id, title, image, media_type, caption, post_link, display_order,
+              product_image, product_id, product_name, product_price, product_gallery
        FROM ui_trending_gram 
        WHERE is_active = true 
        ORDER BY display_order ASC, id ASC`
@@ -281,7 +282,20 @@ exports.getAdminTrendingGram = async (req, res) => {
 // Admin Create Post
 exports.createTrendingGramPost = async (req, res) => {
   try {
-    const { title, image, media_type, caption, post_link, display_order, is_active } = req.body;
+    const {
+      title,
+      image,
+      media_type,
+      caption,
+      post_link,
+      display_order,
+      is_active,
+      product_image,
+      product_id,
+      product_name,
+      product_price,
+      product_gallery
+    } = req.body;
 
     if (!image) {
       return res.status(400).json({ success: false, message: 'Image or video URL is required' });
@@ -290,12 +304,31 @@ exports.createTrendingGramPost = async (req, res) => {
     const mType = media_type || (image.endsWith('.mp4') ? 'video' : 'image');
     const orderVal = Number.isInteger(display_order) ? display_order : 0;
     const activeVal = is_active !== undefined ? Boolean(is_active) : true;
+    const galleryVal = Array.isArray(product_gallery)
+      ? JSON.stringify(product_gallery)
+      : (product_gallery ? JSON.stringify([product_gallery]) : null);
 
     const result = await pool.query(
-      `INSERT INTO ui_trending_gram (title, image, media_type, caption, post_link, display_order, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO ui_trending_gram (
+         title, image, media_type, caption, post_link, display_order, is_active,
+         product_image, product_id, product_name, product_price, product_gallery
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [title || '', image, mType, caption || '', post_link || 'https://www.instagram.com/houseofurvaah/', orderVal, activeVal]
+      [
+        title || '',
+        image,
+        mType,
+        caption || '',
+        post_link || 'https://www.instagram.com/houseofurvaah/',
+        orderVal,
+        activeVal,
+        product_image || null,
+        product_id || null,
+        product_name || null,
+        product_price || null,
+        galleryVal
+      ]
     );
 
     res.status(201).json({ success: true, message: 'Post added successfully', data: result.rows[0] });
@@ -309,7 +342,20 @@ exports.createTrendingGramPost = async (req, res) => {
 exports.updateTrendingGramPost = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, image, media_type, caption, post_link, display_order, is_active } = req.body;
+    const {
+      title,
+      image,
+      media_type,
+      caption,
+      post_link,
+      display_order,
+      is_active,
+      product_image,
+      product_id,
+      product_name,
+      product_price,
+      product_gallery
+    } = req.body;
 
     const existing = await pool.query('SELECT * FROM ui_trending_gram WHERE id = $1', [id]);
     if (existing.rows.length === 0) {
@@ -318,7 +364,15 @@ exports.updateTrendingGramPost = async (req, res) => {
 
     const current = existing.rows[0];
     const newImage = image !== undefined ? image : current.image;
-    const newMediaType = media_type !== undefined ? media_type : (newImage.endsWith('.mp4') ? 'video' : current.media_type);
+    const newMediaType = media_type !== undefined ? media_type : (newImage && newImage.endsWith('.mp4') ? 'video' : current.media_type);
+
+    const newProductImage = product_image !== undefined ? product_image : current.product_image;
+    const newProductId = product_id !== undefined ? product_id : current.product_id;
+    const newProductName = product_name !== undefined ? product_name : current.product_name;
+    const newProductPrice = product_price !== undefined ? product_price : current.product_price;
+    const newProductGallery = product_gallery !== undefined
+      ? (Array.isArray(product_gallery) ? JSON.stringify(product_gallery) : (product_gallery ? JSON.stringify([product_gallery]) : null))
+      : (current.product_gallery ? JSON.stringify(current.product_gallery) : null);
 
     const result = await pool.query(
       `UPDATE ui_trending_gram
@@ -329,8 +383,13 @@ exports.updateTrendingGramPost = async (req, res) => {
            post_link = $5,
            display_order = $6,
            is_active = $7,
+           product_image = $8,
+           product_id = $9,
+           product_name = $10,
+           product_price = $11,
+           product_gallery = $12,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $8
+       WHERE id = $13
        RETURNING *`,
       [
         title !== undefined ? title : current.title,
@@ -340,6 +399,11 @@ exports.updateTrendingGramPost = async (req, res) => {
         post_link !== undefined ? post_link : current.post_link,
         display_order !== undefined ? display_order : current.display_order,
         is_active !== undefined ? is_active : current.is_active,
+        newProductImage,
+        newProductId,
+        newProductName,
+        newProductPrice,
+        newProductGallery,
         id
       ]
     );
