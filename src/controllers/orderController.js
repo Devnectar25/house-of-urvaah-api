@@ -251,7 +251,19 @@ exports.reorderOrder = async (req, res) => {
         const order = await orderService.getOrderById(targetId);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
-        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isAdmin = req.user?.role === 'admin';
+        const reqUserId = String(req.user?.id || '').trim().toLowerCase();
+        const reqUserEmail = String(req.user?.emailid || req.user?.email || '').trim().toLowerCase();
+        const orderUserId = String(order.user_id || '').trim().toLowerCase();
+        const orderCustEmail = String(order.customer_email || '').trim().toLowerCase();
+
+        const isOwner =
+            (reqUserId && (orderUserId === reqUserId || orderCustEmail === reqUserId)) ||
+            (reqUserEmail && (orderUserId === reqUserEmail || orderCustEmail === reqUserEmail)) ||
+            order.user_id == req.user?.id ||
+            order.user_id == req.user?.username;
+
+        if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized to reorder this order' });
         }
 
