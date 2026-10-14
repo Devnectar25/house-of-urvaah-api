@@ -211,7 +211,9 @@ exports.getInvoiceData = async (orderId) => {
     });
 
     const paymentMethodRaw = String(order.payment_method || 'Online').toUpperCase();
-    const paymentStatusRaw = String(order.payment_status || 'Paid').toUpperCase();
+    const isCod = paymentMethodRaw === 'COD' || paymentMethodRaw.includes('CASH');
+    const isDelivered = String(order.status || '').toLowerCase() === 'delivered';
+    const paymentStatusRaw = (isCod && isDelivered) ? 'PAID' : String(order.payment_status || 'Paid').toUpperCase();
     const isPaid = paymentStatusRaw === 'PAID';
 
     // 5. Load the House of Urvaah logo as base64

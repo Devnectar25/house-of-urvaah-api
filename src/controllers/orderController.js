@@ -150,15 +150,22 @@ exports.updateOrderStatus = async (req, res) => {
             if (currentStatusLower === 'return requested' || currentStatusLower === 'return request processing') {
                 return res.status(400).json({ success: false, message: 'A return request for this order is already pending admin approval.' });
             }
+            if (currentStatusLower === 'replacement request processing' || currentStatusLower === 'replace requested' || currentStatusLower === 'replacement requested') {
+                return res.status(400).json({ success: false, message: 'A replacement request for this order is already pending admin approval.' });
+            }
+            if (currentStatusLower === 'replace approved' || currentStatusLower === 'replacement processing' || currentStatusLower === 'replacement shipped') {
+                return res.status(400).json({ success: false, message: 'A replacement for this order is already approved and in progress.' });
+            }
             if (currentStatusLower === 'return approved') {
                 return res.status(400).json({ success: false, message: 'Return is already approved and in transit to House of Urvaah.' });
             }
-            if (currentStatusLower === 'received at house of urvaah' || currentStatusLower === 'returned') {
-                return res.status(400).json({ success: false, message: 'This order has already been received at House of Urvaah.' });
+            if (currentStatusLower === 'received at house of urvaah' || currentStatusLower === 'returned' || currentStatusLower === 'replaced') {
+                return res.status(400).json({ success: false, message: 'This order cycle has already been completed.' });
             }
             if (currentStatusLower === 'delivered') {
-                // Post-delivery cancellation triggers the Return Request flow for admin review
-                targetStatus = 'Return Requested';
+                // Post-delivery: check if replacement or cancel
+                const isReplacement = (status || '').toLowerCase().includes('replace') || req.body.type === 'Replacement';
+                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Cancellation Requested';
             } else if (currentStatusLower === 'cancellation requested' || currentStatusLower === 'cancel_requested') {
                 return res.status(400).json({ success: false, message: 'A cancellation request for this order is already pending admin approval.' });
             } else {
@@ -167,8 +174,18 @@ exports.updateOrderStatus = async (req, res) => {
             }
         }
 
+        // If order is COD and status is Delivered, payment is collected upon delivery and must be Paid
+        const isCod = (order.payment_method || '').toLowerCase() === 'cod' || 
+                      (order.payment_type || '').toLowerCase() === 'cod' ||
+                      (order.payment_method || '').toLowerCase().includes('cash');
+
+        let targetPaymentStatus = paymentStatus;
+        if ((targetStatus === 'Delivered' || (order.status || '').toLowerCase() === 'delivered') && isCod) {
+            targetPaymentStatus = 'Paid';
+        }
+
         // Pass order.id (validated UUID) to ensure clean DB queries
-        const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, paymentStatus, itemIds);
+        const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, targetPaymentStatus, itemIds);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -349,4 +366,28 @@ exports.getRefundPaymentDetails = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+exports.updateOrderShippingAddress = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const addressData = req.body;
+
+        const isAdmin = req.user?.role === 'admin';
+        const userId = req.user?.username || req.user?.id || req.user?.emailid;
+
+        const updatedOrder = await orderService.updateOrderShippingAddress(id, userId, addressData, isAdmin);
+        res.status(200).json({
+            success: true,
+            message: 'Shipping address updated successfully',
+            data: updatedOrder
+        });
+    } catch (error) {
+        console.error('[updateOrderShippingAddress] Error:', error);
+        res.status(error.status || 400).json({
+            success: false,
+            message: error.message || 'Failed to update shipping address'
+        });
+    }
+};
+
 
