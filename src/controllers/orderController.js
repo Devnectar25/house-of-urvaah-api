@@ -25,6 +25,7 @@ exports.getAllOrders = async (req, res) => {
         const orderNumber = req.query.orderNumber;
 
         const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, paymentType, type, userName, orderNumber });
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json({
             success: true,
             data: result.orders,
@@ -77,6 +78,7 @@ exports.getCancelledOrdersStats = async (req, res) => {
 exports.getOrderStats = async (req, res) => {
     try {
         const stats = await orderService.getOrderStats();
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json({ success: true, data: stats });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -235,7 +237,7 @@ exports.downloadInvoice = async (req, res) => {
             const pdfBuffer = await invoiceService.generateInvoicePDF(id);
 
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INV_${order.order_number}.pdf"`);
+            res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INVOICE_${order.invoice_number || order.order_number}.pdf"`);
             res.setHeader('Content-Length', pdfBuffer.length);
 
             return res.end(pdfBuffer);

@@ -173,26 +173,37 @@ exports.getInvoiceData = async (orderId) => {
     }
 
     // 4. Financial Calculations
+    // Subtotal represents the base amount of clothes
     const subtotal = parseFloat(order.subtotal || 0);
     const discountAmount = parseFloat(order.discount_amount || 0);
     const shippingFee = parseFloat(order.shipping || order.shipping_cost || 0);
-    const total = parseFloat(order.total || 0);
 
     const netTaxable = Math.max(0, subtotal - discountAmount);
-    const taxRate = 18; // 18% standard GST for luxury apparel
-    // In inclusive retail pricing: Tax Amount = Total Taxable * (18 / 118)
-    // Or if subtotal is exclusive: taxAmount = netTaxable * 0.18
-    // To match total exactly:
-    const calculatedTax = (netTaxable * 0.18) / 1.18;
-    const baseTaxableValue = netTaxable - calculatedTax;
+    
+    // Determine tax rate: use order.tax if present, else apply > 2500 ? 18% : 5% rule
+    let taxRate = 18;
+    if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
+        const computedRate = Math.round((parseFloat(order.tax) / netTaxable) * 100);
+        taxRate = computedRate > 0 ? computedRate : (netTaxable > 2500 ? 18 : 5);
+    } else {
+        taxRate = netTaxable > 2500 ? 18 : 5;
+    }
+
+    // Calculated tax amount
+    const calculatedTax = (order.tax !== undefined && order.tax !== null && parseFloat(order.tax) > 0)
+        ? parseFloat(order.tax)
+        : Math.round(netTaxable * (taxRate / 100));
+
+    const baseTaxableValue = netTaxable;
+    const grandTotalNum = baseTaxableValue + calculatedTax + shippingFee;
 
     const customerState = String(order.state || shippingAddr?.state || '').trim().toLowerCase();
     const isDelhi = customerState.includes('delhi') || customerState === 'dl';
     const isInterState = !isDelhi;
 
-    const cgstRate = isInterState ? 0 : 9;
-    const sgstRate = isInterState ? 0 : 9;
-    const igstRate = isInterState ? 18 : 0;
+    const cgstRate = isInterState ? 0 : (taxRate / 2);
+    const sgstRate = isInterState ? 0 : (taxRate / 2);
+    const igstRate = isInterState ? taxRate : 0;
 
     const cgstAmount = isInterState ? '0.00' : (calculatedTax / 2).toFixed(2);
     const sgstAmount = isInterState ? '0.00' : (calculatedTax / 2).toFixed(2);
@@ -245,7 +256,7 @@ exports.getInvoiceData = async (orderId) => {
         const itemPrice = parseFloat(item.price || 0);
         const qty = parseInt(item.quantity || 1, 10);
         const lineTotal = itemPrice * qty;
-        const lineTaxable = lineTotal / 1.18;
+        const lineTaxable = lineTotal;
 
         return {
             index: index + 1,
@@ -257,18 +268,41 @@ exports.getInvoiceData = async (orderId) => {
             quantity: qty,
             price: itemPrice.toFixed(2),
             taxableValue: lineTaxable.toFixed(2),
-            gstRate: '18%',
+            gstRate: `${taxRate}%`,
             total: lineTotal.toFixed(2)
         };
     });
 
     const currencySymbol = getCurrencySymbol();
-    const grandTotalNum = total > 0 ? total : (subtotal + shippingFee - discountAmount);
+
+    // Resolve authoritative Invoice Number in format HOU-YYYYMM<count>
+    let finalInvoiceNumber = order.invoice_number;
+    if (!finalInvoiceNumber || !/^HOU-\d{6,}/.test(finalInvoiceNumber)) {
+        const yr = createdAt.getFullYear();
+        const mo = String(createdAt.getMonth() + 1).padStart(2, '0');
+        try {
+            const seqRes = await pool.query(
+                `SELECT COUNT(*) FROM orders 
+                 WHERE date_trunc('month', created_at) = date_trunc('month', $1::timestamptz) 
+                   AND (created_at < $1::timestamptz OR (created_at = $1::timestamptz AND id <= $2))`,
+                [order.created_at || new Date(), order.id]
+            );
+            const seq = Math.max(1, parseInt(seqRes.rows[0]?.count || 1, 10));
+            finalInvoiceNumber = `HOU-${yr}${mo}${String(seq).padStart(2, '0')}`;
+            if (order.id) {
+                await pool.query('UPDATE orders SET invoice_number = $1 WHERE id = $2', [finalInvoiceNumber, order.id]).catch(() => {});
+            }
+        } catch (seqErr) {
+            const digits = String(order.order_number || order.id || '').replace(/\D/g, '');
+            const fallbackSeq = digits ? String(parseInt(digits.slice(-2), 10) || 1).padStart(2, '0') : '01';
+            finalInvoiceNumber = `HOU-${yr}${mo}${fallbackSeq}`;
+        }
+    }
 
     return {
         currencySymbol,
         logoBase64,
-        invoiceNumber: `URV-INV-${order.order_number}`,
+        invoiceNumber: finalInvoiceNumber,
         orderId: order.order_number,
         orderNumber: order.order_number,
         orderDate,

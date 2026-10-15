@@ -8,7 +8,8 @@ exports.getAllReviews = async (req, res) => {
             SELECT r.id, r.product_id as productid, COALESCE(p.title, 'Product #' || r.product_id) as product_name,
                    p.image_url, p.images,
                    r.user_id as username, COALESCE(u.emailid, '') as emailid,
-                   r.rating, r.comment, r.created_at as date
+                   r.rating, r.comment, r.created_at as date,
+                   r.images as review_images, r.image_url as review_image_url
             FROM reviews r
             LEFT JOIN products p ON r.product_id = p.product_id
             LEFT JOIN users u ON (u.username = r.user_id OR u.emailid = r.user_id)
@@ -16,16 +17,23 @@ exports.getAllReviews = async (req, res) => {
         `);
 
         const formattedRows = result.rows.map(row => {
-            const firstImage = (Array.isArray(row.images) && row.images[0]) || row.image_url || '';
+            const firstProductImage = (Array.isArray(row.images) && row.images[0]) || row.image_url || '';
+            const rawRevImgs = Array.isArray(row.review_images) && row.review_images.length > 0
+                ? row.review_images
+                : (row.review_image_url ? [row.review_image_url] : []);
+            const resolvedRevImgs = rawRevImgs.map(img => storageService.getPublicMediaUrl(img)).filter(Boolean);
+
             return {
                 id: row.id,
                 productid: row.productid,
                 product_name: row.product_name,
-                product_image: storageService.getPublicMediaUrl(firstImage),
+                product_image: storageService.getPublicMediaUrl(firstProductImage),
                 username: row.username,
                 emailid: row.emailid,
                 rating: row.rating,
                 comment: row.comment,
+                images: resolvedRevImgs,
+                image_url: resolvedRevImgs[0] || null,
                 date: row.date
             };
         });
@@ -85,17 +93,57 @@ exports.getProductReviews = async (req, res) => {
 
 exports.addProductReview = async (req, res) => {
     try {
-        const { productId, username, rating, review } = req.body;
+        const { productId, username, rating, review, imageUrl } = req.body;
 
         if (!productId || !rating || !review) {
             return res.status(400).json({ success: false, message: 'Missing required fields' });
         }
 
+        // Collect uploaded files if multipart
+        let uploadedImages = [];
+        if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+            for (const file of req.files) {
+                try {
+                    const uploadedUrl = await storageService.uploadImage(file, 'reviews');
+                    if (uploadedUrl) uploadedImages.push(uploadedUrl);
+                } catch (upErr) {
+                    console.error('Error uploading review attachment:', upErr);
+                }
+            }
+        } else if (req.file) {
+            try {
+                const uploadedUrl = await storageService.uploadImage(req.file, 'reviews');
+                if (uploadedUrl) uploadedImages.push(uploadedUrl);
+            } catch (upErr) {
+                console.error('Error uploading review attachment:', upErr);
+            }
+        }
+
+        // Collect any images passed as URLs or strings in body
+        let bodyImages = [];
+        if (Array.isArray(req.body.images)) {
+            bodyImages = req.body.images.filter(Boolean);
+        } else if (typeof req.body.images === 'string' && req.body.images.trim()) {
+            try {
+                const parsed = JSON.parse(req.body.images);
+                if (Array.isArray(parsed)) bodyImages = parsed.filter(Boolean);
+                else bodyImages = [req.body.images.trim()];
+            } catch {
+                bodyImages = [req.body.images.trim()];
+            }
+        } else if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim()) {
+            bodyImages = [imageUrl.trim()];
+        }
+
+        const combinedImages = [...uploadedImages, ...bodyImages];
+
         const newReview = await reviewService.createReview({
             productId,
             username: username || req.user?.name || req.user?.username || 'Verified Patron',
             rating,
-            review
+            review,
+            images: combinedImages,
+            imageUrl: combinedImages[0] || null
         });
 
         res.status(201).json({

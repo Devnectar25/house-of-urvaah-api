@@ -18,6 +18,7 @@ exports.getReviewsByProduct = async (productId) => {
 
     const result = await pool.query(
         `SELECT r.id, r.product_id, r.user_id, r.rating, r.comment, r.created_at,
+                r.images, r.image_url,
                 COALESCE(u.fullname, u.username, r.user_id, 'Verified Patron') as user_name
          FROM reviews r
          LEFT JOIN users u ON (u.username = r.user_id OR u.emailid = r.user_id)
@@ -26,18 +27,28 @@ exports.getReviewsByProduct = async (productId) => {
         [numericId]
     );
 
-    return result.rows.map(row => ({
-        id: row.id,
-        user: row.user_name || 'Verified Patron',
-        rating: Number(row.rating) || 5,
-        comment: row.comment || '',
-        date: row.created_at,
-        verified: true
-    }));
+    return result.rows.map(row => {
+        let imgs = [];
+        if (Array.isArray(row.images) && row.images.length > 0) {
+            imgs = row.images;
+        } else if (row.image_url) {
+            imgs = [row.image_url];
+        }
+        return {
+            id: row.id,
+            user: row.user_name || 'Verified Patron',
+            rating: Number(row.rating) || 5,
+            comment: row.comment || '',
+            images: imgs,
+            imageUrl: row.image_url || imgs[0] || null,
+            date: row.created_at,
+            verified: true
+        };
+    });
 };
 
 exports.createReview = async (data) => {
-    const { productId, username, rating, review } = data;
+    const { productId, username, rating, review, images, imageUrl } = data;
     const numericId = resolveNumericProductId(productId);
 
     if (!numericId) {
@@ -48,11 +59,28 @@ exports.createReview = async (data) => {
     const numRating = Math.max(1, Math.min(5, parseInt(rating, 10) || 5));
     const commentText = (review || '').trim();
 
+    let imgArray = [];
+    if (Array.isArray(images)) {
+        imgArray = images.filter(Boolean).map(String);
+    } else if (typeof images === 'string' && images.trim()) {
+        try {
+            const parsed = JSON.parse(images);
+            if (Array.isArray(parsed)) imgArray = parsed.filter(Boolean).map(String);
+            else imgArray = [images.trim()];
+        } catch {
+            imgArray = [images.trim()];
+        }
+    } else if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim()) {
+        imgArray = [imageUrl.trim()];
+    }
+
+    const primaryImage = imgArray[0] || (imageUrl && typeof imageUrl === 'string' ? imageUrl.trim() : null);
+
     const result = await pool.query(
-        `INSERT INTO reviews (product_id, user_id, rating, comment, created_at)
-         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+        `INSERT INTO reviews (product_id, user_id, rating, comment, images, image_url, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
          RETURNING *`,
-        [numericId, validUser, numRating, commentText]
+        [numericId, validUser, numRating, commentText, imgArray, primaryImage]
     );
 
     // Update product rating and reviews count if columns exist
@@ -73,6 +101,8 @@ exports.createReview = async (data) => {
         user: validUser,
         rating: numRating,
         comment: commentText,
+        images: imgArray,
+        imageUrl: primaryImage,
         date: result.rows[0].created_at,
         verified: true
     };

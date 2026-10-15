@@ -36,6 +36,8 @@ exports.getCart = async (userId) => {
             p.category_id,
             p.brand        AS brand_id,
             p.stock_quantity,
+            p.size_stock,
+            p.sizes,
             COALESCE(p.is_active, true) AS instock,
             cat.name       AS category_name,
             b.name         AS brand_name
@@ -60,6 +62,7 @@ exports.getCart = async (userId) => {
         category_id: item.category_id ?? null,
         brand_id: item.brand_id ?? null,
         stockQuantity: item.stock_quantity !== null && item.stock_quantity !== undefined ? parseInt(item.stock_quantity, 10) : null,
+        sizeStock: item.size_stock || {},
         inStock: item.instock ?? true
     }));
 };

@@ -16,8 +16,24 @@ router.get('/', (req, res, next) => {
     return reviewController.getAllReviews(req, res, next);
 });
 
+const uploadController = require('../controllers/uploadController');
+
+const handleReviewUpload = (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('multipart/form-data')) {
+        return uploadController.uploadMiddleware(req, res, (err) => {
+            if (err) {
+                console.error('Multer upload error in review submission:', err);
+                return res.status(400).json({ success: false, message: err.message || 'File upload failed' });
+            }
+            next();
+        });
+    }
+    next();
+};
+
 router.get('/:productId', reviewController.getProductReviews);
-router.post('/', reviewController.addProductReview);
+router.post('/', handleReviewUpload, reviewController.addProductReview);
 router.delete('/:id', protect, authorize('admin', 'super_admin'), checkPermission('reviews'), reviewController.deleteReview);
 
 

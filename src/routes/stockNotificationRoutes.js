@@ -42,6 +42,22 @@ router.patch(
 );
 
 router.post(
+    '/admin/subscriptions/:id/notify',
+    protect,
+    authorize('admin'),
+    checkPermission('stock-notifications'),
+    stockNotificationController.notifySubscription
+);
+
+router.post(
+    '/admin/check-in-stock',
+    protect,
+    authorize('admin'),
+    checkPermission('stock-notifications'),
+    stockNotificationController.checkInStockNow
+);
+
+router.post(
     '/admin/test-restock',
     protect,
     authorize('admin'),
@@ -50,3 +66,4 @@ router.post(
 );
 
 module.exports = router;
+
