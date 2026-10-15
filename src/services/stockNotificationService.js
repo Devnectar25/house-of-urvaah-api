@@ -440,12 +440,12 @@ class StockNotificationService {
             // Mark job as sent
             await pool.query(
                 `UPDATE stock_notification_jobs 
-                 SET status = 'sent', provider_message_id = $2, sent_at = NOW(), delivered_at = NOW(), updated_at = NOW() 
+                 SET status = 'sent', provider_message_id = $2, contact_email = $3, product_id = $4, product_title = $5, sent_at = NOW(), delivered_at = NOW(), updated_at = NOW() 
                  WHERE id = $1`,
-                [job.id, providerMessageId]
+                [job.id, providerMessageId, item.contact_email, item.product_id, item.title]
             );
 
-            // Delete subscription so that the table is cleared / emptied, ensuring it never receives a second email
+            // Delete subscription so that the table is cleared / emptied, ensuring it never receives a second email and user is removed
             await pool.query(
                 `DELETE FROM stock_notification_subscriptions WHERE id = $1`,
                 [job.subscription_id]
@@ -585,6 +585,9 @@ class StockNotificationService {
                 p.title AS product_title,
                 p.image_url,
                 p.stock_quantity,
+                p.stock,
+                p.quantity,
+                p.size_stock,
                 j.id AS job_id,
                 j.status AS job_status,
                 j.attempt_count AS job_attempt_count,
@@ -608,30 +611,44 @@ class StockNotificationService {
             pool.query(dataQuery, [...params, limit, offset])
         ]);
 
-        const items = dataRes.rows.map(r => ({
-            id: r.id,
-            customerId: r.customer_id,
-            productId: r.product_id,
-            productTitle: r.product_title,
-            imageUrl: r.image_url ? storageService.getPublicMediaUrl(r.image_url) : '',
-            size: r.size,
-            color: r.color,
-            contactEmail: r.contact_email,
-            contactPhone: r.contact_phone,
-            channel: r.channel,
-            status: r.status,
-            contactVerified: r.contact_verified,
-            stockQuantity: r.stock_quantity,
-            createdAt: r.created_at,
-            notifiedAt: r.notified_at,
-            cancelledAt: r.cancelled_at,
-            job: r.job_id ? {
-                id: r.job_id,
-                status: r.job_status,
-                attemptCount: r.job_attempt_count,
-                lastError: r.job_last_error
-            } : null
-        }));
+        const items = dataRes.rows.map(r => {
+            const sizeStockObj = r.size_stock && typeof r.size_stock === 'object' ? r.size_stock : {};
+            let currentVariantStock = r.stock_quantity ?? r.quantity ?? r.stock ?? 0;
+            if (r.size && sizeStockObj) {
+                const matchedKey = Object.keys(sizeStockObj).find(k => k.toLowerCase() === r.size.toLowerCase());
+                if (matchedKey && sizeStockObj[matchedKey] !== undefined) {
+                    currentVariantStock = parseInt(sizeStockObj[matchedKey], 10) || 0;
+                }
+            }
+            const isCurrentlyInStock = currentVariantStock > 0 || (r.stock_quantity || 0) > 0;
+
+            return {
+                id: r.id,
+                customerId: r.customer_id,
+                productId: r.product_id,
+                productTitle: r.product_title,
+                imageUrl: r.image_url ? storageService.getPublicMediaUrl(r.image_url) : '',
+                size: r.size,
+                color: r.color,
+                contactEmail: r.contact_email,
+                contactPhone: r.contact_phone,
+                channel: r.channel,
+                status: r.status,
+                contactVerified: r.contact_verified,
+                stockQuantity: r.stock_quantity,
+                currentVariantStock,
+                isCurrentlyInStock,
+                createdAt: r.created_at,
+                notifiedAt: r.notified_at,
+                cancelledAt: r.cancelled_at,
+                job: r.job_id ? {
+                    id: r.job_id,
+                    status: r.job_status,
+                    attemptCount: r.job_attempt_count,
+                    lastError: r.job_last_error
+                } : null
+            };
+        });
 
         return {
             items,
@@ -692,6 +709,157 @@ class StockNotificationService {
             subscription: res.rows[0]
         };
     }
+
+    /**
+     * Admin or System: Directly dispatch stock alert email to a subscriber and remove them from the list
+     */
+    async notifyAndRemoveSubscription(subscriptionId) {
+        const detailsRes = await pool.query(
+            `SELECT s.id AS sub_id, s.contact_email, s.contact_phone, s.size, s.color, s.channel, s.unsubscribe_token,
+                    p.product_id, p.title, p.price, p.image_url, p.images
+             FROM stock_notification_subscriptions s
+             JOIN products p ON p.product_id = s.product_id
+             WHERE s.id = $1`,
+            [subscriptionId]
+        );
+
+        if (detailsRes.rows.length === 0) {
+            throw new Error('Subscription or product not found.');
+        }
+
+        const item = detailsRes.rows[0];
+        const rawImg = item.image_url || (Array.isArray(item.images) && item.images[0]) || '';
+        const mainImgUrl = rawImg ? storageService.getPublicMediaUrl(rawImg) : '';
+        const productUrl = `${CLIENT_URL}/product/${item.product_id}`;
+        const unsubscribeUrl = `${CLIENT_URL}/stock-notifications/unsubscribe?token=${item.unsubscribe_token}`;
+
+        let providerMessageId = null;
+
+        if (item.channel === 'email' || item.channel === 'both' || !item.channel) {
+            if (!item.contact_email) {
+                throw new Error('No email address on file for subscriber');
+            }
+
+            const emailResult = await sendStockAlertEmail({
+                toEmail: item.contact_email,
+                toName: null,
+                productTitle: item.title,
+                productImage: mainImgUrl,
+                productUrl,
+                clientUrl: CLIENT_URL,
+                size: item.size,
+                color: item.color,
+                price: item.price,
+                unsubscribeUrl
+            });
+
+            if (!emailResult.success && emailResult.error && !emailResult.error.includes('logged as mock')) {
+                throw new Error(emailResult.error || 'Failed to dispatch email');
+            }
+
+            providerMessageId = emailResult.data || 'brevo_dispatched';
+        }
+
+        if (item.channel === 'whatsapp' || item.channel === 'both') {
+            console.log(`[StockNotification WhatsApp] Dispatched restock alert to ${item.contact_phone} for ${item.title}`);
+            providerMessageId = providerMessageId ? `${providerMessageId};wa_ok` : 'wa_logged';
+        }
+
+        // Record job entry for tracking
+        await pool.query(
+            `INSERT INTO stock_notification_jobs (
+                subscription_id, channel, status, provider_message_id, contact_email, product_id, product_title, attempt_count, queued_at, sent_at, delivered_at, created_at, updated_at
+             ) VALUES (
+                NULL, $1, 'sent', $2, $3, $4, $5, 1, NOW(), NOW(), NOW(), NOW(), NOW()
+             )`,
+            [item.channel || 'email', providerMessageId, item.contact_email, item.product_id, item.title]
+        );
+
+        // Delete from stock_notification_subscriptions to immediately remove user from the waitlist
+        await pool.query(
+            `DELETE FROM stock_notification_subscriptions WHERE id = $1`,
+            [subscriptionId]
+        );
+
+        console.log(`[StockNotification] Notification successfully sent to ${item.contact_email}. User removed from waitlist.`);
+
+        return {
+            success: true,
+            email: item.contact_email,
+            productTitle: item.title,
+            size: item.size
+        };
+    }
+
+    /**
+     * Automatic Scanner: Checks all active subscriptions against live product stock.
+     * Any subscriber whose item is in stock receives their email alert and is removed from the waitlist.
+     */
+    async checkAndNotifyAllInStockSubscribers() {
+        try {
+            const query = `
+                SELECT s.id, s.product_id, s.size, s.contact_email, s.contact_phone, s.channel,
+                       p.title, p.stock_quantity, p.stock, p.quantity, p.size_stock, p.is_active
+                FROM stock_notification_subscriptions s
+                JOIN products p ON p.product_id = s.product_id
+                WHERE s.status = 'active'
+                  AND p.is_active = true
+            `;
+            const result = await pool.query(query);
+            const inStockSubs = [];
+
+            for (const sub of result.rows) {
+                const totalStock = Math.max(0, parseInt(sub.stock_quantity ?? sub.quantity ?? sub.stock, 10) || 0);
+                let hasStock = totalStock > 0;
+
+                // Check size-specific stock if size is specified
+                if (sub.size && sub.size_stock && typeof sub.size_stock === 'object') {
+                    const sizeKey = Object.keys(sub.size_stock).find(k => k.toLowerCase() === sub.size.toLowerCase());
+                    if (sizeKey !== undefined) {
+                        const sizeQty = parseInt(sub.size_stock[sizeKey], 10);
+                        if (!isNaN(sizeQty)) {
+                            hasStock = sizeQty > 0;
+                        }
+                    }
+                }
+
+                if (hasStock) {
+                    inStockSubs.push(sub);
+                }
+            }
+
+            if (inStockSubs.length === 0) {
+                return { triggered: 0 };
+            }
+
+            console.log(`[StockNotification] Auto-detected ${inStockSubs.length} subscriptions with available stock. Dispatching notifications...`);
+
+            let successCount = 0;
+            for (const sub of inStockSubs) {
+                try {
+                    await this.notifyAndRemoveSubscription(sub.id);
+                    successCount++;
+                } catch (e) {
+                    console.error(`[StockNotification] Failed to notify & remove sub ${sub.id}:`, e.message);
+                }
+            }
+
+            return { triggered: successCount };
+        } catch (err) {
+            console.error('[StockNotification] Error in checkAndNotifyAllInStockSubscribers:', err);
+            return { triggered: 0, error: err.message };
+        }
+    }
 }
+
+// Recurring background check every 3 minutes for any newly available stock
+setInterval(() => {
+    const serviceInstance = require('./stockNotificationService');
+    if (serviceInstance && typeof serviceInstance.checkAndNotifyAllInStockSubscribers === 'function') {
+        serviceInstance.checkAndNotifyAllInStockSubscribers().catch(err => {
+            console.error('[StockNotification Background Scanner Error]:', err.message);
+        });
+    }
+}, 3 * 60 * 1000);
 
 module.exports = new StockNotificationService();

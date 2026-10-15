@@ -664,7 +664,10 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
     }
 
     const { email: recipientEmail, name: recipientName } = await resolveAuthoritativeRecipient(order);
-    const invoiceNumber = `INV-${order.order_number}`;
+    const orderCreatedAt = new Date(order.created_at || Date.now());
+    const invYr = orderCreatedAt.getFullYear();
+    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
+    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
     const idempotencyKey = `invoice:${order.id}:${invoiceNumber}`;
 
     // 1. Check idempotency record
@@ -676,14 +679,14 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
     if (existing.rows.length > 0 && !forceResend) {
       const record = existing.rows[0];
       if (record.status === 'sent') {
-        console.log(`[InvoiceWorkflow] Invoice email already sent for order #${order.order_number}. Skipping duplicate.`);
+        console.log(`[InvoiceWorkflow] Invoice email already sent for invoice ${invoiceNumber} (order #${order.order_number}). Skipping duplicate.`);
         return { success: true, skipped: true, notificationId: record.id, message: 'Already sent' };
       }
     }
 
-    const subject = `Your House of Urvaah Invoice — Order #${order.order_number}`;
+    const subject = `Your House of Urvaah Invoice — ${invoiceNumber}`;
     const secureToken = crypto.randomBytes(32).toString('hex');
-    const attachmentFilename = `HOUSE_OF_URVAAH_INV_${order.order_number}.pdf`;
+    const attachmentFilename = `HOUSE_OF_URVAAH_INVOICE_${invoiceNumber}.pdf`;
 
     // 2. Insert or update notification record to 'pending'
     let notificationId;
@@ -877,6 +880,264 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
 };
 
 // ============================================================================
+// WORKFLOW 4: DELIVERY CONFIRMATION & INVOICE & FEEDBACK EMAIL
+// ============================================================================
+
+/**
+ * Triggers Order Delivery Confirmation Email with Attached PDF Invoice & Product Feedback Links
+ * Eligible: Order or item status is 'Delivered'
+ * Idempotency: order_delivered:${order.id}
+ */
+const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
+  const { forceResend = false } = options;
+
+  try {
+    const order = await fetchOrderDetails(orderId);
+    if (!order) {
+      console.error(`[DeliveryConfirmationWorkflow] Order not found: ${orderId}`);
+      return { success: false, error: 'Order not found' };
+    }
+
+    const { email: recipientEmail, name: recipientName } = await resolveAuthoritativeRecipient(order);
+    const idempotencyKey = `order_delivered:${order.id}`;
+
+    // 1. Check idempotency record
+    const existing = await pool.query(
+      `SELECT * FROM public.email_notifications WHERE idempotency_key = $1`,
+      [idempotencyKey]
+    );
+
+    if (existing.rows.length > 0 && !forceResend) {
+      const record = existing.rows[0];
+      if (record.status === 'sent') {
+        console.log(`[DeliveryConfirmationWorkflow] Delivery confirmation email already sent for order #${order.order_number}. Skipping duplicate.`);
+        return { success: true, skipped: true, notificationId: record.id, message: 'Already sent' };
+      }
+    }
+
+    const orderCreatedAt = new Date(order.created_at || Date.now());
+    const invYr = orderCreatedAt.getFullYear();
+    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
+    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
+    const attachmentFilename = `HOUSE_OF_URVAAH_INVOICE_${invoiceNumber}.pdf`;
+    const subject = `Delivered: Your House of Urvaah Order #${order.order_number} has arrived`;
+
+    // 2. Generate PDF Invoice Buffer via invoiceService
+    let pdfBuffer = null;
+    try {
+      console.log(`[DeliveryConfirmationWorkflow] Generating PDF invoice for Order #${order.order_number}...`);
+      pdfBuffer = await invoiceService.generateInvoicePDF(order.id);
+      console.log(`[DeliveryConfirmationWorkflow] PDF invoice generated successfully (${pdfBuffer.length} bytes).`);
+    } catch (pdfErr) {
+      console.warn(`[DeliveryConfirmationWorkflow] PDF generation warning: ${pdfErr.message}. Email dispatch will proceed.`);
+    }
+
+    // 3. Insert or update notification record to 'pending'
+    let notificationId;
+    if (existing.rows.length > 0) {
+      notificationId = existing.rows[0].id;
+      await pool.query(
+        `UPDATE public.email_notifications 
+         SET status = 'pending', attempt_count = attempt_count + 1, updated_at = NOW() 
+         WHERE id = $1`,
+        [notificationId]
+      );
+    } else {
+      const insertRes = await pool.query(
+        `INSERT INTO public.email_notifications (
+          workflow_type, order_id, order_number, invoice_number, customer_id, recipient_email, recipient_name,
+          subject, event_type, status, has_attachment, attachment_name, idempotency_key, metadata, created_at, updated_at
+        ) VALUES (
+          'DELIVERY_CONFIRMATION', $1, $2, $3, $4, $5, $6,
+          $7, 'ORDER_DELIVERED', 'pending', $8, $9, $10, $11, NOW(), NOW()
+        ) RETURNING id`,
+        [
+          order.id,
+          order.order_number,
+          invoiceNumber,
+          order.user_id,
+          recipientEmail,
+          recipientName,
+          subject,
+          Boolean(pdfBuffer),
+          attachmentFilename,
+          idempotencyKey,
+          JSON.stringify({ total: order.total, itemCount: (order.items || []).length })
+        ]
+      );
+      notificationId = insertRes.rows[0].id;
+    }
+
+    // 4. Compile Product Feedback Cards and Links
+    const items = order.items || [];
+    const itemsHtml = items.map((item) => {
+      const prodId = item.product_id || item.productId || item.id;
+      const feedbackUrl = `${FRONTEND_URL}/product/${prodId}?openReview=true#customer-reviews`;
+      const itemPrice = parseFloat(item.price || 0);
+      const itemQty = parseInt(item.quantity || 1, 10);
+      const variantText = item.size ? `Size: ${item.size}` : '';
+
+      return `
+        <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px; margin-bottom: 14px; font-family: 'Helvetica Neue', Arial, sans-serif;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="vertical-align: middle;">
+                <div style="font-weight: 600; color: #111111; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1.4;">
+                  ${item.name || item.title || 'Atelier Creation'}
+                </div>
+                ${variantText ? `<div style="font-size: 11px; color: #777777; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.1em;">${variantText} &bull; Qty: ${itemQty}</div>` : `<div style="font-size: 11px; color: #777777; margin-top: 3px;">Qty: ${itemQty}</div>`}
+                <div style="font-size: 12px; font-weight: 600; color: #111111; margin-top: 4px;">
+                  ${formatINR(itemPrice * itemQty)}
+                </div>
+              </td>
+              <td style="text-align: right; vertical-align: middle; padding-left: 15px;">
+                <a href="${feedbackUrl}" style="background-color: #111111; color: #ffffff !important; padding: 10px 18px; text-decoration: none; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; display: inline-block; white-space: nowrap;">
+                  ★ GIVE FEEDBACK
+                </a>
+              </td>
+            </tr>
+          </table>
+        </div>
+      `;
+    }).join('');
+
+    const deliveryDate = new Date().toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+
+    const accountUrl = `${FRONTEND_URL}/account`;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${subject}</title>
+      </head>
+      <body style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
+        <div style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px;">
+          
+          <!-- Header -->
+          <div style="text-align: center; border-bottom: 1px solid #EAE6DF; padding-bottom: 25px; margin-bottom: 30px;">
+            <div style="font-size: 24px; letter-spacing: 0.25em; text-transform: uppercase; font-weight: 400; color: #111111;">
+              HOUSE OF URVAAH
+            </div>
+            <div style="font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #777777; margin-top: 8px;">
+              DELIVERY CONFIRMATION &bull; CONCIERGE DESK
+            </div>
+          </div>
+
+          <!-- Status Badge -->
+          <div style="text-align: center; margin-bottom: 20px;">
+            <span style="display: inline-block; background-color: #ECFDF5; border: 1px solid #A7F3D0; color: #065F46; font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; padding: 7px 20px; font-family: 'Helvetica Neue', Arial, sans-serif;">
+              ✓ DELIVERED SUCCESSFULLY
+            </span>
+          </div>
+
+          <!-- Greeting -->
+          <div style="margin-bottom: 25px;">
+            <div style="font-size: 17px; font-weight: 400; margin-bottom: 10px; color: #111111;">
+              Dear ${recipientName},
+            </div>
+            <p style="font-size: 13px; line-height: 1.8; color: #4A4A4A; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0;">
+              We are delighted to confirm that your House of Urvaah order <strong>#${order.order_number}</strong> has been successfully delivered on <strong>${deliveryDate}</strong>.
+            </p>
+            <p style="font-size: 13px; line-height: 1.8; color: #4A4A4A; font-family: 'Helvetica Neue', Arial, sans-serif; margin-top: 10px;">
+              We hope your atelier creation brings you timeless confidence and elegance.
+            </p>
+          </div>
+
+          <!-- Share Your Feedback Section -->
+          <div style="margin: 30px 0 25px 0;">
+            <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #111111; margin-bottom: 8px; font-family: 'Helvetica Neue', Arial, sans-serif;">
+              HOW WAS YOUR EXPERIENCE?
+            </div>
+            <p style="font-size: 12px; color: #666666; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0 0 16px 0; line-height: 1.6;">
+              Your thoughts inspire our craftsmanship. Please take a moment to rate your delivered piece and share your fit impressions.
+            </p>
+            ${itemsHtml}
+          </div>
+
+          <!-- Invoice Attachment Notice Card -->
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin: 25px 0; font-family: 'Helvetica Neue', Arial, sans-serif;">
+            <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #111111; margin-bottom: 8px;">
+              OFFICIAL TAX INVOICE ATTACHED
+            </div>
+            <p style="font-size: 12px; color: #555555; line-height: 1.6; margin: 0 0 12px 0;">
+              Your official Tax Invoice <strong>#${invoiceNumber}</strong> is attached to this email as a PDF document (<code>${attachmentFilename}</code>) for your records.
+            </p>
+            <div style="font-size: 11px; color: #777777;">
+              Order Total: <strong style="color: #111111;">${formatINR(order.total)}</strong> &bull; Date: ${deliveryDate}
+            </div>
+          </div>
+
+          <!-- Account Access CTA -->
+          <div style="text-align: center; margin: 30px 0 15px 0;">
+            <a href="${accountUrl}" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+              MANAGE ORDER IN ATELIER ACCOUNT
+            </a>
+          </div>
+
+          <!-- Footer -->
+          <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
+            HOUSE OF URVAAH &bull; BESPOKE LUXURY ATELIER<br/>
+            KALA GHODA ARTS DISTRICT &bull; COLABA CAUSEWAY, MUMBAI<br/>
+            For concierge assistance, reach us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
+          </div>
+
+        </div>
+      </body>
+      </html>
+    `;
+
+    // 5. Dispatch Email with PDF attachment (if generated)
+    const emailAttachments = [];
+    if (pdfBuffer) {
+      emailAttachments.push({
+        filename: attachmentFilename,
+        name: attachmentFilename,
+        content: pdfBuffer,
+        contentType: 'application/pdf'
+      });
+    }
+
+    const dispatchRes = await sendBrevoEmail({
+      toEmail: recipientEmail,
+      toName: recipientName,
+      subject,
+      htmlContent,
+      attachments: emailAttachments
+    });
+
+    if (dispatchRes.success) {
+      await pool.query(
+        `UPDATE public.email_notifications 
+         SET status = 'sent', provider_message_id = $1, sent_at = NOW(), updated_at = NOW() 
+         WHERE id = $2`,
+        [dispatchRes.data || null, notificationId]
+      );
+      console.log(`[DeliveryConfirmationWorkflow] Dispatched successfully to ${recipientEmail} for order #${order.order_number}`);
+      return { success: true, notificationId, recipient: recipientEmail, invoiceNumber };
+    } else {
+      await pool.query(
+        `UPDATE public.email_notifications 
+         SET status = 'failed', error_message = $1, updated_at = NOW() 
+         WHERE id = $2`,
+        [String(dispatchRes.error || 'Provider dispatch failed'), notificationId]
+      );
+      return { success: false, error: dispatchRes.error, notificationId };
+    }
+
+  } catch (err) {
+    console.error(`[DeliveryConfirmationWorkflow Error]:`, err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+// ============================================================================
 // ADMIN ACTIONS & QUERY UTILITIES
 // ============================================================================
 
@@ -915,6 +1176,8 @@ const retryNotification = async (notificationId) => {
     );
   } else if (record.workflow_type === 'INVOICE') {
     return await sendInvoiceWorkflow(record.order_id, { forceResend: true });
+  } else if (record.workflow_type === 'DELIVERY_CONFIRMATION') {
+    return await sendDeliveryConfirmationWorkflow(record.order_id, { forceResend: true });
   } else {
     throw new Error(`Unknown workflow type: ${record.workflow_type}`);
   }
@@ -998,6 +1261,7 @@ const getEmailNotificationStats = async () => {
       COUNT(*) FILTER (WHERE workflow_type = 'ORDER_CONFIRMATION') as order_confirmations,
       COUNT(*) FILTER (WHERE workflow_type = 'PAYMENT_STATUS') as payment_updates,
       COUNT(*) FILTER (WHERE workflow_type = 'INVOICE') as invoice_emails,
+      COUNT(*) FILTER (WHERE workflow_type = 'DELIVERY_CONFIRMATION') as delivery_confirmations,
       COUNT(*) FILTER (WHERE status = 'sent') as sent_count,
       COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
       COUNT(*) FILTER (WHERE status = 'pending') as pending_count
@@ -1038,6 +1302,7 @@ module.exports = {
   sendOrderConfirmationWorkflow,
   sendPaymentStatusWorkflow,
   sendInvoiceWorkflow,
+  sendDeliveryConfirmationWorkflow,
   retryNotification,
   getEmailNotifications,
   getEmailNotificationStats,

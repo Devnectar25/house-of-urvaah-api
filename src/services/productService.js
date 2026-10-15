@@ -108,10 +108,43 @@ const mapProduct = (p) => {
             ? Number(p.stock_quantity)
             : (p.quantity !== undefined && p.quantity !== null ? Number(p.quantity) : (p.stock !== undefined && p.stock !== null ? Number(p.stock) : 0));
 
+        let parsedSizeStock = p.size_stock || p.sizestock || {};
+        if (typeof parsedSizeStock === 'string') {
+            try { parsedSizeStock = JSON.parse(parsedSizeStock); } catch (e) { parsedSizeStock = {}; }
+        }
+        if (!parsedSizeStock || typeof parsedSizeStock !== 'object') parsedSizeStock = {};
+
+        const rawSizes = Array.isArray(p.sizes) ? p.sizes : (typeof p.sizes === 'string' ? [p.sizes] : ['XS', 'S', 'M', 'L']);
+        const normalizedSizeStock = {};
+        if (rawSizes.length > 0) {
+            rawSizes.forEach(sz => {
+                const key = String(sz).trim();
+                if (parsedSizeStock[key] !== undefined && parsedSizeStock[key] !== null) {
+                    normalizedSizeStock[key] = Math.max(0, parseInt(parsedSizeStock[key], 10) || 0);
+                } else {
+                    const found = Object.keys(parsedSizeStock).find(k => k.trim().toUpperCase() === key.toUpperCase());
+                    if (found !== undefined) {
+                        normalizedSizeStock[key] = Math.max(0, parseInt(parsedSizeStock[found], 10) || 0);
+                    } else {
+                        normalizedSizeStock[key] = 0;
+                    }
+                }
+            });
+        }
+        Object.keys(parsedSizeStock).forEach(k => {
+            if (normalizedSizeStock[k] === undefined) {
+                normalizedSizeStock[k] = Math.max(0, parseInt(parsedSizeStock[k], 10) || 0);
+            }
+        });
+
+        const hasConfiguredSizes = Object.keys(normalizedSizeStock).length > 0;
+        const sumSizeStock = Object.values(normalizedSizeStock).reduce((acc, v) => acc + v, 0);
+        const finalStockQty = hasConfiguredSizes ? sumSizeStock : qtyVal;
+
         const isActive = p.active !== false && p.is_active !== false;
         const computedInStock = isActive && (
-            qtyVal > 0 || (p.instock === true && qtyVal >= 0)
-        ) && qtyVal !== 0;
+            finalStockQty > 0 || (p.instock === true && finalStockQty >= 0)
+        ) && finalStockQty !== 0;
 
         return {
             id: p.product_id?.toString() || p.id?.toString() || '',
@@ -138,9 +171,11 @@ const mapProduct = (p) => {
             images: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
             inStock: computedInStock,
             instock: computedInStock,
-            stockQuantity: qtyVal,
-            quantity: qtyVal,
-            stock: qtyVal,
+            stockQuantity: finalStockQty,
+            quantity: finalStockQty,
+            stock: finalStockQty,
+            sizeStock: normalizedSizeStock,
+            size_stock: normalizedSizeStock,
         benefits: p.benefits,
         ingredients: p.ingredients,
         usage: p.usage,
@@ -193,7 +228,7 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
     }
 
     if (search) {
-        whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx})`);
+        whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx} OR sc.name ILIKE $${paramIdx} OR p.style_code ILIKE $${paramIdx} OR b.name ILIKE $${paramIdx} OR p.brand ILIKE $${paramIdx})`);
         params.push(`%${search}%`);
         paramIdx++;
     }
@@ -224,7 +259,7 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countQuery = `SELECT COUNT(*) FROM products p LEFT JOIN category c ON p.category_id = c.category_id LEFT JOIN brand b ON (p.brand_id = b.brand_id OR p.brand = b.name OR p.brand = b.brand_id::text) ${whereString}`;
+        const countQuery = `SELECT COUNT(*) FROM products p LEFT JOIN category c ON p.category_id = c.category_id LEFT JOIN brand b ON (p.brand_id = b.brand_id OR p.brand = b.name OR p.brand = b.brand_id::text) LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno ${whereString}`;
         const countResult = await pool.query(countQuery, params);
         const total = parseInt(countResult.rows[0].count);
 
@@ -579,6 +614,23 @@ exports.createProduct = async (product) => {
     if (!Array.isArray(prodDetailsVal)) prodDetailsVal = [];
 
     const cleanSizes = filterValidSizes(Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L']);
+    let sizeStockVal = product.sizeStock || product.size_stock || null;
+    if (typeof sizeStockVal === 'string') {
+        try { sizeStockVal = JSON.parse(sizeStockVal); } catch(e) { sizeStockVal = null; }
+    }
+    if (sizeStockVal && typeof sizeStockVal === 'object') {
+        const sumSS = Object.values(sizeStockVal).reduce((acc, v) => acc + (Math.max(0, parseInt(v, 10)) || 0), 0);
+        if (product.stockQuantity === undefined && stock_quantity === undefined) {
+            stockQty = sumSS;
+        }
+    } else if (cleanSizes.length > 0) {
+        // Automatically initialize size_stock distributed across sizes
+        sizeStockVal = {};
+        cleanSizes.forEach(sz => {
+            sizeStockVal[sz] = stockQty > 0 ? Math.floor(stockQty / cleanSizes.length) : 0;
+        });
+    }
+
     const initialInStock = activeVal !== false && (
         product.instock !== undefined
             ? Boolean(product.instock)
@@ -587,8 +639,8 @@ exports.createProduct = async (product) => {
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
@@ -598,7 +650,8 @@ exports.createProduct = async (product) => {
             fabric || '', fit_type || '', careInst, style_code || '', parsedSubcatId,
             JSON.stringify(specsVal),
             JSON.stringify(nameOptsVal),
-            JSON.stringify(prodDetailsVal)
+            JSON.stringify(prodDetailsVal),
+            JSON.stringify(sizeStockVal || {})
         ]
     );
     return mapProduct(result.rows[0]);
@@ -629,9 +682,22 @@ exports.updateProduct = async (id, product) => {
         : (image_url || image ? [image_url || image] : undefined);
     const imgUrl = imgList && imgList.length > 0 ? imgList[0] : (image_url || image);
     const isFeatured = promoted !== undefined ? promoted : is_featured;
-    const stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
+    let stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
         ? parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock)
         : undefined;
+
+    let sizeStockParam = undefined;
+    if (product.sizeStock !== undefined || product.size_stock !== undefined) {
+        let rawSS = product.sizeStock !== undefined ? product.sizeStock : product.size_stock;
+        if (typeof rawSS === 'string') {
+            try { rawSS = JSON.parse(rawSS); } catch(e) { rawSS = {}; }
+        }
+        if (rawSS && typeof rawSS === 'object') {
+            sizeStockParam = JSON.stringify(rawSS);
+            const sumSS = Object.values(rawSS).reduce((acc, v) => acc + (Math.max(0, parseInt(v, 10)) || 0), 0);
+            stockQty = sumSS;
+        }
+    }
 
     const explicitInStock = instock !== undefined
         ? Boolean(instock)
@@ -712,6 +778,7 @@ exports.updateProduct = async (id, product) => {
             specifications = COALESCE($23::jsonb, specifications),
             name_options = COALESCE($24::jsonb, name_options),
             product_details = COALESCE($25::jsonb, product_details),
+            size_stock = COALESCE($27::jsonb, size_stock),
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
@@ -741,7 +808,8 @@ exports.updateProduct = async (id, product) => {
             specsVal !== undefined ? JSON.stringify(specsVal) : null,
             nameOptsVal !== undefined ? JSON.stringify(nameOptsVal) : null,
             prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null,
-            inStockVal !== undefined ? inStockVal : null
+            inStockVal !== undefined ? inStockVal : null,
+            sizeStockParam !== undefined ? sizeStockParam : null
         ]
     );
 
@@ -752,18 +820,12 @@ exports.updateProduct = async (id, product) => {
             : (updatedRow.stock_quantity ?? updatedRow.quantity ?? 0);
 
         if (newStock > 0) {
-            const subCheck = await pool.query(
-                "SELECT COUNT(*)::int AS count FROM stock_notification_subscriptions WHERE (product_id = $1 OR product_id = 103 OR product_id = 106) AND status = 'active'",
-                [updatedRow.product_id]
-            );
-            if (subCheck.rows[0]?.count > 0 || (previousStock !== null && previousStock <= 0)) {
-                stockNotificationService.triggerRestockEvent({
-                    productId: updatedRow.product_id,
-                    previousStock: previousStock ?? 0,
-                    newStock,
-                    size: null
-                }).catch(err => console.error('[RestockTrigger Error]:', err));
-            }
+            stockNotificationService.triggerRestockEvent({
+                productId: updatedRow.product_id,
+                previousStock: previousStock ?? 0,
+                newStock,
+                size: null
+            }).catch(err => console.error('[RestockTrigger Error]:', err));
         }
     }
 

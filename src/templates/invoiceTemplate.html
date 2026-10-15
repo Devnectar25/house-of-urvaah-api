@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tax Invoice - House of Urvaah - #{{orderNumber}}</title>
+    <title>Tax Invoice - House of Urvaah - {{invoiceNumber}}</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,400;1,500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 
@@ -15,33 +15,33 @@
 
         @page {
             size: A4 portrait;
-            margin: 7mm 9mm;
+            margin: 8mm 10mm;
         }
 
         html, body {
             margin: 0;
             padding: 0;
-            background-color: #ffffff;
+            background-color: #f7f5f0;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
         }
 
         body {
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            color: #1a1a1a;
-            font-size: 10.5px;
-            line-height: 1.4;
-            background-color: #f7f6f2;
+            color: #1a1816;
+            font-size: 11px;
+            line-height: 1.5;
+            background-color: #f7f5f0;
             padding: 16px;
         }
 
         /* Interactive browser print toolbar (hidden in print & PDF) */
         .no-print-toolbar {
-            max-width: 820px;
-            margin: 0 auto 12px auto;
-            background: #111111;
+            max-width: 860px;
+            margin: 0 auto 14px auto;
+            background: #141414;
             color: #ffffff;
-            padding: 10px 18px;
+            padding: 12px 20px;
             border-radius: 6px;
             display: flex;
             align-items: center;
@@ -52,23 +52,23 @@
         .toolbar-brand {
             font-family: 'Cinzel', serif;
             font-size: 12px;
-            letter-spacing: 0.15em;
+            letter-spacing: 0.18em;
             color: #e5cfab;
-            font-weight: 600;
+            font-weight: 700;
         }
 
         .toolbar-actions {
             display: flex;
-            gap: 8px;
+            gap: 10px;
         }
 
         .toolbar-btn {
-            background: #C5A880;
-            color: #111111;
+            background: #c5a880;
+            color: #141414;
             border: none;
-            padding: 6px 14px;
+            padding: 7px 16px;
             font-family: 'Plus Jakarta Sans', sans-serif;
-            font-size: 10.5px;
+            font-size: 11px;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -77,11 +77,11 @@
             transition: all 0.2s;
             display: inline-flex;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
         }
 
         .toolbar-btn:hover {
-            background: #d9be99;
+            background: #d8be9a;
         }
 
         .toolbar-btn-secondary {
@@ -94,16 +94,18 @@
             background: rgba(255,255,255,0.2);
         }
 
-        /* Invoice Container */
+        /* Main Invoice Container */
         .invoice-wrapper {
-            max-width: 820px;
+            max-width: 860px;
+            width: 100%;
             margin: 0 auto;
             background: #ffffff;
-            border: 1px solid #e5dfd5;
+            border: 1px solid #dfd7cb;
             position: relative;
-            padding: 22px 26px;
+            padding: 28px 32px;
             border-radius: 4px;
             box-sizing: border-box;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
             page-break-inside: avoid;
             break-inside: avoid;
         }
@@ -112,11 +114,11 @@
         .invoice-wrapper::before {
             content: '';
             position: absolute;
-            top: 6px;
-            left: 6px;
-            right: 6px;
-            bottom: 6px;
-            border: 1px solid rgba(197, 168, 128, 0.35);
+            top: 7px;
+            left: 7px;
+            right: 7px;
+            bottom: 7px;
+            border: 1px solid rgba(197, 168, 128, 0.4);
             pointer-events: none;
             border-radius: 2px;
         }
@@ -127,8 +129,8 @@
             justify-content: space-between;
             align-items: center;
             padding-top: 4px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #111111;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #141414;
             position: relative;
         }
 
@@ -136,12 +138,12 @@
             display: flex;
             flex-direction: column;
             align-items: flex-start;
-            gap: 2px;
+            gap: 3px;
         }
 
         .logo-image {
-            height: 58px;
-            max-width: 240px;
+            height: 60px;
+            max-width: 250px;
             object-fit: contain;
             object-position: left center;
             display: block;
@@ -149,22 +151,22 @@
 
         .brand-fallback-title {
             font-family: 'Cinzel', Georgia, serif;
-            font-size: 20px;
+            font-size: 24px;
             font-weight: 700;
-            letter-spacing: 0.16em;
-            color: #111111;
+            letter-spacing: 0.18em;
+            color: #141414;
             text-transform: uppercase;
             line-height: 1.1;
         }
 
         .brand-subtitle {
             font-family: 'Cinzel', serif;
-            font-size: 7.5px;
-            letter-spacing: 0.24em;
+            font-size: 8.5px;
+            letter-spacing: 0.28em;
             color: #8c734b;
             text-transform: uppercase;
             font-weight: 600;
-            margin-top: 2px;
+            margin-top: 3px;
         }
 
         .invoice-badge-block {
@@ -173,35 +175,35 @@
 
         .tax-invoice-title {
             font-family: 'Cinzel', serif;
-            font-size: 20px;
+            font-size: 24px;
             font-weight: 700;
-            letter-spacing: 0.12em;
-            color: #111111;
+            letter-spacing: 0.14em;
+            color: #141414;
             text-transform: uppercase;
             line-height: 1;
         }
 
         .tax-invoice-sub {
-            font-size: 8.5px;
-            letter-spacing: 0.14em;
+            font-size: 9.5px;
+            letter-spacing: 0.16em;
             text-transform: uppercase;
-            color: #777777;
-            margin-top: 3px;
+            color: #736d65;
+            margin-top: 4px;
         }
 
         .status-pill {
             display: inline-block;
-            margin-top: 5px;
-            padding: 2.5px 9px;
-            font-size: 8.5px;
+            margin-top: 6px;
+            padding: 3px 11px;
+            font-size: 9px;
             font-weight: 700;
-            letter-spacing: 0.12em;
+            letter-spacing: 0.14em;
             text-transform: uppercase;
             border-radius: 20px;
         }
 
         .status-paid {
-            background: #111111;
+            background: #141414;
             color: #e5cfab;
             border: 1px solid #c5a880;
         }
@@ -215,13 +217,13 @@
         /* Metadata Banner */
         .meta-strip {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
             background: #faf8f5;
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 8px 12px;
-            margin: 10px 0;
+            border: 1px solid #eae3d8;
+            border-radius: 4px;
+            padding: 12px 16px;
+            margin: 16px 0;
         }
 
         .meta-item {
@@ -230,18 +232,19 @@
         }
 
         .meta-label {
-            font-size: 7.5px;
-            letter-spacing: 0.14em;
+            font-size: 8.5px;
+            letter-spacing: 0.18em;
             text-transform: uppercase;
-            color: #8a8278;
-            font-weight: 600;
-            margin-bottom: 2px;
+            color: #8c734b;
+            font-weight: 700;
+            margin-bottom: 3px;
+            font-family: 'Cinzel', serif;
         }
 
         .meta-value {
-            font-size: 10.5px;
+            font-size: 12px;
             font-weight: 700;
-            color: #111111;
+            color: #141414;
             letter-spacing: 0.02em;
         }
 
@@ -249,15 +252,15 @@
         .dossier-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 10px;
+            gap: 16px;
+            margin-bottom: 16px;
         }
 
         .dossier-card {
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 9px 12px;
-            background: #ffffff;
+            border: 1px solid #eae3d8;
+            border-radius: 4px;
+            padding: 14px 16px;
+            background: #fcfbfa;
         }
 
         .dossier-card-header {
@@ -265,73 +268,73 @@
             justify-content: space-between;
             align-items: center;
             font-family: 'Cinzel', serif;
-            font-size: 7.5px;
-            letter-spacing: 0.16em;
+            font-size: 8.5px;
+            letter-spacing: 0.18em;
             text-transform: uppercase;
             color: #8c734b;
             font-weight: 700;
-            padding-bottom: 4px;
-            margin-bottom: 5px;
-            border-bottom: 1px solid #f2ece4;
+            padding-bottom: 6px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #efe8df;
         }
 
         .dossier-name {
             font-family: 'Cinzel', serif;
-            font-size: 11px;
+            font-size: 12.5px;
             font-weight: 700;
-            color: #111111;
-            letter-spacing: 0.06em;
+            color: #141414;
+            letter-spacing: 0.05em;
             text-transform: uppercase;
-            margin-bottom: 3px;
+            margin-bottom: 4px;
         }
 
         .dossier-body {
-            font-size: 9.5px;
-            color: #4a4a4a;
-            line-height: 1.4;
+            font-size: 10.5px;
+            color: #4a4641;
+            line-height: 1.55;
         }
 
         .dossier-detail-row {
-            margin-top: 3px;
-            padding-top: 3px;
-            border-top: 1px dashed #eee8df;
-            font-size: 9px;
-            color: #666666;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px dashed #e2dad0;
+            font-size: 10px;
+            color: #66615b;
         }
 
         /* Items Table */
         .table-container {
-            margin-bottom: 10px;
-            border: 1px solid #111111;
-            border-radius: 2px;
+            margin-bottom: 18px;
+            border: 1.5px solid #141414;
+            border-radius: 4px;
             overflow: hidden;
         }
 
         .items-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 10px;
+            font-size: 11px;
         }
 
         .items-table thead th {
-            background: #111111;
-            color: #ffffff;
+            background: #141414;
+            color: #f7f4ee;
             font-family: 'Cinzel', serif;
-            font-size: 8px;
-            letter-spacing: 0.12em;
+            font-size: 9px;
+            letter-spacing: 0.15em;
             text-transform: uppercase;
             font-weight: 700;
-            padding: 6px 8px;
+            padding: 10px 12px;
             text-align: left;
             border: none;
         }
 
         .items-table tbody tr {
-            border-bottom: 1px solid #eee8df;
+            border-bottom: 1px solid #eae3d8;
         }
 
         .items-table tbody tr:nth-child(even) {
-            background-color: #faf9f6;
+            background-color: #faf8f5;
         }
 
         .items-table tbody tr:last-child {
@@ -339,9 +342,9 @@
         }
 
         .items-table tbody td {
-            padding: 6px 8px;
+            padding: 11px 12px;
             vertical-align: middle;
-            color: #222222;
+            color: #22201d;
         }
 
         .text-center {
@@ -354,119 +357,87 @@
 
         .item-main-title {
             font-weight: 700;
-            color: #111111;
-            letter-spacing: 0.02em;
+            color: #141414;
+            letter-spacing: 0.03em;
             text-transform: uppercase;
-            font-size: 10px;
+            font-size: 11px;
         }
 
         .item-specs {
-            font-size: 8.5px;
-            color: #777777;
+            font-size: 9.5px;
+            color: #736d65;
             letter-spacing: 0.02em;
-            margin-top: 1px;
+            margin-top: 2px;
         }
 
         /* Ledger & Financial Breakdown */
         .ledger-container {
             display: grid;
             grid-template-columns: 1.15fr 0.85fr;
-            gap: 12px;
-            margin-top: 8px;
+            gap: 16px;
+            margin-top: 12px;
+            margin-bottom: 16px;
         }
 
         .ledger-left-box {
             display: flex;
             flex-direction: column;
-            gap: 7px;
+            gap: 10px;
         }
 
         .words-box {
             background: #faf8f5;
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 7px 10px;
+            border: 1px solid #eae3d8;
+            border-left: 3.5px solid #c5a880;
+            border-radius: 4px;
+            padding: 11px 14px;
         }
 
         .words-label {
-            font-size: 7.5px;
-            letter-spacing: 0.14em;
+            font-size: 8.5px;
+            letter-spacing: 0.16em;
             text-transform: uppercase;
             color: #8c734b;
             font-weight: 700;
-            margin-bottom: 2px;
+            margin-bottom: 3px;
             font-family: 'Cinzel', serif;
         }
 
         .words-text {
-            font-size: 9.5px;
+            font-family: 'Playfair Display', serif;
+            font-style: italic;
+            font-size: 12px;
             font-weight: 700;
-            color: #111111;
-            line-height: 1.35;
-        }
-
-        .tax-summary-box {
-            background: #ffffff;
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 7px 10px;
-        }
-
-        .tax-summary-title {
-            font-family: 'Cinzel', serif;
-            font-size: 7.5px;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: #8c734b;
-            font-weight: 700;
-            padding-bottom: 3px;
-            margin-bottom: 4px;
-            border-bottom: 1px solid #f2ece4;
-        }
-
-        .tax-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 9px;
-            color: #555555;
-        }
-
-        .tax-table td {
-            padding: 2px 0;
-        }
-
-        .tax-table td.amount {
-            text-align: right;
-            font-weight: 600;
-            color: #111111;
+            color: #141414;
+            line-height: 1.4;
         }
 
         .bank-details-box {
-            background: #faf8f5;
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 6px 10px;
-            font-size: 8px;
-            color: #555555;
-            line-height: 1.35;
+            background: #fcfbfa;
+            border: 1px dashed #ded6cb;
+            border-radius: 4px;
+            padding: 10px 14px;
+            font-size: 9.5px;
+            color: #55524d;
+            line-height: 1.5;
         }
 
         .bank-title {
             font-family: 'Cinzel', serif;
-            font-size: 7.5px;
-            letter-spacing: 0.12em;
+            font-size: 8.5px;
+            letter-spacing: 0.15em;
             text-transform: uppercase;
             color: #8c734b;
             font-weight: 700;
-            margin-bottom: 2px;
+            margin-bottom: 4px;
         }
 
         /* Right Column: Itemized Summary & Grand Total */
         .ledger-right-card {
-            background: #faf8f5;
-            border: 1px solid #eee8df;
-            border-radius: 3px;
-            padding: 8px 12px;
+            background: #ffffff;
+            border: 1px solid #eae3d8;
+            border-radius: 4px;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -475,40 +446,40 @@
         .ledger-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 9.5px;
+            font-size: 11px;
         }
 
         .ledger-table tr td {
-            padding: 3.5px 0;
-            color: #4a4a4a;
+            padding: 8px 12px;
+            color: #4a4641;
+            border-bottom: 1px solid #f2ede5;
         }
 
         .ledger-table tr td:last-child {
             text-align: right;
-            font-weight: 600;
-            color: #111111;
+            font-weight: 700;
+            color: #141414;
         }
 
         .ledger-table .discount-row td {
             color: #047857 !important;
-            font-weight: 600;
+            font-weight: 700;
         }
 
         .grand-total-row {
-            background: #111111;
-            margin-top: 6px;
+            background: #141414;
         }
 
         .grand-total-row td {
-            padding: 7px 8px !important;
+            padding: 12px 14px !important;
             color: #ffffff !important;
             border-bottom: none !important;
         }
 
         .grand-total-label {
             font-family: 'Cinzel', serif;
-            font-size: 9.5px;
-            letter-spacing: 0.14em;
+            font-size: 11px;
+            letter-spacing: 0.18em;
             text-transform: uppercase;
             color: #e5cfab;
             font-weight: 700;
@@ -516,18 +487,20 @@
         }
 
         .grand-total-sub {
-            font-size: 7px;
-            letter-spacing: 0.1em;
-            color: #a39c91;
+            font-size: 8px;
+            letter-spacing: 0.12em;
+            color: #b0a99e;
             text-transform: uppercase;
+            margin-top: 2px;
+            display: block;
         }
 
         .grand-total-amount {
             font-family: 'Cinzel', Georgia, serif;
-            font-size: 15px;
+            font-size: 18px;
             font-weight: 700;
             color: #ffffff;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.05em;
             text-align: right;
         }
 
@@ -535,46 +508,48 @@
         .auth-grid {
             display: grid;
             grid-template-columns: 1.2fr 0.8fr;
-            gap: 14px;
-            margin-top: 10px;
-            padding-top: 8px;
-            border-top: 1px solid #eee8df;
+            gap: 16px;
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid #eae3d8;
             align-items: center;
         }
 
         .seal-block {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
         .seal-crest {
-            width: 34px;
-            height: 34px;
-            border: 1.5px solid #c5a880;
+            width: 40px;
+            height: 40px;
+            border: 2px solid #c5a880;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-family: 'Cinzel', serif;
-            font-size: 13px;
+            font-size: 16px;
             font-weight: 700;
-            color: #c5a880;
+            color: #8c734b;
             background: #faf8f5;
             flex-shrink: 0;
         }
 
         .seal-text {
-            font-size: 8px;
-            color: #666666;
-            line-height: 1.35;
+            font-size: 9.5px;
+            color: #66615b;
+            line-height: 1.45;
         }
 
         .seal-text strong {
-            color: #111111;
+            color: #141414;
             font-family: 'Cinzel', serif;
-            letter-spacing: 0.06em;
-            font-size: 8px;
+            letter-spacing: 0.08em;
+            font-size: 9px;
+            display: block;
+            margin-bottom: 1px;
         }
 
         .signature-block {
@@ -583,10 +558,10 @@
 
         .signature-for {
             font-family: 'Cinzel', serif;
-            font-size: 8px;
-            letter-spacing: 0.14em;
+            font-size: 9px;
+            letter-spacing: 0.16em;
             text-transform: uppercase;
-            color: #8a8278;
+            color: #8c734b;
             font-weight: 600;
             margin-bottom: 2px;
         }
@@ -594,72 +569,50 @@
         .digital-sign-script {
             font-family: 'Playfair Display', cursive, serif;
             font-style: italic;
-            font-size: 16px;
-            color: #111111;
-            letter-spacing: 0.04em;
+            font-size: 19px;
+            color: #141414;
+            letter-spacing: 0.03em;
             line-height: 1.2;
-            padding: 2px 0;
+            padding: 3px 0;
         }
 
         .signature-title {
-            font-size: 7.5px;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: #666666;
-            font-weight: 700;
-            border-top: 1px solid #e0dad0;
-            padding-top: 2px;
-            display: inline-block;
-            margin-top: 2px;
-        }
-
-        /* Terms & Atelier Care */
-        .invoice-footer {
-            margin-top: 10px;
-            padding-top: 6px;
-            padding-bottom: 4px;
-            border-top: 1.5px solid #111111;
-            font-size: 7.5px;
-            color: #777777;
-            text-align: center;
-            line-height: 1.4;
-        }
-
-        .footer-terms {
-            margin-bottom: 3px;
-            color: #555555;
-        }
-
-        .footer-legal {
-            font-family: 'Cinzel', serif;
-            font-size: 7px;
+            font-size: 8.5px;
             letter-spacing: 0.14em;
             text-transform: uppercase;
-            color: #8c734b;
-            font-weight: 600;
+            color: #736d65;
+            font-weight: 700;
+            border-top: 1px solid #ded6cb;
+            padding-top: 3px;
+            display: inline-block;
+            margin-top: 3px;
         }
 
         /* Print media styles */
         @media print {
-            body {
-                background-color: #ffffff;
-                padding: 0;
+            html, body {
+                background-color: #ffffff !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                width: 100% !important;
             }
             .no-print, .no-print-toolbar {
                 display: none !important;
             }
             .invoice-wrapper {
-                border: 1px solid #e5dfd5 !important;
+                border: 1px solid #dfd7cb !important;
                 box-shadow: none !important;
-                padding: 22px 26px !important;
+                padding: 24px 28px !important;
+                width: 100% !important;
                 max-width: 100% !important;
+                margin: 0 !important;
             }
             .invoice-wrapper::before {
-                border: 1px solid rgba(197, 168, 128, 0.35) !important;
-                top: 6px !important;
-                left: 6px !important;
-                right: 6px !important;
-                bottom: 6px !important;
+                border: 1px solid rgba(197, 168, 128, 0.45) !important;
+                top: 7px !important;
+                left: 7px !important;
+                right: 7px !important;
+                bottom: 7px !important;
             }
         }
     </style>
@@ -707,10 +660,6 @@
             <div class="meta-item">
                 <span class="meta-label">Invoice Number</span>
                 <span class="meta-value">{{invoiceNumber}}</span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">Order Reference</span>
-                <span class="meta-value">#{{orderNumber}}</span>
             </div>
             <div class="meta-item">
                 <span class="meta-label">Client / Patron</span>
@@ -806,34 +755,7 @@
                     <div class="words-text">{{amountInWords}}</div>
                 </div>
 
-                <div class="tax-summary-box">
-                    <div class="tax-summary-title">GST Tax Analysis Breakdown</div>
-                    <table class="tax-table">
-                        <tr>
-                            <td>Taxable Value (Net):</td>
-                            <td class="amount">{{currencySymbol}}{{baseTaxableValue}}</td>
-                        </tr>
-                        {{#if isInterState}}
-                        <tr>
-                            <td>Integrated GST (IGST @ {{igstRate}}%):</td>
-                            <td class="amount">{{currencySymbol}}{{igstAmount}}</td>
-                        </tr>
-                        {{else}}
-                        <tr>
-                            <td>Central GST (CGST @ {{cgstRate}}%):</td>
-                            <td class="amount">{{currencySymbol}}{{cgstAmount}}</td>
-                        </tr>
-                        <tr>
-                            <td>State GST (SGST @ {{sgstRate}}%):</td>
-                            <td class="amount">{{currencySymbol}}{{sgstAmount}}</td>
-                        </tr>
-                        {{/if}}
-                        <tr style="border-top: 1px solid #eee8df; font-weight: 700;">
-                            <td style="color: #111111; padding-top: 3px;">Total Tax Value:</td>
-                            <td class="amount" style="padding-top: 3px;">{{currencySymbol}}{{taxAmount}}</td>
-                        </tr>
-                    </table>
-                </div>
+
 
                 <div class="bank-details-box">
                     <div class="bank-title">Atelier Remittance &amp; Audit Reference</div>
@@ -867,14 +789,14 @@
                     </tr>
 
                     <tr>
-                        <td>Applicable Taxes (GST 18% Incl.)</td>
+                        <td>Applicable Taxes (GST 18%)</td>
                         <td>{{currencySymbol}}{{taxAmount}}</td>
                     </tr>
 
                     <tr class="grand-total-row">
                         <td>
                             <span class="grand-total-label">Grand Total</span>
-                            <span class="grand-total-sub">Inclusive of all taxes</span>
+                            <span class="grand-total-sub">Total Payable (Incl. 18% GST)</span>
                         </td>
                         <td>
                             <div class="grand-total-amount">{{currencySymbol}}{{grandTotal}}</div>
@@ -901,15 +823,7 @@
             </div>
         </div>
 
-        <!-- Footer Terms & Brand Assurance -->
-        <div class="invoice-footer">
-            <div class="footer-terms">
-                Each piece by House of Urvaah is crafted with meticulous couture precision. Unworn pieces with security tags and original packaging intact are eligible for return/exchange within 7 days of delivery under our Atelier Care Policy.
-            </div>
-            <div class="footer-legal">
-                House of Urvaah &bull; Ground Floor, Luxury Fashion Enclave, Mehrauli-Gurgaon Road, New Delhi, 110030 &bull; www.houseofurvaah.com
-            </div>
-        </div>
+
 
     </div>
 

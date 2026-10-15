@@ -591,3 +591,326 @@ exports.updateFabricVideo = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to update fabric video', error: error.message });
   }
 };
+
+// ==========================================
+// 5. ATELIER CONCIERGE & BOUTIQUE LOCATIONS
+// ==========================================
+
+// Public GET: Contact Info (Concierge + Active Boutiques)
+exports.getPublicContactInfo = async (req, res) => {
+  try {
+    let conciergeResult = await pool.query(
+      `SELECT section_badge, section_title, email, phone, hours FROM ui_concierge_settings ORDER BY id ASC LIMIT 1`
+    );
+
+    let concierge = conciergeResult.rows[0];
+    if (!concierge) {
+      concierge = {
+        section_badge: 'CLIENT SERVICES',
+        section_title: 'ATELIER CONCIERGE',
+        email: 'concierge@houseofurvaah.com',
+        phone: '+91 22 4900 8800',
+        hours: 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
+      };
+    }
+
+    const boutiquesResult = await pool.query(
+      `SELECT id, section_badge, section_title, name, address, phone, is_primary, display_order 
+       FROM ui_boutique_locations 
+       WHERE is_active = true 
+       ORDER BY display_order ASC, id ASC`
+    );
+
+    const locations = boutiquesResult.rows;
+    const headerInfo = locations[0] || {
+      section_badge: 'FLAGSHIP BOUTIQUES',
+      section_title: 'ATELIER LOCATIONS'
+    };
+
+    const primaryLocation = locations.find(l => l.is_primary) || locations[0] || null;
+
+    res.json({
+      success: true,
+      data: {
+        concierge,
+        boutiques: {
+          section_badge: headerInfo.section_badge || 'FLAGSHIP BOUTIQUES',
+          section_title: headerInfo.section_title || 'ATELIER LOCATIONS',
+          locations
+        },
+        primary_location: primaryLocation
+      }
+    });
+  } catch (error) {
+    console.error('[UI] Error fetching public contact info:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch contact details', error: error.message });
+  }
+};
+
+// Admin GET: Contact Info (Concierge + All Boutiques)
+exports.getAdminContactInfo = async (req, res) => {
+  try {
+    let conciergeResult = await pool.query(
+      `SELECT * FROM ui_concierge_settings ORDER BY id ASC LIMIT 1`
+    );
+
+    let concierge = conciergeResult.rows[0];
+    if (!concierge) {
+      const inserted = await pool.query(
+        `INSERT INTO ui_concierge_settings (section_badge, section_title, email, phone, hours)
+         VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'concierge@houseofurvaah.com', '+91 22 4900 8800', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
+         RETURNING *`
+      );
+      concierge = inserted.rows[0];
+    }
+
+    const boutiquesResult = await pool.query(
+      `SELECT * FROM ui_boutique_locations ORDER BY display_order ASC, id ASC`
+    );
+
+    const locations = boutiquesResult.rows;
+    const headerInfo = locations[0] || {
+      section_badge: 'FLAGSHIP BOUTIQUES',
+      section_title: 'ATELIER LOCATIONS'
+    };
+
+    res.json({
+      success: true,
+      data: {
+        concierge,
+        boutiques: {
+          section_badge: headerInfo.section_badge || 'FLAGSHIP BOUTIQUES',
+          section_title: headerInfo.section_title || 'ATELIER LOCATIONS',
+          locations
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[UI] Error fetching admin contact info:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch contact info', error: error.message });
+  }
+};
+
+// Admin PUT: Update Concierge Settings
+exports.updateConciergeSettings = async (req, res) => {
+  try {
+    const { section_badge, section_title, email, phone, hours } = req.body;
+
+    const currentCheck = await pool.query(`SELECT id FROM ui_concierge_settings ORDER BY id ASC LIMIT 1`);
+    let result;
+
+    if (currentCheck.rows.length === 0) {
+      result = await pool.query(
+        `INSERT INTO ui_concierge_settings (section_badge, section_title, email, phone, hours)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [
+          section_badge || 'CLIENT SERVICES',
+          section_title || 'ATELIER CONCIERGE',
+          email || 'concierge@houseofurvaah.com',
+          phone || '+91 22 4900 8800',
+          hours || 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
+        ]
+      );
+    } else {
+      const id = currentCheck.rows[0].id;
+      result = await pool.query(
+        `UPDATE ui_concierge_settings
+         SET section_badge = COALESCE($1, section_badge),
+             section_title = COALESCE($2, section_title),
+             email = COALESCE($3, email),
+             phone = COALESCE($4, phone),
+             hours = COALESCE($5, hours),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $6
+         RETURNING *`,
+        [section_badge, section_title, email, phone, hours, id]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Concierge services updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('[UI] Error updating concierge settings:', error);
+    res.status(500).json({ success: false, message: 'Failed to update concierge settings', error: error.message });
+  }
+};
+
+// Admin PUT: Update Boutiques Section Headers (Badge & Title)
+exports.updateBoutiquesHeader = async (req, res) => {
+  try {
+    const { section_badge, section_title } = req.body;
+
+    await pool.query(
+      `UPDATE ui_boutique_locations
+       SET section_badge = COALESCE($1, section_badge),
+           section_title = COALESCE($2, section_title),
+           updated_at = CURRENT_TIMESTAMP`,
+      [section_badge, section_title]
+    );
+
+    res.json({
+      success: true,
+      message: 'Boutique locations header updated successfully'
+    });
+  } catch (error) {
+    console.error('[UI] Error updating boutiques header:', error);
+    res.status(500).json({ success: false, message: 'Failed to update boutique header', error: error.message });
+  }
+};
+
+// Admin POST: Add New Boutique Location
+exports.createBoutiqueLocation = async (req, res) => {
+  try {
+    const { name, address, phone, is_primary, display_order, is_active, section_badge, section_title } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Location name is required' });
+    }
+    if (!address || !address.trim()) {
+      return res.status(400).json({ success: false, message: 'Location address is required' });
+    }
+
+    const isPrimaryVal = Boolean(is_primary);
+
+    // If marked as primary, unmark other locations
+    if (isPrimaryVal) {
+      await pool.query(`UPDATE ui_boutique_locations SET is_primary = false`);
+    }
+
+    // Default display order to max + 1
+    let orderVal = display_order;
+    if (orderVal === undefined || orderVal === null) {
+      const maxOrderRes = await pool.query(`SELECT COALESCE(MAX(display_order), 0) + 1 AS next_order FROM ui_boutique_locations`);
+      orderVal = maxOrderRes.rows[0].next_order;
+    }
+
+    // Use existing badge & title if not provided
+    const existingHeaderRes = await pool.query(`SELECT section_badge, section_title FROM ui_boutique_locations LIMIT 1`);
+    const badgeVal = section_badge || (existingHeaderRes.rows[0]?.section_badge) || 'FLAGSHIP BOUTIQUES';
+    const titleVal = section_title || (existingHeaderRes.rows[0]?.section_title) || 'ATELIER LOCATIONS';
+
+    const result = await pool.query(
+      `INSERT INTO ui_boutique_locations 
+        (section_badge, section_title, name, address, phone, is_primary, display_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [badgeVal, titleVal, name.trim(), address.trim(), phone ? phone.trim() : '', isPrimaryVal, orderVal, is_active !== undefined ? Boolean(is_active) : true]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Boutique location created successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('[UI] Error creating boutique location:', error);
+    res.status(500).json({ success: false, message: 'Failed to create boutique location', error: error.message });
+  }
+};
+
+// Admin PUT: Update Boutique Location
+exports.updateBoutiqueLocation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, address, phone, is_primary, display_order, is_active } = req.body;
+
+    const existingCheck = await pool.query(`SELECT * FROM ui_boutique_locations WHERE id = $1`, [id]);
+    if (existingCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Boutique location not found' });
+    }
+
+    const isPrimaryVal = is_primary !== undefined ? Boolean(is_primary) : existingCheck.rows[0].is_primary;
+
+    if (isPrimaryVal) {
+      await pool.query(`UPDATE ui_boutique_locations SET is_primary = false WHERE id != $1`, [id]);
+    }
+
+    const result = await pool.query(
+      `UPDATE ui_boutique_locations
+       SET name = COALESCE($1, name),
+           address = COALESCE($2, address),
+           phone = COALESCE($3, phone),
+           is_primary = $4,
+           display_order = COALESCE($5, display_order),
+           is_active = COALESCE($6, is_active),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $7
+       RETURNING *`,
+      [
+        name !== undefined ? name.trim() : null,
+        address !== undefined ? address.trim() : null,
+        phone !== undefined ? phone.trim() : null,
+        isPrimaryVal,
+        display_order !== undefined ? Number(display_order) : null,
+        is_active !== undefined ? Boolean(is_active) : null,
+        id
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Boutique location updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('[UI] Error updating boutique location:', error);
+    res.status(500).json({ success: false, message: 'Failed to update boutique location', error: error.message });
+  }
+};
+
+// Admin DELETE: Delete Boutique Location
+exports.deleteBoutiqueLocation = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await pool.query(`DELETE FROM ui_boutique_locations WHERE id = $1 RETURNING *`, [id]);
+    if (deleted.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Boutique location not found' });
+    }
+
+    // If the deleted location was primary, make the first remaining location primary
+    if (deleted.rows[0].is_primary) {
+      const remaining = await pool.query(`SELECT id FROM ui_boutique_locations ORDER BY display_order ASC, id ASC LIMIT 1`);
+      if (remaining.rows.length > 0) {
+        await pool.query(`UPDATE ui_boutique_locations SET is_primary = true WHERE id = $1`, [remaining.rows[0].id]);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Boutique location deleted successfully'
+    });
+  } catch (error) {
+    console.error('[UI] Error deleting boutique location:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete boutique location', error: error.message });
+  }
+};
+
+// Admin PUT: Reorder Boutique Locations
+exports.reorderBoutiqueLocations = async (req, res) => {
+  try {
+    const { orders } = req.body; // Array of { id, display_order }
+    if (!Array.isArray(orders)) {
+      return res.status(400).json({ success: false, message: 'Invalid reorder payload. Array expected.' });
+    }
+
+    for (const item of orders) {
+      if (item.id && typeof item.display_order === 'number') {
+        await pool.query(
+          `UPDATE ui_boutique_locations SET display_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [item.display_order, item.id]
+        );
+      }
+    }
+
+    res.json({ success: true, message: 'Boutique locations reordered successfully' });
+  } catch (error) {
+    console.error('[UI] Error reordering boutique locations:', error);
+    res.status(500).json({ success: false, message: 'Failed to reorder boutique locations', error: error.message });
+  }
+};
+

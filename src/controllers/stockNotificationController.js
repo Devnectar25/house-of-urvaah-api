@@ -233,3 +233,45 @@ exports.triggerManualRestockTest = async (req, res) => {
         });
     }
 };
+
+/**
+ * Admin: Directly dispatch back-in-stock email to a subscription and delete it from waitlist
+ */
+exports.notifySubscription = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await stockNotificationService.notifyAndRemoveSubscription(id);
+        return res.status(200).json({
+            success: true,
+            message: `Stock alert email sent to ${result.email}. User removed from waitlist.`,
+            data: result
+        });
+    } catch (err) {
+        console.error('[StockNotificationController.notifySubscription] Error:', err.message);
+        return res.status(400).json({
+            success: false,
+            message: err.message || 'Failed to notify subscription.'
+        });
+    }
+};
+
+/**
+ * Admin: Scan all subscriptions and automatically notify & remove any with available stock
+ */
+exports.checkInStockNow = async (req, res) => {
+    try {
+        const result = await stockNotificationService.checkAndNotifyAllInStockSubscribers();
+        return res.status(200).json({
+            success: true,
+            message: `Scanned inventory: ${result.triggered || 0} patrons notified and removed from waitlist.`,
+            result
+        });
+    } catch (err) {
+        console.error('[StockNotificationController.checkInStockNow] Error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: err.message || 'Failed to process in-stock notifications.'
+        });
+    }
+};
+

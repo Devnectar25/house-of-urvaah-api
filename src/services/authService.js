@@ -294,12 +294,14 @@ exports.completeSignup = async (data) => {
 
 exports.loginAdmin = async (username, password, ipAddress) => {
     console.log(`[authService] loginAdmin called for: ${username}`);
+    const cleanUsername = (username || '').trim();
 
-    const result = await pool.query("SELECT * FROM public.admins WHERE LOWER(userid) = LOWER($1)", [username]);
+    // Strict case-sensitive username matching (e.g. 'Admin' != 'admin')
+    const result = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [cleanUsername]);
     const adminRow = result.rows[0];
 
-    if (!adminRow) {
-        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, username, 'FAILED_LOGIN', 'User not found', ipAddress]).catch(() => {});
+    if (!adminRow || adminRow.userid !== cleanUsername) {
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, cleanUsername, 'FAILED_LOGIN', 'User not found or case mismatch', ipAddress]).catch(() => {});
         throw new Error("Invalid username or password");
     }
 

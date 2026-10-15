@@ -178,8 +178,32 @@ exports.updateProfile = async (req, res) => {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
-        if (phone !== undefined && (!phone || !phone.trim())) {
-            return res.status(400).json({ success: false, message: 'Mobile number is required' });
+        let cleanPhone = null;
+        if (phone !== undefined) {
+            cleanPhone = String(phone).replace(/\D/g, '');
+            if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+                cleanPhone = cleanPhone.slice(2);
+            }
+            if (!cleanPhone) {
+                return res.status(400).json({ success: false, message: 'Mobile number is required' });
+            }
+            if (cleanPhone.length !== 10) {
+                return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number' });
+            }
+            if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+                return res.status(400).json({ success: false, message: 'Please enter a valid Indian mobile number starting with 6, 7, 8, or 9' });
+            }
+        }
+
+        let cleanName = null;
+        if (fullName !== undefined) {
+            cleanName = String(fullName).trim();
+            if (!cleanName) {
+                return res.status(400).json({ success: false, message: 'Full name is required' });
+            }
+            if (cleanName.length < 2) {
+                return res.status(400).json({ success: false, message: 'Full name must be at least 2 characters' });
+            }
         }
 
         const result = await pool.query(`
@@ -189,7 +213,7 @@ exports.updateProfile = async (req, res) => {
                 avatar_url = COALESCE($3, avatar_url)
             WHERE username = $4
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [fullName || null, phone || null, avatar || null, username]);
+        `, [cleanName, cleanPhone, avatar || null, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });

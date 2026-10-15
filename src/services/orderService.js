@@ -36,6 +36,30 @@ pool.query(`
     console.warn('[OrderService] Non-blocking COD delivered payment sync note:', err.message);
 });
 
+// Self-healing startup sync: Ensure all orders have an invoice_number formatted as HOU-YYYYMM<count>
+pool.query(`
+    WITH numbered_orders AS (
+      SELECT id,
+        'HOU-' || 
+        TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') || 
+        LPAD(ROW_NUMBER() OVER (
+          PARTITION BY TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') 
+          ORDER BY created_at ASC, id ASC
+        )::text, 2, '0') AS gen_invoice_number
+      FROM orders
+    )
+    UPDATE orders o
+    SET invoice_number = no.gen_invoice_number
+    FROM numbered_orders no
+    WHERE o.id = no.id AND (o.invoice_number IS NULL OR o.invoice_number = '')
+`).then(res => {
+    if (res && res.rowCount > 0) {
+        console.log(`[OrderService] Backfilled invoice_number for ${res.rowCount} order(s)`);
+    }
+}).catch(err => {
+    console.warn('[OrderService] Non-blocking invoice_number sync note:', err.message);
+});
+
 const resolveDbProductId = async (client, rawId, itemName) => {
     let candidateId = null;
     if (typeof rawId === 'number' && !isNaN(rawId)) {
@@ -132,7 +156,7 @@ exports.createOrder = async (orderData) => {
             for (const item of items) {
                 const validProductId = await resolveDbProductId(client, item.id || item.productId, item.name);
                 const prodRes = await client.query(
-                    'SELECT price, sale_price, stock_quantity, title, category_id, brand FROM products WHERE product_id::text = $1::text LIMIT 1',
+                    'SELECT price, sale_price, stock_quantity, quantity, title, category_id, brand, is_active, size_stock, sizes FROM products WHERE product_id::text = $1::text LIMIT 1',
                     [String(validProductId)]
                 );
                 const prodRow = prodRes.rows[0];
@@ -140,6 +164,38 @@ exports.createOrder = async (orderData) => {
                     ? parseFloat(prodRow.price)
                     : (parseFloat(item.price) || 0);
                 const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+
+                if (prodRow) {
+                    const overallStock = parseInt(prodRow.stock_quantity ?? prodRow.quantity ?? 0, 10);
+                    const isActive = prodRow.is_active !== false;
+
+                    if (!isActive || overallStock <= 0) {
+                        throw new Error(`Product "${prodRow.title || item.name}" is currently out of stock.`);
+                    }
+
+                    // Check size-specific stock if size is provided
+                    const itemSize = (item.size || item.selectedSize || '').trim();
+                    let sizeStock = null;
+                    if (prodRow.size_stock && typeof prodRow.size_stock === 'object' && itemSize) {
+                        const matchedKey = Object.keys(prodRow.size_stock).find(
+                            k => k.trim().toUpperCase() === itemSize.toUpperCase()
+                        );
+                        if (matchedKey) {
+                            sizeStock = parseInt(prodRow.size_stock[matchedKey], 10);
+                        }
+                    }
+
+                    if (sizeStock !== null) {
+                        if (sizeStock <= 0) {
+                            throw new Error(`Size "${itemSize}" for "${prodRow.title || item.name}" is out of stock.`);
+                        }
+                        if (qty > sizeStock) {
+                            throw new Error(`Insufficient stock for "${prodRow.title || item.name}" in size "${itemSize}". Only ${sizeStock} unit(s) available.`);
+                        }
+                    } else if (qty > overallStock) {
+                        throw new Error(`Insufficient stock for "${prodRow.title || item.name}". Only ${overallStock} unit(s) available.`);
+                    }
+                }
 
                 dbSubtotal += (realPrice * qty);
                 verifiedOrderItems.push({
@@ -165,9 +221,6 @@ exports.createOrder = async (orderData) => {
         let discountAmount = 0;
         let couponId = null;                // FK → coupons.id; null if no coupon applied
         let validatedCouponCode = null;
-        // originalTotal = pre-discount total (dbSubtotal + shipping); used for audit clarity
-        const originalTotal = dbSubtotal + parseFloat(shipping || 0);
-        let finalTotal = originalTotal;
 
         if (couponCode) {
             // validateCoupon checks active, expiry, min_order_value (vs dbSubtotal),
@@ -182,13 +235,30 @@ exports.createOrder = async (orderData) => {
             discountAmount = validation.discountAmount;
             couponId = validation.coupon?.id || null;      // FK — links order to coupons row
             validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
-            finalTotal = originalTotal - discountAmount;   // originalTotal already = dbSubtotal + shipping
-
-            if (finalTotal < 0) finalTotal = 0;
         }
+
+        // ── STEP 1.1: Tax calculation (Dynamic GST) ───────────────────────────
+        // If order amount after discount > 2500 then 18% tax, else 5% tax
+        const netTaxable = Math.max(0, dbSubtotal - discountAmount);
+        const taxRate = netTaxable > 2500 ? 18 : 5;
+        const taxAmount = netTaxable > 0 ? Math.round(netTaxable * (taxRate / 100)) : 0;
+        const shippingFee = parseFloat(shipping || 0);
+
+        // originalTotal = pre-discount total (dbSubtotal + tax + shipping); used for audit clarity
+        const originalTotal = Math.round(dbSubtotal + (dbSubtotal > 2500 ? dbSubtotal * 0.18 : dbSubtotal * 0.05) + shippingFee);
+        let finalTotal = Math.round(netTaxable + taxAmount + shippingFee);
 
         if ((!finalTotal || finalTotal === 0) && total && parseFloat(total) > 0) {
             finalTotal = parseFloat(total);
+        }
+
+        // Apply 2% processing surcharge if payment is via Credit / Debit Card
+        let cardSurcharge = 0;
+        const isCardPayment = (paymentMethod === 'card' || paymentType === 'Card' || String(paymentMethod || '').toLowerCase().includes('card'));
+        if (isCardPayment) {
+            cardSurcharge = orderData.cardSurcharge !== undefined ? parseFloat(orderData.cardSurcharge) : Math.round(finalTotal * 0.02);
+            finalTotal = Math.round(finalTotal + cardSurcharge);
+            console.log(`[OrderService] Card payment detected. Applied 2% surcharge of ₹${cardSurcharge}. Final Total: ₹${finalTotal}`);
         }
 
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
@@ -259,31 +329,44 @@ exports.createOrder = async (orderData) => {
             }
         }
 
+        // Calculate monthly sequence for invoice_number (format: HOU-YYYYMM<count>)
+        const countRes = await client.query(
+            "SELECT COUNT(*) FROM orders WHERE date_trunc('month', created_at) = date_trunc('month', NOW())"
+        );
+        const nextMonthSeq = parseInt(countRes.rows[0]?.count || 0, 10) + 1;
+        const now = new Date();
+        const invYear = now.getFullYear();
+        const invMonth = String(now.getMonth() + 1).padStart(2, '0');
+        const invCount = String(nextMonthSeq).padStart(2, '0');
+        const generatedInvoiceNumber = `HOU-${invYear}${invMonth}${invCount}`;
+
         const orderResult = await client.query(
             `INSERT INTO orders (
-                user_id, order_number, address_id, payment_method, payment_status, payment_type,
+                user_id, order_number, invoice_number, address_id, payment_method, payment_status, payment_type,
                 subtotal, original_total, shipping,
-                discount_amount, total,
+                tax, discount_amount, total,
                 coupon_code, coupon_id,
                 status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Pending', $16, $17, NOW(), NOW())
             RETURNING *`,
             [
                 userId,                          // $1
                 orderNumber,                     // $2
-                sanitizedAddressId,              // $3
-                paymentMethod,                   // $4
-                paymentStatus || 'Pending',      // $5
-                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $6
-                dbSubtotal,                      // $7  — server-computed cart sum, never client value
-                originalTotal,                   // $8  — pre-discount total (dbSubtotal + shipping)
-                shipping || 0,                   // $9
-                discountAmount,                  // $10 — 0 if no coupon
-                finalTotal,                      // $11 — server-computed, never from client
-                validatedCouponCode || null,     // $12 — normalized code string (kept for history)
-                couponId,                        // $13 — FK → coupons.id; null if no coupon
-                trackingNumber,                  // $14
-                estimatedDelivery                // $15
+                generatedInvoiceNumber,          // $3
+                sanitizedAddressId,              // $4
+                paymentMethod,                   // $5
+                paymentStatus || 'Pending',      // $6
+                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $7
+                dbSubtotal,                      // $8  — server-computed cart sum, never client value
+                originalTotal,                   // $9  — pre-discount total (dbSubtotal + tax + shipping)
+                shipping || 0,                   // $10
+                taxAmount,                       // $11 — server-computed GST tax
+                discountAmount,                  // $12 — 0 if no coupon
+                finalTotal,                      // $13 — server-computed, never from client
+                validatedCouponCode || null,     // $14 — normalized code string (kept for history)
+                couponId,                        // $15 — FK → coupons.id; null if no coupon
+                trackingNumber,                  // $16
+                estimatedDelivery                // $17
             ]
         );
 
@@ -316,16 +399,36 @@ exports.createOrder = async (orderData) => {
                 [order.id, validProductId, item.name, item.price, item.quantity, item.image, itemSize]
             );
 
+            // Fetch current size_stock to atomically update size-specific quantity
+            const prodStockRes = await client.query(
+                `SELECT size_stock, stock_quantity FROM products WHERE product_id::text = $1::text LIMIT 1 FOR UPDATE`,
+                [String(validProductId)]
+            );
+            const currentSizeStock = prodStockRes.rows[0]?.size_stock || {};
+            let updatedSizeStock = { ...currentSizeStock };
+            const matchedKey = Object.keys(updatedSizeStock).find(
+                k => k.trim().toUpperCase() === itemSize.trim().toUpperCase()
+            );
+            if (matchedKey) {
+                const currentVal = parseInt(updatedSizeStock[matchedKey], 10) || 0;
+                updatedSizeStock[matchedKey] = Math.max(0, currentVal - item.quantity);
+            }
+
             const stockUpdateResult = await client.query(
                 `UPDATE products
                  SET stock_quantity = GREATEST(0, COALESCE(stock_quantity, 0) - $2),
                      quantity       = GREATEST(0, COALESCE(quantity, 0) - $2),
+                     size_stock     = $3::jsonb,
                      instock        = (CASE WHEN GREATEST(0, COALESCE(stock_quantity, 0) - $2) > 0 THEN true ELSE false END),
                      updated_at     = NOW()
-                 WHERE product_id::text = $1::text
+                 WHERE product_id::text = $1::text AND COALESCE(stock_quantity, 0) >= $2
                  RETURNING stock_quantity`,
-                [String(validProductId), item.quantity]
+                [String(validProductId), item.quantity, JSON.stringify(updatedSizeStock)]
             );
+
+            if (stockUpdateResult.rows.length === 0) {
+                throw new Error(`Insufficient stock for "${item.name}". Only ${item.quantity} or fewer units are available.`);
+            }
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
@@ -387,7 +490,7 @@ exports.getAllOrders = async (options = {}) => {
     if (status && status !== 'all') {
         const sLower = status.toLowerCase();
         if (sLower === 'cancelled' || sLower === 'canceled') {
-            baseQuery += ` AND (o.status ILIKE 'Cancelled' OR o.status ILIKE 'Cancellation Requested' OR o.status ILIKE 'CANCEL_REQUESTED' OR o.status ILIKE 'Refunded')`;
+            baseQuery += ` AND (o.status ILIKE 'Cancelled' OR o.status ILIKE 'Refunded')`;
         } else if (sLower === 'cancellation requested') {
             baseQuery += ` AND (o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')))`;
         } else if (sLower === 'confirmed') {
@@ -975,11 +1078,11 @@ exports.getOrderStats = async () => {
             COUNT(*) FILTER (WHERE status ILIKE 'Shipped' OR status ILIKE 'Dispatched')::int as shipped,
             COUNT(*) FILTER (WHERE status ILIKE 'Out for Delivery')::int as out_for_delivery,
             COUNT(*) FILTER (WHERE status ILIKE 'Delivered')::int as delivered,
-            COUNT(*) FILTER (WHERE status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED')::int as cancellation_requested,
-            COUNT(*) FILTER (WHERE status ILIKE 'Cancelled')::int as cancelled,
+            COUNT(*) FILTER (WHERE status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status ILIKE 'Cancellation Requested' OR oi.status ILIKE 'CANCEL_REQUESTED')))::int as cancellation_requested,
+            COUNT(*) FILTER (WHERE status ILIKE 'Cancelled' OR status ILIKE 'Refunded')::int as cancelled,
             COUNT(*) FILTER (WHERE status ILIKE 'Returned' OR status ILIKE 'Return%' OR is_returned_order = true)::int as returns,
             COUNT(*) FILTER (WHERE status ILIKE 'Exchanged' OR status ILIKE 'Exchange%' OR return_type ILIKE 'exchange' OR status ILIKE 'Replace%' OR status ILIKE 'Replacement%' OR return_type ILIKE 'Replacement')::int as exchanges,
-            COUNT(*) FILTER (WHERE payment_status ILIKE 'Pending' OR payment_status ILIKE 'Failed')::int as pending_payment
+            COUNT(*) FILTER (WHERE (payment_status ILIKE 'Pending' OR payment_status ILIKE 'Failed') AND NOT (status ILIKE 'Delivered' AND (payment_method ILIKE 'cod' OR payment_type ILIKE 'cod' OR payment_method ILIKE '%cash%')))::int as pending_payment
          FROM orders`
     );
 
@@ -1711,6 +1814,20 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
             } catch (triggerError) {
                 console.error('[TRIGGER ERROR] Background automation failed:', triggerError.message);
+            }
+        }
+
+        // ── DELIVERY CONFIRMATION & INVOICE & FEEDBACK EMAIL (URVAAH-DELIVERY) ──
+        const normalizedTargetStatus = String(status || '').trim().toLowerCase();
+        const normalizedOldStatus = String(oldStatus || '').trim().toLowerCase();
+        if (normalizedTargetStatus === 'delivered' && normalizedOldStatus !== 'delivered') {
+            try {
+                console.log(`[OrderService] Order #${finalOrder.order_number} marked Delivered. Triggering delivery confirmation email with invoice and feedback link...`);
+                orderEmailService.sendDeliveryConfirmationWorkflow(finalOrder.id).catch(emailErr => {
+                    console.error('[OrderService] Delivery confirmation email error:', emailErr.message);
+                });
+            } catch (delivErr) {
+                console.error('[OrderService] Failed to schedule delivery confirmation email:', delivErr.message);
             }
         }
 
