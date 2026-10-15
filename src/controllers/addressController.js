@@ -25,7 +25,8 @@ exports.createAddress = async (req, res) => {
         const address = await addressService.addAddress(payload);
         res.status(201).json({ success: true, data: address });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        const status = err.statusCode || 500;
+        res.status(status).json({ success: false, message: err.message });
     }
 };
 
@@ -35,16 +36,19 @@ exports.updateAddress = async (req, res) => {
         const address = await addressService.updateAddress(id, req.body);
         res.status(200).json({ success: true, data: address });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        const status = err.statusCode || 500;
+        res.status(status).json({ success: false, message: err.message });
     }
 };
 
 exports.deleteAddress = async (req, res) => {
     try {
         const { id } = req.params;
-        await addressService.deleteAddress(id);
+        const userId = req.user?.id || req.user?.username || req.user?.email || req.query?.userId || req.body?.user_id;
+        await addressService.deleteAddress(id, userId);
         res.status(200).json({ success: true, message: 'Address deleted successfully' });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        const status = err.statusCode || 500;
+        res.status(status).json({ success: false, message: err.message });
     }
 };

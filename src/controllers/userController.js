@@ -178,8 +178,32 @@ exports.updateProfile = async (req, res) => {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
-        if (phone !== undefined && (!phone || !phone.trim())) {
-            return res.status(400).json({ success: false, message: 'Mobile number is required' });
+        let cleanPhone = null;
+        if (phone !== undefined) {
+            cleanPhone = String(phone).replace(/\D/g, '');
+            if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+                cleanPhone = cleanPhone.slice(2);
+            }
+            if (!cleanPhone) {
+                return res.status(400).json({ success: false, message: 'Mobile number is required' });
+            }
+            if (cleanPhone.length !== 10) {
+                return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number' });
+            }
+            if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+                return res.status(400).json({ success: false, message: 'Please enter a valid Indian mobile number starting with 6, 7, 8, or 9' });
+            }
+        }
+
+        let cleanName = null;
+        if (fullName !== undefined) {
+            cleanName = String(fullName).trim();
+            if (!cleanName) {
+                return res.status(400).json({ success: false, message: 'Full name is required' });
+            }
+            if (cleanName.length < 2) {
+                return res.status(400).json({ success: false, message: 'Full name must be at least 2 characters' });
+            }
         }
 
         const result = await pool.query(`
@@ -189,7 +213,7 @@ exports.updateProfile = async (req, res) => {
                 avatar_url = COALESCE($3, avatar_url)
             WHERE username = $4
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [fullName || null, phone || null, avatar || null, username]);
+        `, [cleanName, cleanPhone, avatar || null, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -218,10 +242,7 @@ exports.getProfile = async (req, res) => {
         let username;
         // If caller is an admin, look for username / email / userId in query parameters
         if (req.user?.role === 'admin') {
-            username = req.query.username || req.query.userId || req.query.email;
-            if (!username) {
-                return res.status(400).json({ success: false, message: 'Username/Email query parameter is required for admin' });
-            }
+            username = req.query.username || req.query.userId || req.query.email || req.user?.username || req.user?.email || 'admin';
         } else {
             username = req.user?.id || req.user?.username || req.user?.email;
         }
@@ -254,6 +275,23 @@ exports.getProfile = async (req, res) => {
         }
 
         if (!userRow) {
+            if (req.user?.role === 'admin' && !req.query.username && !req.query.userId && !req.query.email) {
+                return res.json({
+                    success: true,
+                    user: {
+                        id: req.user?.id || 'admin',
+                        userid: req.user?.username || 'admin',
+                        email: req.user?.email || 'admin@houseofurvaah.com',
+                        fullName: req.user?.fullname || req.user?.username || 'Admin',
+                        phone: '',
+                        avatar: '',
+                        role: 'admin',
+                        memberSince: new Date().toISOString()
+                    },
+                    addresses: [],
+                    ordersSummary: []
+                });
+            }
             if (addresses.length > 0) {
                 const firstAddr = addresses[0];
                 return res.json({
@@ -271,7 +309,20 @@ exports.getProfile = async (req, res) => {
                     ordersSummary: []
                 });
             }
-            return res.status(404).json({ success: false, message: 'User profile not found' });
+            return res.json({
+                success: true,
+                user: {
+                    id: cleanUsername,
+                    userid: cleanUsername,
+                    email: cleanUsername.includes('@') ? cleanUsername : (req.user?.email || cleanUsername),
+                    fullName: cleanUsername.includes('@') ? cleanUsername.split('@')[0] : cleanUsername,
+                    phone: '',
+                    avatar: '',
+                    memberSince: new Date().toISOString()
+                },
+                addresses: [],
+                ordersSummary: []
+            });
         }
 
         const user = {

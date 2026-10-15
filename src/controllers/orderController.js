@@ -19,11 +19,13 @@ exports.getAllOrders = async (req, res) => {
         const offset = (page - 1) * limit;
         const status = req.query.status;
         const paymentStatus = req.query.paymentStatus;
+        const paymentType = req.query.paymentType;
         const type = req.query.type;
         const userName = req.query.userName;
         const orderNumber = req.query.orderNumber;
 
-        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName, orderNumber });
+        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, paymentType, type, userName, orderNumber });
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json({
             success: true,
             data: result.orders,
@@ -76,6 +78,7 @@ exports.getCancelledOrdersStats = async (req, res) => {
 exports.getOrderStats = async (req, res) => {
     try {
         const stats = await orderService.getOrderStats();
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json({ success: true, data: stats });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -84,13 +87,14 @@ exports.getOrderStats = async (req, res) => {
 
 exports.getOrdersByUser = async (req, res) => {
     try {
-        if (req.user?.role === 'admin') {
+        const userId = req.user?.id || req.user?.username || req.user?.emailid || req.user?.email;
+        if (!userId) {
             return res.status(200).json({ success: true, data: [] });
         }
-        const userId = req.user.id;
         const orders = await orderService.getOrdersByUser(userId);
         res.status(200).json({ success: true, data: orders });
     } catch (error) {
+        console.error('[getOrdersByUser Error]:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -102,7 +106,19 @@ exports.getOrderById = async (req, res) => {
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
         // Security check: only allow own user or admin
-        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isAdmin = req.user?.role === 'admin';
+        const reqUserId = String(req.user?.id || '').trim().toLowerCase();
+        const reqUserEmail = String(req.user?.emailid || req.user?.email || '').trim().toLowerCase();
+        const orderUserId = String(order.user_id || '').trim().toLowerCase();
+        const orderCustEmail = String(order.customer_email || '').trim().toLowerCase();
+
+        const isOwner =
+            (reqUserId && (orderUserId === reqUserId || orderCustEmail === reqUserId)) ||
+            (reqUserEmail && (orderUserId === reqUserEmail || orderCustEmail === reqUserEmail)) ||
+            order.user_id == req.user?.id ||
+            order.user_id == req.user?.username;
+
+        if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
@@ -121,43 +137,69 @@ exports.updateOrderStatus = async (req, res) => {
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
         // Security check
-        const isAdmin = req.user.role === 'admin';
-        const isOwner = order.user_id == req.user.id;
+        const isAdmin = req.user?.role === 'admin';
+        const isOwner = order.user_id == req.user?.id || order.user_id == req.user?.username || order.user_id == req.user?.emailid || order.customer_email == req.user?.emailid;
 
+        let targetStatus = status;
         if (!isAdmin) {
             if (!isOwner) {
                 return res.status(403).json({ success: false, message: 'Not authorized' });
             }
-            if (status !== 'Cancelled' && status !== 'Cancellation Requested') {
-                return res.status(403).json({ success: false, message: 'Regular users can only cancel orders' });
+            const currentStatusLower = (order.status || '').toLowerCase();
+            if (currentStatusLower === 'cancelled') {
+                return res.status(400).json({ success: false, message: 'This order is already cancelled.' });
             }
-            // Enforce 24h limit for non-admins
-            const createdTime = new Date(order.created_at).getTime();
-            if (Date.now() - createdTime > 24 * 60 * 60 * 1000) {
-                return res.status(400).json({ success: false, message: 'Order can only be cancelled within 24 hours of placement' });
+            if (currentStatusLower === 'return requested' || currentStatusLower === 'return request processing') {
+                return res.status(400).json({ success: false, message: 'A return request for this order is already pending admin approval.' });
             }
-            // Cancellable statuses matches frontend UI logic - extended to allow Shipped/Out for Delivery within 24h
-            const cancellableStatuses = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Cancellation Requested', 'Cancelled'];
-            const orderStatus = order.status || 'Pending';
-            if (!cancellableStatuses.includes(orderStatus) && orderStatus.toLowerCase() !== 'pending') {
-                return res.status(400).json({ success: false, message: `Order with status '${orderStatus}' cannot be cancelled` });
+            if (currentStatusLower === 'replacement request processing' || currentStatusLower === 'replace requested' || currentStatusLower === 'replacement requested') {
+                return res.status(400).json({ success: false, message: 'A replacement request for this order is already pending admin approval.' });
+            }
+            if (currentStatusLower === 'replace approved' || currentStatusLower === 'replacement processing' || currentStatusLower === 'replacement shipped') {
+                return res.status(400).json({ success: false, message: 'A replacement for this order is already approved and in progress.' });
+            }
+            if (currentStatusLower === 'return approved') {
+                return res.status(400).json({ success: false, message: 'Return is already approved and in transit to House of Urvaah.' });
+            }
+            if (currentStatusLower === 'received at house of urvaah' || currentStatusLower === 'returned' || currentStatusLower === 'replaced') {
+                return res.status(400).json({ success: false, message: 'This order cycle has already been completed.' });
+            }
+            if (currentStatusLower === 'delivered') {
+                // Post-delivery: check if replacement or cancel
+                const isReplacement = (status || '').toLowerCase().includes('replace') || req.body.type === 'Replacement';
+                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Cancellation Requested';
+            } else if (currentStatusLower === 'cancellation requested' || currentStatusLower === 'cancel_requested') {
+                return res.status(400).json({ success: false, message: 'A cancellation request for this order is already pending admin approval.' });
+            } else {
+                // User cancellations before delivery must go for admin approval
+                targetStatus = 'Cancellation Requested';
             }
         }
 
-        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds);
+        // If order is COD and status is Delivered, payment is collected upon delivery and must be Paid
+        const isCod = (order.payment_method || '').toLowerCase() === 'cod' ||
+                      (order.payment_type || '').toLowerCase() === 'cod' ||
+                      (order.payment_method || '').toLowerCase().includes('cash');
+
+        let targetPaymentStatus = paymentStatus;
+        if ((targetStatus === 'Delivered' || (order.status || '').toLowerCase() === 'delivered') && isCod) {
+            targetPaymentStatus = 'Paid';
+        }
+
+        // Pass order.id (validated UUID) to ensure clean DB queries
+        const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, targetPaymentStatus, itemIds);
 
         // Synchronize with Shiprocket logistics if order is cancelled
-        if (status === 'Cancelled' || status === 'Cancellation Requested') {
+        if (targetStatus === 'Cancelled' || targetStatus === 'Cancellation Requested' || status === 'Cancelled' || status === 'Cancellation Requested') {
             try {
                 const shiprocketService = require('../services/shiprocketService');
-                const orderIdentifier = order.order_number || id;
+                const orderIdentifier = order.order_number || order.id || id;
                 await shiprocketService.cancelShipment([orderIdentifier]);
                 console.log(`[Shiprocket Sync] Shipment/Pickup voided successfully for order ${orderIdentifier}`);
             } catch (srErr) {
                 console.warn('[Shiprocket Sync Warning]:', srErr.message);
             }
         }
-
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -171,17 +213,52 @@ exports.downloadInvoice = async (req, res) => {
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
         // Security check: only allow own user or admin
-        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isAdmin = req.user?.role === 'admin';
+        const reqUserId = String(req.user?.id || '').trim().toLowerCase();
+        const reqUserEmail = String(req.user?.emailid || req.user?.email || '').trim().toLowerCase();
+        const orderUserId = String(order.user_id || '').trim().toLowerCase();
+        const orderCustEmail = String(order.customer_email || '').trim().toLowerCase();
+
+        const isOwner =
+            (reqUserId && (orderUserId === reqUserId || orderCustEmail === reqUserId)) ||
+            (reqUserEmail && (orderUserId === reqUserEmail || orderCustEmail === reqUserEmail)) ||
+            order.user_id == req.user?.id ||
+            order.user_id == req.user?.username;
+
+        if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        const pdfBuffer = await invoiceService.generateInvoicePDF(id);
-        
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INV_${order.order_number}.pdf"`);
-        res.setHeader('Content-Length', pdfBuffer.length);
-        
-        res.end(pdfBuffer);
+        const format = (req.query.format || '').toLowerCase();
+
+        // 1. Return structured JSON data for frontend live invoice rendering
+        if (format === 'json') {
+            const data = await invoiceService.getInvoiceData(id);
+            return res.status(200).json({ success: true, data });
+        }
+
+        // 2. Return standalone HTML invoice for print / in-browser viewing
+        if (format === 'html' || req.headers.accept?.includes('text/html')) {
+            const html = await invoiceService.generateInvoiceHTML(id);
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
+
+        // 3. Return binary PDF attachment
+        try {
+            const pdfBuffer = await invoiceService.generateInvoicePDF(id);
+
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INVOICE_${order.invoice_number || order.order_number}.pdf"`);
+            res.setHeader('Content-Length', pdfBuffer.length);
+
+            return res.end(pdfBuffer);
+        } catch (pdfErr) {
+            console.warn('[Invoice] PDF Generation error, serving printable HTML fallback:', pdfErr.message);
+            const html = await invoiceService.generateInvoiceHTML(id);
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
     } catch (error) {
         console.error('Invoice Error:', error);
         if (!res.headersSent) {
@@ -205,7 +282,19 @@ exports.reorderOrder = async (req, res) => {
         const order = await orderService.getOrderById(targetId);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
-        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isAdmin = req.user?.role === 'admin';
+        const reqUserId = String(req.user?.id || '').trim().toLowerCase();
+        const reqUserEmail = String(req.user?.emailid || req.user?.email || '').trim().toLowerCase();
+        const orderUserId = String(order.user_id || '').trim().toLowerCase();
+        const orderCustEmail = String(order.customer_email || '').trim().toLowerCase();
+
+        const isOwner =
+            (reqUserId && (orderUserId === reqUserId || orderCustEmail === reqUserId)) ||
+            (reqUserEmail && (orderUserId === reqUserEmail || orderCustEmail === reqUserEmail)) ||
+            order.user_id == req.user?.id ||
+            order.user_id == req.user?.username;
+
+        if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized to reorder this order' });
         }
 
@@ -292,3 +381,25 @@ exports.getRefundPaymentDetails = async (req, res) => {
     }
 };
 
+exports.updateOrderShippingAddress = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const addressData = req.body;
+
+        const isAdmin = req.user?.role === 'admin';
+        const userId = req.user?.username || req.user?.id || req.user?.emailid;
+
+        const updatedOrder = await orderService.updateOrderShippingAddress(id, userId, addressData, isAdmin);
+        res.status(200).json({
+            success: true,
+            message: 'Shipping address updated successfully',
+            data: updatedOrder
+        });
+    } catch (error) {
+        console.error('[updateOrderShippingAddress] Error:', error);
+        res.status(error.status || 400).json({
+            success: false,
+            message: error.message || 'Failed to update shipping address'
+        });
+    }
+};

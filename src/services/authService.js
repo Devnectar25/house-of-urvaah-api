@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { validateEmail } = require('../utils/emailValidator');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key';
 const JWT_EXPIRES_IN = '7d';
@@ -41,14 +42,11 @@ exports.generateToken = generateToken;
  * Rate-limiting: Max 3 requests per email per 10 minutes.
  */
 exports.sendOtp = async (email) => {
-    if (!email || !email.trim()) {
-        throw new Error("Email address is required");
+    const validation = await validateEmail(email);
+    if (!validation.isValid) {
+        throw new Error(validation.message);
     }
-    const cleanEmail = email.toLowerCase().trim();
-    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!EMAIL_REGEX.test(cleanEmail)) {
-        throw new Error("Please enter a valid email address");
-    }
+    const cleanEmail = validation.cleanEmail;
 
     const now = new Date();
 
@@ -79,7 +77,8 @@ exports.sendOtp = async (email) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const salt = await bcrypt.genSalt(10);
     const otpHash = await bcrypt.hash(otp, salt);
-    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+    const OTP_EXPIRY_MS = 60 * 1000; // 60 seconds (1 minute expiry matching frontend countdown timer)
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MS);
 
     let newSendCount = 1;
     let newFirstSendAt = now;
@@ -142,6 +141,10 @@ exports.verifyOtp = async (email, otp) => {
     const cleanEmail = email.toLowerCase().trim();
     const cleanOtp = otp.toString().trim();
 
+    if (!/^\d{6}$/.test(cleanOtp)) {
+        throw new Error("Please enter a valid 6-digit numeric verification code");
+    }
+
     // 1. Fetch OTP record
     const result = await pool.query("SELECT * FROM public.otps WHERE email = $1", [cleanEmail]);
     const record = result.rows[0];
@@ -160,7 +163,8 @@ exports.verifyOtp = async (email, otp) => {
 
     // 3. Check expiry
     if (new Date(record.expires_at) < now) {
-        throw new Error("Verification code has expired. Please click Resend Code.");
+        await pool.query("DELETE FROM public.otps WHERE email = $1", [cleanEmail]);
+        throw new Error("Verification code has expired. Please click Resend Code to receive a fresh code.");
     }
 
     // 4. Compare hashed OTP
@@ -290,12 +294,14 @@ exports.completeSignup = async (data) => {
 
 exports.loginAdmin = async (username, password, ipAddress) => {
     console.log(`[authService] loginAdmin called for: ${username}`);
+    const cleanUsername = (username || '').trim();
 
-    const result = await pool.query("SELECT * FROM public.admins WHERE LOWER(userid) = LOWER($1)", [username]);
+    // Strict case-sensitive username matching (e.g. 'Admin' != 'admin')
+    const result = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [cleanUsername]);
     const adminRow = result.rows[0];
 
-    if (!adminRow) {
-        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, username, 'FAILED_LOGIN', 'User not found', ipAddress]).catch(() => {});
+    if (!adminRow || adminRow.userid !== cleanUsername) {
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, cleanUsername, 'FAILED_LOGIN', 'User not found or case mismatch', ipAddress]).catch(() => {});
         throw new Error("Invalid username or password");
     }
 

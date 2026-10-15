@@ -6,6 +6,60 @@ const whatsappService = require('./whatsappService');
 const stockNotificationService = require('./stockNotificationService');
 const orderEmailService = require('./orderEmailService');
 
+/**
+ * Normalizes order row to guarantee that delivered Cash on Delivery (COD)
+ * orders are always returned as payment_status = 'Paid'.
+ */
+const normalizeOrderRow = (row) => {
+    if (!row) return row;
+    const isCod = (row.payment_method || '').toLowerCase() === 'cod' ||
+                  (row.payment_type || '').toLowerCase() === 'cod' ||
+                  (row.payment_method || '').toLowerCase().includes('cash');
+    if ((row.status || '').toLowerCase() === 'delivered' && isCod) {
+        row.payment_status = 'Paid';
+    }
+    return row;
+};
+
+// Self-healing startup sync: Ensure all existing Delivered COD orders in DB are marked as Paid
+pool.query(`
+    UPDATE orders 
+    SET payment_status = 'Paid' 
+    WHERE (LOWER(payment_method) = 'cod' OR LOWER(payment_type) = 'cod' OR LOWER(payment_method) LIKE '%cash%')
+      AND LOWER(status) = 'delivered'
+      AND (payment_status IS NULL OR LOWER(payment_status) != 'paid')
+`).then(res => {
+    if (res && res.rowCount > 0) {
+        console.log(`[OrderService] Synced ${res.rowCount} legacy delivered COD order(s) to payment_status = 'Paid'`);
+    }
+}).catch(err => {
+    console.warn('[OrderService] Non-blocking COD delivered payment sync note:', err.message);
+});
+
+// Self-healing startup sync: Ensure all orders have an invoice_number formatted as HOU-YYYYMM<count>
+pool.query(`
+    WITH numbered_orders AS (
+      SELECT id,
+        'HOU-' || 
+        TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') || 
+        LPAD(ROW_NUMBER() OVER (
+          PARTITION BY TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') 
+          ORDER BY created_at ASC, id ASC
+        )::text, 2, '0') AS gen_invoice_number
+      FROM orders
+    )
+    UPDATE orders o
+    SET invoice_number = no.gen_invoice_number
+    FROM numbered_orders no
+    WHERE o.id = no.id AND (o.invoice_number IS NULL OR o.invoice_number = '')
+`).then(res => {
+    if (res && res.rowCount > 0) {
+        console.log(`[OrderService] Backfilled invoice_number for ${res.rowCount} order(s)`);
+    }
+}).catch(err => {
+    console.warn('[OrderService] Non-blocking invoice_number sync note:', err.message);
+});
+
 const resolveDbProductId = async (client, rawId, itemName) => {
     let candidateId = null;
     if (typeof rawId === 'number' && !isNaN(rawId)) {
@@ -94,81 +148,117 @@ exports.createOrder = async (orderData) => {
                 .filter(id => id !== null && !isNaN(id))
             : [];
 
-        let cartQuery = `SELECT
-                ci.product_id,
-                ci.product_id AS id,
-                ci.quantity,
-                p.price,
-                p.category_id,
-                p.brand   AS brand_id
-             FROM cart_items ci
-             JOIN products p ON ci.product_id::text = p.product_id::text
-             WHERE ci.user_id = $1`;
-        let cartParams = [userId];
+        // ── Authoritative price verification & subtotal strictly from order items ──
+        let dbSubtotal = 0;
+        const verifiedOrderItems = [];
 
-        if (sanitizedCartItemIds.length > 0) {
-            cartQuery += ` AND ci.product_id::integer = ANY($2::integer[])`;
-            cartParams.push(sanitizedCartItemIds);
-        }
-
-        const cartResult = await client.query(cartQuery, cartParams);
-        console.log(`[OrderService] Cart fetch result: ${cartResult.rows.length} rows`);
-        const dbCartItems = cartResult.rows.map(row => ({
-            ...row,
-            price: parseFloat(row.price),
-            quantity: parseInt(row.quantity, 10)
-        }));
-
-        // Compute subtotal from DB cart prices — if empty DB cart, fallback to client items/subtotal
-        let dbSubtotal = dbCartItems.reduce(
-            (sum, item) => sum + (item.price * item.quantity),
-            0
-        );
-
-        if (!dbSubtotal || dbSubtotal === 0) {
-            if (items && Array.isArray(items) && items.length > 0) {
-                dbSubtotal = items.reduce(
-                    (sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity, 10) || 1)),
-                    0
+        if (items && Array.isArray(items) && items.length > 0) {
+            for (const item of items) {
+                const validProductId = await resolveDbProductId(client, item.id || item.productId, item.name);
+                const prodRes = await client.query(
+                    'SELECT price, sale_price, stock_quantity, quantity, title, category_id, brand, is_active, size_stock, sizes FROM products WHERE product_id::text = $1::text LIMIT 1',
+                    [String(validProductId)]
                 );
-            } else if (subtotal && parseFloat(subtotal) > 0) {
-                dbSubtotal = parseFloat(subtotal);
-            } else if (total && parseFloat(total) > 0) {
-                dbSubtotal = parseFloat(total);
+                const prodRow = prodRes.rows[0];
+                const realPrice = (prodRow?.price !== undefined && prodRow?.price !== null && !isNaN(parseFloat(prodRow.price)))
+                    ? parseFloat(prodRow.price)
+                    : (parseFloat(item.price) || 0);
+                const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+
+                if (prodRow) {
+                    const overallStock = parseInt(prodRow.stock_quantity ?? prodRow.quantity ?? 0, 10);
+                    const isActive = prodRow.is_active !== false;
+
+                    if (!isActive || overallStock <= 0) {
+                        throw new Error(`Product "${prodRow.title || item.name}" is currently out of stock.`);
+                    }
+
+                    // Check size-specific stock if size is provided
+                    const itemSize = (item.size || item.selectedSize || '').trim();
+                    let sizeStock = null;
+                    if (prodRow.size_stock && typeof prodRow.size_stock === 'object' && itemSize) {
+                        const matchedKey = Object.keys(prodRow.size_stock).find(
+                            k => k.trim().toUpperCase() === itemSize.toUpperCase()
+                        );
+                        if (matchedKey) {
+                            sizeStock = parseInt(prodRow.size_stock[matchedKey], 10);
+                        }
+                    }
+
+                    if (sizeStock !== null) {
+                        if (sizeStock <= 0) {
+                            throw new Error(`Size "${itemSize}" for "${prodRow.title || item.name}" is out of stock.`);
+                        }
+                        if (qty > sizeStock) {
+                            throw new Error(`Insufficient stock for "${prodRow.title || item.name}" in size "${itemSize}". Only ${sizeStock} unit(s) available.`);
+                        }
+                    } else if (qty > overallStock) {
+                        throw new Error(`Insufficient stock for "${prodRow.title || item.name}". Only ${overallStock} unit(s) available.`);
+                    }
+                }
+
+                dbSubtotal += (realPrice * qty);
+                verifiedOrderItems.push({
+                    ...item,
+                    product_id: validProductId,
+                    id: validProductId,
+                    price: realPrice,
+                    quantity: qty,
+                    category_id: prodRow?.category_id,
+                    brand_id: prodRow?.brand
+                });
             }
+        } else if (subtotal && parseFloat(subtotal) > 0) {
+            dbSubtotal = parseFloat(subtotal);
+        } else if (total && parseFloat(total) > 0) {
+            dbSubtotal = parseFloat(total);
         }
-        console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
+
+        console.log(`[OrderService] Authoritative subtotal calculated strictly from order items: ${dbSubtotal}`);
 
         // ── STEP 1: Coupon validation (server-side, inside transaction) ────────
         // We never trust the client's `total`. We always recompute here.
         let discountAmount = 0;
         let couponId = null;                // FK → coupons.id; null if no coupon applied
         let validatedCouponCode = null;
-        // originalTotal = pre-discount total (dbSubtotal + shipping); used for audit clarity
-        const originalTotal = dbSubtotal + parseFloat(shipping || 0);
-        let finalTotal = originalTotal;
 
         if (couponCode) {
-            // dbCartItems already fetched above from DB — real prices, not client values.
-            // validateCoupon: checks active, expiry, min_order_value (vs dbSubtotal),
-            //                 usage_limit, assignment eligibility, scope matching.
+            // validateCoupon checks active, expiry, min_order_value (vs dbSubtotal),
+            // usage_limit, assignment eligibility, and scope matching with verified items.
             const validation = await couponService.validateCoupon(
                 couponCode,
-                dbSubtotal,             // server-computed from DB prices, never client value
-                dbCartItems,
+                dbSubtotal,
+                verifiedOrderItems,
                 userId
             );
 
             discountAmount = validation.discountAmount;
             couponId = validation.coupon?.id || null;      // FK — links order to coupons row
             validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
-            finalTotal = originalTotal - discountAmount;   // originalTotal already = dbSubtotal + shipping
-
-            if (finalTotal < 0) finalTotal = 0;
         }
+
+        // ── STEP 1.1: Tax calculation (Dynamic GST) ───────────────────────────
+        // If order amount after discount > 2500 then 18% tax, else 5% tax
+        const netTaxable = Math.max(0, dbSubtotal - discountAmount);
+        const taxRate = netTaxable > 2500 ? 18 : 5;
+        const taxAmount = netTaxable > 0 ? Math.round(netTaxable * (taxRate / 100)) : 0;
+        const shippingFee = parseFloat(shipping || 0);
+
+        // originalTotal = pre-discount total (dbSubtotal + tax + shipping); used for audit clarity
+        const originalTotal = Math.round(dbSubtotal + (dbSubtotal > 2500 ? dbSubtotal * 0.18 : dbSubtotal * 0.05) + shippingFee);
+        let finalTotal = Math.round(netTaxable + taxAmount + shippingFee);
 
         if ((!finalTotal || finalTotal === 0) && total && parseFloat(total) > 0) {
             finalTotal = parseFloat(total);
+        }
+
+        // Apply 2% processing surcharge if payment is via Credit / Debit Card
+        let cardSurcharge = 0;
+        const isCardPayment = (paymentMethod === 'card' || paymentType === 'Card' || String(paymentMethod || '').toLowerCase().includes('card'));
+        if (isCardPayment) {
+            cardSurcharge = orderData.cardSurcharge !== undefined ? parseFloat(orderData.cardSurcharge) : Math.round(finalTotal * 0.02);
+            finalTotal = Math.round(finalTotal + cardSurcharge);
+            console.log(`[OrderService] Card payment detected. Applied 2% surcharge of ₹${cardSurcharge}. Final Total: ₹${finalTotal}`);
         }
 
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
@@ -190,26 +280,33 @@ exports.createOrder = async (orderData) => {
             const fullAddr = sa.full_address || sa.street || sa.address || '';
             if (fullAddr || sa.city || sa.postal_code || sa.pincode) {
                 try {
-                    const addrRes = await client.query(
-                        `INSERT INTO public.user_addresses 
-                        (user_id, address_label, full_address, city, state, postal_code, is_default, recipient_name, phone) 
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-                        RETURNING id`,
-                        [
-                            String(userId).trim(),
-                            sa.address_label || sa.type || 'Home',
-                            fullAddr,
-                            sa.city || '',
-                            sa.state || '',
-                            sa.postal_code || sa.pincode || '',
-                            true,
-                            sa.recipient_name || sa.fullName || sa.name || '',
-                            sa.phone || ''
-                        ]
+                    const countCheck = await client.query(
+                        "SELECT COUNT(*) FROM public.user_addresses WHERE LOWER(user_id) = LOWER($1)",
+                        [String(userId).trim()]
                     );
-                    if (addrRes.rows[0]?.id) {
-                        sanitizedAddressId = addrRes.rows[0].id;
-                        console.log(`[OrderService] Auto-saved new shippingAddress with ID ${sanitizedAddressId} for user ${userId}`);
+                    const currentCount = parseInt(countCheck.rows[0]?.count || 0, 10);
+                    if (currentCount < 4) {
+                        const addrRes = await client.query(
+                            `INSERT INTO public.user_addresses 
+                            (user_id, address_label, full_address, city, state, postal_code, is_default, recipient_name, phone) 
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                            RETURNING id`,
+                            [
+                                String(userId).trim(),
+                                sa.address_label || sa.type || 'Home',
+                                fullAddr,
+                                sa.city || '',
+                                sa.state || '',
+                                sa.postal_code || sa.pincode || '',
+                                true,
+                                sa.recipient_name || sa.fullName || sa.name || '',
+                                sa.phone || ''
+                            ]
+                        );
+                        if (addrRes.rows[0]?.id) {
+                            sanitizedAddressId = addrRes.rows[0].id;
+                            console.log(`[OrderService] Auto-saved new shippingAddress with ID ${sanitizedAddressId} for user ${userId}`);
+                        }
                     }
                 } catch (addrInsertErr) {
                     console.error('[OrderService] Could not auto-save shippingAddress:', addrInsertErr.message);
@@ -232,31 +329,44 @@ exports.createOrder = async (orderData) => {
             }
         }
 
+        // Calculate monthly sequence for invoice_number (format: HOU-YYYYMM<count>)
+        const countRes = await client.query(
+            "SELECT COUNT(*) FROM orders WHERE date_trunc('month', created_at) = date_trunc('month', NOW())"
+        );
+        const nextMonthSeq = parseInt(countRes.rows[0]?.count || 0, 10) + 1;
+        const now = new Date();
+        const invYear = now.getFullYear();
+        const invMonth = String(now.getMonth() + 1).padStart(2, '0');
+        const invCount = String(nextMonthSeq).padStart(2, '0');
+        const generatedInvoiceNumber = `HOU-${invYear}${invMonth}${invCount}`;
+
         const orderResult = await client.query(
             `INSERT INTO orders (
-                user_id, order_number, address_id, payment_method, payment_status, payment_type,
+                user_id, order_number, invoice_number, address_id, payment_method, payment_status, payment_type,
                 subtotal, original_total, shipping,
-                discount_amount, total,
+                tax, discount_amount, total,
                 coupon_code, coupon_id,
                 status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Pending', $16, $17, NOW(), NOW())
             RETURNING *`,
             [
                 userId,                          // $1
                 orderNumber,                     // $2
-                sanitizedAddressId,              // $3
-                paymentMethod,                   // $4
-                paymentStatus || 'Pending',      // $5
-                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $6
-                dbSubtotal,                      // $7  — server-computed cart sum, never client value
-                originalTotal,                   // $8  — pre-discount total (dbSubtotal + shipping)
-                shipping || 0,                   // $9
-                discountAmount,                  // $10 — 0 if no coupon
-                finalTotal,                      // $11 — server-computed, never from client
-                validatedCouponCode || null,     // $12 — normalized code string (kept for history)
-                couponId,                        // $13 — FK → coupons.id; null if no coupon
-                trackingNumber,                  // $14
-                estimatedDelivery                // $15
+                generatedInvoiceNumber,          // $3
+                sanitizedAddressId,              // $4
+                paymentMethod,                   // $5
+                paymentStatus || 'Pending',      // $6
+                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $7
+                dbSubtotal,                      // $8  — server-computed cart sum, never client value
+                originalTotal,                   // $9  — pre-discount total (dbSubtotal + tax + shipping)
+                shipping || 0,                   // $10
+                taxAmount,                       // $11 — server-computed GST tax
+                discountAmount,                  // $12 — 0 if no coupon
+                finalTotal,                      // $13 — server-computed, never from client
+                validatedCouponCode || null,     // $14 — normalized code string (kept for history)
+                couponId,                        // $15 — FK → coupons.id; null if no coupon
+                trackingNumber,                  // $16
+                estimatedDelivery                // $17
             ]
         );
 
@@ -282,21 +392,43 @@ exports.createOrder = async (orderData) => {
         for (const item of items) {
             const validProductId = await resolveDbProductId(client, item.id || item.productId, item.name);
 
+            const itemSize = item.size || item.selectedSize || 'M';
             await client.query(
-                `INSERT INTO order_items (order_id, product_id, name, price, quantity, image, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-                [order.id, validProductId, item.name, item.price, item.quantity, item.image]
+                `INSERT INTO order_items (order_id, product_id, name, price, quantity, image, size, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+                [order.id, validProductId, item.name, item.price, item.quantity, item.image, itemSize]
             );
+
+            // Fetch current size_stock to atomically update size-specific quantity
+            const prodStockRes = await client.query(
+                `SELECT size_stock, stock_quantity FROM products WHERE product_id::text = $1::text LIMIT 1 FOR UPDATE`,
+                [String(validProductId)]
+            );
+            const currentSizeStock = prodStockRes.rows[0]?.size_stock || {};
+            let updatedSizeStock = { ...currentSizeStock };
+            const matchedKey = Object.keys(updatedSizeStock).find(
+                k => k.trim().toUpperCase() === itemSize.trim().toUpperCase()
+            );
+            if (matchedKey) {
+                const currentVal = parseInt(updatedSizeStock[matchedKey], 10) || 0;
+                updatedSizeStock[matchedKey] = Math.max(0, currentVal - item.quantity);
+            }
 
             const stockUpdateResult = await client.query(
                 `UPDATE products
                  SET stock_quantity = GREATEST(0, COALESCE(stock_quantity, 0) - $2),
                      quantity       = GREATEST(0, COALESCE(quantity, 0) - $2),
+                     size_stock     = $3::jsonb,
+                     instock        = (CASE WHEN GREATEST(0, COALESCE(stock_quantity, 0) - $2) > 0 THEN true ELSE false END),
                      updated_at     = NOW()
-                 WHERE product_id::text = $1::text
+                 WHERE product_id::text = $1::text AND COALESCE(stock_quantity, 0) >= $2
                  RETURNING stock_quantity`,
-                [String(validProductId), item.quantity]
+                [String(validProductId), item.quantity, JSON.stringify(updatedSizeStock)]
             );
+
+            if (stockUpdateResult.rows.length === 0) {
+                throw new Error(`Insufficient stock for "${item.name}". Only ${item.quantity} or fewer units are available.`);
+            }
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
@@ -307,14 +439,14 @@ exports.createOrder = async (orderData) => {
         }
 
         // ── STEP 5: Clear cart ─────────────────────────────────────────────────
-        // Only clear the cart immediately for COD orders. For online/card/UPI payments,
-        // the cart is kept intact until successful payment verification on the frontend.
-        // This ensures that if the user cancels or the payment fails, their cart is preserved.
+        // For COD orders, clear both cart base table and cart_items view immediately.
+        // For online payments, cart is preserved until verification or frontend clearCart.
         if (paymentMethod === 'cod') {
-            if (sanitizedCartItemIds && sanitizedCartItemIds.length > 0) {
-                await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id::integer = ANY($2::integer[])`, [userId, sanitizedCartItemIds]);
-            } else {
+            try {
+                await client.query(`DELETE FROM cart WHERE user_id = $1`, [userId]);
                 await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
+            } catch (cartClearErr) {
+                console.warn('[OrderService] Cart clear warning:', cartClearErr.message);
             }
         }
 
@@ -322,9 +454,12 @@ exports.createOrder = async (orderData) => {
         order.items = items;
 
         // Trigger Workflow 1: Order Confirmation Email (strictly separated, asynchronous, non-blocking)
-        orderEmailService.sendOrderConfirmationWorkflow(order.id).catch(emailErr => {
-            console.error(`[OrderService] Order confirmation email trigger error for ${order.id}:`, emailErr.message);
-        });
+        // For COD orders, send confirmation immediately. For online orders, confirmation is sent after successful payment verification.
+        if (paymentMethod === 'cod') {
+            orderEmailService.sendOrderConfirmationWorkflow(order.id).catch(emailErr => {
+                console.error(`[OrderService] Order confirmation email trigger error for ${order.id}:`, emailErr.message);
+            });
+        }
 
         return order;
 
@@ -340,23 +475,40 @@ exports.getAllOrders = async (options = {}) => {
     const { limit = 10, offset = 0, status, paymentStatus } = options;
 
     let baseQuery = `FROM orders o LEFT JOIN user_addresses a ON o.address_id = a.id LEFT JOIN users u ON o.user_id = u.username WHERE 1=1`;
-    const { type = 'successful' } = options;
+    const { type = 'all' } = options;
 
     if (type === 'successful') {
         baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
     } else if (type === 'potential') {
         baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
     }
-    // 'all' includes both successful and potential (DRAFTs/ABANDONED)
+    // 'all' includes both successful and potential (DRAFTs/ABANDONED/Online Pending)
 
     const params = [];
     let paramIndex = 1;
 
     if (status && status !== 'all') {
-        if (status === 'Cancelled') {
-            baseQuery += ` AND o.status IN ('Cancelled', 'Returned', 'Refunded')`;
-        } else if (status === 'Cancellation Requested') {
+        const sLower = status.toLowerCase();
+        if (sLower === 'cancelled' || sLower === 'canceled') {
+            baseQuery += ` AND (o.status ILIKE 'Cancelled' OR o.status ILIKE 'Refunded')`;
+        } else if (sLower === 'cancellation requested') {
             baseQuery += ` AND (o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')))`;
+        } else if (sLower === 'confirmed') {
+            baseQuery += ` AND o.status ILIKE 'Confirmed'`;
+        } else if (sLower === 'processing' || sLower === 'packed') {
+            baseQuery += ` AND (o.status ILIKE 'Processing' OR o.status ILIKE 'Packed')`;
+        } else if (sLower === 'pending' || sLower === 'placed') {
+            baseQuery += ` AND (o.status ILIKE 'Pending' OR o.status ILIKE 'Placed')`;
+        } else if (sLower === 'shipped' || sLower === 'dispatched') {
+            baseQuery += ` AND (o.status ILIKE 'Shipped' OR o.status ILIKE 'Dispatched')`;
+        } else if (sLower === 'out for delivery') {
+            baseQuery += ` AND o.status ILIKE 'Out for Delivery'`;
+        } else if (sLower === 'delivered') {
+            baseQuery += ` AND o.status ILIKE 'Delivered'`;
+        } else if (sLower === 'returned' || sLower === 'return' || sLower === 'returns') {
+            baseQuery += ` AND (o.status ILIKE 'Returned' OR o.status ILIKE 'Return%' OR o.is_returned_order = true)`;
+        } else if (sLower === 'exchanged' || sLower === 'exchange' || sLower === 'exchanges' || sLower === 'replaced' || sLower === 'replace' || sLower === 'replacement' || sLower === 'replacements') {
+            baseQuery += ` AND (o.status ILIKE 'Exchanged' OR o.status ILIKE 'Exchange%' OR o.return_type ILIKE 'exchange' OR o.status ILIKE 'Replace%' OR o.status ILIKE 'Replacement%' OR o.return_type ILIKE 'Replacement')`;
         } else {
             baseQuery += ` AND o.status = $${paramIndex}`;
             params.push(status);
@@ -365,8 +517,21 @@ exports.getAllOrders = async (options = {}) => {
     }
 
     if (paymentStatus && paymentStatus !== 'all') {
-        baseQuery += ` AND o.payment_status = $${paramIndex}`;
-        params.push(paymentStatus);
+        const pLower = paymentStatus.toLowerCase();
+        if (pLower === 'pending') {
+            baseQuery += ` AND (o.payment_status ILIKE 'Pending' OR o.payment_status ILIKE 'Failed') AND NOT (o.status ILIKE 'Delivered' AND (o.payment_method ILIKE 'cod' OR o.payment_type ILIKE 'cod' OR o.payment_method ILIKE '%cash%'))`;
+        } else if (pLower === 'paid') {
+            baseQuery += ` AND (o.payment_status ILIKE 'Paid' OR (o.status ILIKE 'Delivered' AND (o.payment_method ILIKE 'cod' OR o.payment_type ILIKE 'cod' OR o.payment_method ILIKE '%cash%')))`;
+        } else {
+            baseQuery += ` AND o.payment_status ILIKE $${paramIndex}`;
+            params.push(paymentStatus);
+            paramIndex++;
+        }
+    }
+
+    if (options.paymentType && options.paymentType !== 'all') {
+        baseQuery += ` AND (o.payment_type ILIKE $${paramIndex} OR o.payment_method ILIKE $${paramIndex})`;
+        params.push(`%${options.paymentType}%`);
         paramIndex++;
     }
 
@@ -388,7 +553,7 @@ exports.getAllOrders = async (options = {}) => {
     const queryParams = [...params, limit, offset];
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.recipient_name, a.phone as recipient_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -418,7 +583,7 @@ exports.getAllOrders = async (options = {}) => {
     );
 
     return {
-        orders: orderResult.rows,
+        orders: orderResult.rows.map(normalizeOrderRow),
         totalCount: totalCount,
         limit,
         offset
@@ -433,15 +598,19 @@ exports.getCancelledOrders = async (options = {}) => {
                      LEFT JOIN users u ON o.user_id = u.username 
                      LEFT JOIN user_addresses a ON o.address_id = a.id 
                      WHERE (
-                        o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected')
+                        o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Received at House of Urvaah', 'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Rejected')
                         OR EXISTS (
-                            SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled')
+                            SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Received at House of Urvaah', 'Refunded', 'Cancelled')
                         )
                      )
                      AND (
-                        LOWER(o.payment_method) != 'cod' 
+                        (
+                            LOWER(o.payment_method) != 'cod' 
+                            OR o.payment_status = 'Paid' 
+                            OR o.original_status = 'Delivered'
+                        )
                         OR o.status LIKE 'Return%' 
-                        OR o.status IN ('Returned', 'Refunded')
+                        OR o.status IN ('Returned', 'Refunded', 'Received at Homved', 'Received at House of Urvaah')
                         OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%'))
                      )`;
 
@@ -455,15 +624,15 @@ exports.getCancelledOrders = async (options = {}) => {
     // ── Refund Desk specific filtering ──────────────────────────────────────
     if (refundStatusFilter === 'active') {
         // Only show orders that are actively being processed for a refund.
-        // Exclude: already Refunded/Completed, and Pending-refund orders
-        // whose order hasn't been admin-approved yet.
+        // Exclude: already Refunded/Completed, and orders whose returns haven't arrived at House of Urvaah yet!
         baseQuery += `
                      AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed'))
                      AND NOT (
                          (o.refund_status = 'Pending' OR o.refund_status IS NULL)
                          AND o.status IN (
                              'Cancellation Requested', 'CANCEL_REQUESTED',
-                             'Return Request Processing', 'Replacement Request Processing'
+                             'Return Requested', 'Return Request Processing',
+                             'Replacement Request Processing', 'Return Approved'
                          )
                      )`;
     } else if (refundStatusFilter && refundStatusFilter !== 'All' && refundStatusFilter !== 'all') {
@@ -578,7 +747,7 @@ exports.getCancelledOrders = async (options = {}) => {
     );
 
     return {
-        orders: orderResult.rows,
+        orders: orderResult.rows.map(normalizeOrderRow),
         totalCount: totalCount,
         limit,
         offset
@@ -590,25 +759,29 @@ exports.getCancelledOrdersStats = async () => {
         `SELECT 
             COUNT(*) FILTER (
                 WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved')
-                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id)) AND LOWER(payment_method) != 'cod'
+                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id)) 
+                AND (LOWER(payment_method) != 'cod' OR payment_status = 'Paid' OR original_status = 'Delivered')
             ) as total_cancelled,
-            COUNT(*) FILTER (WHERE refund_status = 'Pending' AND LOWER(payment_method) != 'cod') as pending_refunds
+            COUNT(*) FILTER (WHERE refund_status = 'Pending' AND (LOWER(payment_method) != 'cod' OR payment_status = 'Paid' OR original_status = 'Delivered')) as pending_refunds
          FROM orders`
     );
     return result.rows[0];
 };
 
 exports.getOrdersByUser = async (userId) => {
+    if (!userId) return [];
+    const cleanId = String(userId).trim();
     // Use json_agg to avoid N+1 query problem and improve performance
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.recipient_name, a.phone as recipient_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
                          SELECT oi.*, 
-                                COALESCE(p.title, 'Item #' || oi.product_id) as name,
-                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(oi.name, p.title, 'Item #' || oi.product_id) as name,
+                                COALESCE(oi.name, p.title, 'Item #' || oi.product_id) as title,
                                 COALESCE(
+                                  oi.image,
                                   p.image_url,
                                   CASE 
                                     WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
@@ -618,7 +791,7 @@ exports.getOrdersByUser = async (userId) => {
                                 p.images,
                                 p.image_url
                          FROM order_items oi
-                         LEFT JOIN products p ON oi.product_id = p.id
+                         LEFT JOIN products p ON (oi.product_id = p.id OR oi.product_id = p.product_id)
                          WHERE oi.order_id = o.id
                          ORDER BY oi.created_at ASC
                      ) items_data
@@ -626,25 +799,26 @@ exports.getOrdersByUser = async (userId) => {
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
-         LEFT JOIN users u ON o.user_id = u.username
-         WHERE o.user_id = $1 
+         LEFT JOIN users u ON (LOWER(o.user_id) = LOWER(u.username) OR LOWER(o.user_id) = LOWER(u.emailid))
+         WHERE LOWER(o.user_id) = LOWER($1::text) OR LOWER(u.emailid) = LOWER($1::text) OR LOWER(u.username) = LOWER($1::text)
          ORDER BY o.created_at DESC`,
-        [userId]
+        [cleanId]
     );
 
-    return orderResult.rows;
+    return orderResult.rows.map(normalizeOrderRow);
 };
 
 exports.getOrderById = async (orderId) => {
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.recipient_name, a.phone as recipient_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
                          SELECT oi.*, 
-                                COALESCE(p.title, 'Item #' || oi.product_id) as name,
-                                COALESCE(p.title, 'Item #' || oi.product_id) as title,
+                                COALESCE(oi.name, p.title, 'Item #' || oi.product_id) as name,
+                                COALESCE(oi.name, p.title, 'Item #' || oi.product_id) as title,
                                 COALESCE(
+                                  oi.image,
                                   p.image_url,
                                   CASE 
                                     WHEN p.images IS NOT NULL AND array_length(p.images, 1) > 0 THEN p.images[1]
@@ -654,7 +828,7 @@ exports.getOrderById = async (orderId) => {
                                 p.images,
                                 p.image_url
                          FROM order_items oi
-                         LEFT JOIN products p ON oi.product_id = p.id
+                         LEFT JOIN products p ON (oi.product_id = p.id OR oi.product_id = p.product_id)
                          WHERE oi.order_id = o.id
                          ORDER BY oi.created_at ASC
                      ) items_data
@@ -662,14 +836,14 @@ exports.getOrderById = async (orderId) => {
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
-         LEFT JOIN users u ON o.user_id = u.username
+         LEFT JOIN users u ON (LOWER(o.user_id) = LOWER(u.username) OR LOWER(o.user_id) = LOWER(u.emailid))
          WHERE o.id::text = $1 OR o.order_number = $1`,
         [orderId]
     );
 
     if (orderResult.rows.length === 0) return null;
 
-    return orderResult.rows[0];
+    return normalizeOrderRow(orderResult.rows[0]);
 };
 
 /**
@@ -695,8 +869,9 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
         if (order.user_id !== userId) throw new Error('Not authorized to request return/replace for this order');
 
         const windowDays = 7;
-        const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null;
-        if (!deliveredDate && order.status === 'Delivered') throw new Error('Delivery timestamp missing.');
+        const deliveredDate = order.delivered_at 
+            ? new Date(order.delivered_at) 
+            : (order.updated_at ? new Date(order.updated_at) : new Date(order.created_at));
 
         if (deliveredDate) {
             const diffDays = Math.ceil(Math.abs(new Date() - deliveredDate) / (1000 * 60 * 60 * 24));
@@ -898,14 +1073,16 @@ exports.getOrderStats = async () => {
         `SELECT 
             COUNT(*)::int as total,
             COUNT(*) FILTER (WHERE status ILIKE 'Pending' OR status ILIKE 'Placed')::int as pending,
-            COUNT(*) FILTER (WHERE status ILIKE 'Processing' OR status ILIKE 'Confirmed' OR status ILIKE 'Packed')::int as processing,
+            COUNT(*) FILTER (WHERE status ILIKE 'Confirmed')::int as confirmed,
+            COUNT(*) FILTER (WHERE status ILIKE 'Processing' OR status ILIKE 'Packed')::int as processing,
             COUNT(*) FILTER (WHERE status ILIKE 'Shipped' OR status ILIKE 'Dispatched')::int as shipped,
             COUNT(*) FILTER (WHERE status ILIKE 'Out for Delivery')::int as out_for_delivery,
             COUNT(*) FILTER (WHERE status ILIKE 'Delivered')::int as delivered,
-            COUNT(*) FILTER (WHERE status ILIKE 'Cancelled' OR status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED')::int as cancelled,
+            COUNT(*) FILTER (WHERE status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status ILIKE 'Cancellation Requested' OR oi.status ILIKE 'CANCEL_REQUESTED')))::int as cancellation_requested,
+            COUNT(*) FILTER (WHERE status ILIKE 'Cancelled' OR status ILIKE 'Refunded')::int as cancelled,
             COUNT(*) FILTER (WHERE status ILIKE 'Returned' OR status ILIKE 'Return%' OR is_returned_order = true)::int as returns,
-            COUNT(*) FILTER (WHERE status ILIKE 'Exchanged' OR status ILIKE 'Exchange%' OR return_type = 'exchange')::int as exchanges,
-            COUNT(*) FILTER (WHERE payment_status ILIKE 'Pending' OR payment_status ILIKE 'Failed')::int as pending_payment
+            COUNT(*) FILTER (WHERE status ILIKE 'Exchanged' OR status ILIKE 'Exchange%' OR return_type ILIKE 'exchange' OR status ILIKE 'Replace%' OR status ILIKE 'Replacement%' OR return_type ILIKE 'Replacement')::int as exchanges,
+            COUNT(*) FILTER (WHERE (payment_status ILIKE 'Pending' OR payment_status ILIKE 'Failed') AND NOT (status ILIKE 'Delivered' AND (payment_method ILIKE 'cod' OR payment_type ILIKE 'cod' OR payment_method ILIKE '%cash%')))::int as pending_payment
          FROM orders`
     );
 
@@ -913,10 +1090,12 @@ exports.getOrderStats = async () => {
     return {
         total: parseInt(stats.total || 0),
         pending: parseInt(stats.pending || 0),
+        confirmed: parseInt(stats.confirmed || 0),
         processing: parseInt(stats.processing || 0),
         shipped: parseInt(stats.shipped || 0),
         outForDelivery: parseInt(stats.out_for_delivery || 0),
         delivered: parseInt(stats.delivered || 0),
+        cancellationRequested: parseInt(stats.cancellation_requested || 0),
         cancelled: parseInt(stats.cancelled || 0),
         canceled: parseInt(stats.cancelled || 0),
         returns: parseInt(stats.returns || 0),
@@ -930,13 +1109,24 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
     try {
         await client.query('BEGIN');
 
-        // Get current status to check for cancellation
-        const currentOrderRes = await client.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+        // Get current status to check for cancellation (supports UUID or order_number)
+        const currentOrderRes = await client.query(
+            `SELECT * FROM orders WHERE id::text = $1 OR order_number = $1`,
+            [orderId]
+        );
         if (currentOrderRes.rows.length === 0) throw new Error('Order not found');
 
         const oldOrder = currentOrderRes.rows[0];
+        orderId = oldOrder.id; // Normalize to valid DB UUID for all subsequent queries
         const oldStatus = oldOrder.status;
         const oldIsProductReceived = oldOrder.is_product_received;
+        const isCodOrder = (oldOrder.payment_method || '').toLowerCase() === 'cod' || 
+                           (oldOrder.payment_type || '').toLowerCase() === 'cod' ||
+                           (oldOrder.payment_method || '').toLowerCase().includes('cash');
+
+        if (status === 'Delivered' && isCodOrder) {
+            paymentStatus = 'Paid';
+        }
 
         if (itemIds && Array.isArray(itemIds) && itemIds.length > 0 && typeof itemIds[0] === 'object') {
             console.log(`[OrderService] Partial update for Order ${orderId}: Items=${JSON.stringify(itemIds)}, Status=${status}`);
@@ -1129,6 +1319,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         let updateParams;
 
         if (status === 'Cancelled' || status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED') {
+            const isOnlinePayment = (oldOrder.payment_method || '').toLowerCase() !== 'cod';
+            const isDeliveredCod = !isOnlinePayment && ((oldOrder.status || '').toLowerCase() === 'delivered' || oldOrder.payment_status === 'Paid');
+            const isEligibleForRefund = isOnlinePayment || isDeliveredCod;
+            const isCancellationRequested = (status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED');
+            const refundStatusVal = isEligibleForRefund ? (oldOrder.refund_status || 'Pending') : null;
+
             updateQuery = `UPDATE orders 
                            SET status = $2::text, 
                                cancel_reason = CASE 
@@ -1139,13 +1335,13 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                cancelled_at = NOW(), 
                                updated_at = NOW(),
                                refund_eligible_amount = CASE 
-                                   WHEN status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
-                                   ELSE COALESCE(refund_eligible_amount, 0) + total
+                                   WHEN $9::boolean = true THEN COALESCE(NULLIF(refund_eligible_amount, 0), total)
+                                   ELSE 0
                                END,
                                refund_bank_account = COALESCE($5::text, refund_bank_account),
                                refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
                                refund_holder_name = COALESCE($7::text, refund_holder_name),
-                               refund_status = COALESCE(refund_status, 'Pending'),
+                               refund_status = $10::text,
                                payment_status = COALESCE($8::text, payment_status)
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
@@ -1156,33 +1352,166 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 bankDetails?.accountNumber || null,
                 bankDetails?.ifscCode || null,
                 bankDetails?.holderName || null,
-                paymentStatus || null
+                paymentStatus || null,
+                isEligibleForRefund,
+                refundStatusVal
             ];
-        } else if (status === 'Delivered') {
-            console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, updated_at = NOW() WHERE id = $1 RETURNING *`;
-            updateParams = [orderId, status, paymentStatus || 'Paid'];
-        } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
-            status.includes('Replace Approved') || status.includes('Replace Rejected') ||
-            status === 'Received at Homved' || status === 'Refunded' || status === 'Replaced') {
 
-            const isRejected = status.includes('Rejected') || status.includes('Un-Approved');
+            if (isCancellationRequested) {
+                try {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Cancellation Requested', 
+                             cancel_reason = COALESCE($2::text, cancel_reason, 'Customer requested cancellation') 
+                         WHERE order_id = $1::uuid AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded'))`,
+                        [orderId, cancelReason]
+                    );
+                } catch (itemCancelErr) {
+                    console.warn('[OrderService] Could not sync items to Cancellation Requested:', itemCancelErr.message);
+                }
+            }
+        } else if (status === 'Delivered') {
+            const finalPaymentStatus = (isCodOrder || status === 'Delivered') ? 'Paid' : (paymentStatus || 'Paid');
+            console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${finalPaymentStatus}`);
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, delivered_at = COALESCE(delivered_at, NOW()), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status, finalPaymentStatus];
+        } else if (status === 'Return Requested' || status === 'Return Request Processing') {
+            const isOnlinePayment = (oldOrder.payment_method || '').toLowerCase() !== 'cod';
+            console.log(`[OrderService] Post-delivery return requested for order ${orderId}. Reason: ${cancelReason}`);
+            updateQuery = `UPDATE orders SET 
+                           status = $2::text, 
+                           cancel_reason = CASE 
+                               WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
+                               ELSE COALESCE(cancel_reason, 'Customer requested return after delivery') 
+                           END,
+                           return_reason = CASE 
+                               WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
+                               ELSE COALESCE(return_reason, cancel_reason, 'Customer requested return after delivery') 
+                           END,
+                           original_status = COALESCE(original_status, 'Delivered'), 
+                           logistics_status = 'Return Requested',
+                           is_product_received = FALSE,
+                           is_returned_order = TRUE,
+                           refund_bank_account = COALESCE($5::text, refund_bank_account),
+                           refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
+                           refund_holder_name = COALESCE($7::text, refund_holder_name),
+                           refund_status = $4::text,
+                           updated_at = NOW()
+                           WHERE id = $1::uuid RETURNING *`;
+            updateParams = [
+                orderId,
+                status,
+                cancelReason || null,
+                isOnlinePayment ? 'Pending' : (oldOrder.refund_status || null),
+                bankDetails?.accountNumber || null,
+                bankDetails?.ifscCode || null,
+                bankDetails?.holderName || null
+            ];
+
+            try {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = $2::text, 
+                         cancel_reason = COALESCE($3::text, cancel_reason, 'Customer requested return') 
+                     WHERE order_id = $1::uuid AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded'))`,
+                    [orderId, status, cancelReason]
+                );
+            } catch (itemReturnErr) {
+                console.warn('[OrderService] Could not sync items to Return Requested:', itemReturnErr.message);
+            }
+        } else if (status === 'Replacement Request Processing' || status === 'Replace Requested') {
+            console.log(`[OrderService] Post-delivery replacement requested for order ${orderId}. Reason: ${cancelReason}`);
+            updateQuery = `UPDATE orders SET 
+                           status = $2::text, 
+                           return_type = 'Replacement',
+                           cancel_reason = CASE 
+                               WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
+                               ELSE COALESCE(cancel_reason, 'Customer requested replacement after delivery') 
+                           END,
+                           return_reason = CASE 
+                               WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
+                               ELSE COALESCE(return_reason, cancel_reason, 'Customer requested replacement after delivery') 
+                           END,
+                           original_status = COALESCE(original_status, 'Delivered'), 
+                           logistics_status = 'Replacement Requested',
+                           is_product_received = FALSE,
+                           updated_at = NOW()
+                           WHERE id = $1::uuid RETURNING *`;
+            updateParams = [
+                orderId,
+                status,
+                cancelReason || null
+            ];
+
+            try {
+                if (itemIds && itemIds.length > 0) {
+                    const idsToUpdate = itemIds.map(i => typeof i === 'string' ? i : i.id);
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = $2::text, 
+                             cancel_reason = COALESCE($3::text, cancel_reason, 'Customer requested replacement') 
+                         WHERE order_id = $1::uuid AND id = ANY($4::uuid[])`,
+                        [orderId, status, cancelReason, idsToUpdate]
+                    );
+                } else {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = $2::text, 
+                             cancel_reason = COALESCE($3::text, cancel_reason, 'Customer requested replacement') 
+                         WHERE order_id = $1::uuid AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Replaced'))`,
+                        [orderId, status, cancelReason]
+                    );
+                }
+            } catch (itemReplaceErr) {
+                console.warn('[OrderService] Could not sync items to Replacement Request Processing:', itemReplaceErr.message);
+            }
+        } else if (status === 'Return Rejected') {
+            console.log(`[OrderService] Return rejected for order ${orderId}. Restoring to Delivered.`);
+            updateQuery = `UPDATE orders SET 
+                           status = 'Delivered', 
+                           rejection_reason = $3::text,
+                           logistics_status = 'Delivered',
+                           updated_at = NOW() 
+                           WHERE id = $1::uuid RETURNING *`;
+            updateParams = [orderId, 'Delivered', cancelReason || 'Return request rejected by Admin'];
+
+            try {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Delivered' 
+                     WHERE order_id = $1::uuid AND status IN ('Return Requested', 'Return Request Processing')`,
+                    [orderId]
+                );
+            } catch (itemRejectErr) {
+                console.warn('[OrderService] Could not revert items on Return Rejected:', itemRejectErr.message);
+            }
+        } else if (status.includes('Return Approved') || 
+            status.includes('Replace Approved') || status.includes('Replace Rejected') ||
+            status === 'Received at House of Urvaah' || status === 'Received at Homved' || 
+            status === 'Returned' || status === 'Refunded' || status === 'Replaced') {
+
             const isApproved = status.includes('Approved');
+            const isReturnApproved = status === 'Return Approved';
+            const isArrivalAtUrvaah = (status === 'Received at House of Urvaah' || status === 'Received at Homved' || status === 'Returned');
 
             // Pre-calculate values to avoid complex CASE statements in SQL
             let refundStatusVal = oldOrder.refund_status;
-            if (oldOrder.payment_status === 'Refunded') {
-                if (!['Refunded', 'Completed'].includes(refundStatusVal)) {
-                    refundStatusVal = 'Refunded';
-                }
-            } else if (status === 'Return Approved') {
-                refundStatusVal = 'Pending';
-            } else if (status === 'Refunded') {
+            if (oldOrder.payment_status === 'Refunded' || status === 'Refunded') {
                 refundStatusVal = 'Refunded';
+            } else if (isArrivalAtUrvaah) {
+                // When package arrives at House of Urvaah, refund desk begins!
+                refundStatusVal = 'Pending';
+            } else if (isReturnApproved) {
+                refundStatusVal = oldOrder.refund_status || 'Pending';
             }
 
-            const productReceivedVal = (status === 'Received at Homved') ? true : oldIsProductReceived;
-            const logisticsStatusVal = (status === 'Received at Homved') ? 'Received at Homved' : oldOrder.logistics_status;
+            const productReceivedVal = isArrivalAtUrvaah ? true : oldIsProductReceived;
+            let logisticsStatusVal = oldOrder.logistics_status;
+            if (isReturnApproved) {
+                logisticsStatusVal = 'In Transit to House of Urvaah';
+            } else if (isArrivalAtUrvaah) {
+                logisticsStatusVal = 'Delivered to House of Urvaah';
+            }
 
             // PARTIAL UPDATE: If itemIds are provided, update those specific items
             if (itemIds && itemIds.length > 0) {
@@ -1194,24 +1523,14 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                      WHERE order_id = $1::uuid AND id = ANY($3::uuid[])`,
                     [orderId, status, idsToUpdate]
                 );
-
-                // If some items were rejected, maybe show that in the order
-                if (isRejected) {
-                    await client.query(
-                        `UPDATE orders SET rejection_reason = $2, updated_at = NOW() WHERE id = $1`,
-                        [orderId, cancelReason || 'Administrative decision']
-                    );
-                }
             }
 
             // Determine if the main order status should actually change
             let finalStatus = status;
             if (itemIds && itemIds.length > 0) {
-                // For partial updates, we usually want to keep the current order status 
-                // UNLESS everything else is now cancelled/refunded.
                 const checkRes = await client.query(
                     `SELECT COUNT(*) as active_count FROM order_items 
-                     WHERE order_id = $1 AND status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Replace Approved', $2)`,
+                     WHERE order_id = $1 AND status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Replace Approved', 'Received at House of Urvaah', $2)`,
                     [orderId, status]
                 );
                 const activeCount = parseInt(checkRes.rows[0].active_count);
@@ -1222,13 +1541,16 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
             updateQuery = `UPDATE orders SET 
                            status = $2::text, 
-                           rejection_reason = COALESCE($3::text, rejection_reason),
-                           refund_status = $4::text,
-                           is_product_received = $5::boolean,
-                           logistics_status = $6::text,
+                           refund_status = $3::text,
+                           is_product_received = $4::boolean,
+                           logistics_status = $5::text,
+                           refund_eligible_amount = CASE 
+                               WHEN $4::boolean = TRUE THEN COALESCE(NULLIF(refund_eligible_amount, 0), total)
+                               ELSE refund_eligible_amount
+                           END,
                            payment_status = CASE 
                                               WHEN $2::text = 'Refunded' THEN 'Refunded'
-                                              WHEN $7::text IS NOT NULL THEN $7::text
+                                              WHEN $6::text IS NOT NULL THEN $6::text
                                               ELSE payment_status 
                                             END,
                            updated_at = NOW() 
@@ -1236,7 +1558,6 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             updateParams = [
                 orderId,
                 finalStatus,
-                isRejected ? (cancelReason || 'Administrative decision') : null,
                 refundStatusVal,
                 productReceivedVal,
                 logisticsStatusVal,
@@ -1248,25 +1569,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 const orderToReplace = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
                 const originalOrder = orderToReplace.rows[0];
 
-                if (originalOrder) {
-                    // Filter items that are actually being replaced
-                    let itemsToReplace = [];
-                    if (itemIds && itemIds.length > 0) {
-                        const ids = itemIds.map(i => i.id);
-                        const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND id = ANY($2::integer[])', [orderId, ids]);
-                        itemsToReplace = itemsResult.rows;
-                    } else {
-                        const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND (status LIKE \'%Replace Requested%\' OR status LIKE \'%Request Processing%\')', [orderId]);
-                        itemsToReplace = itemsResult.rows;
-                    }
-
-                    // We no longer create a double $0.00 order record.
-                    // The replacement journey will be tracked on the original order.
-                }
-
                 // Mark items in ORIGINAL order as 'Replace Approved'
-                const whereClause = (itemIds && itemIds.length > 0) ? `order_id = $1 AND id = ANY($2::integer[])` : `order_id = $1 AND (status LIKE '%Replace Requested%' OR status LIKE '%Request Processing%')`;
-                const params = (itemIds && itemIds.length > 0) ? [orderId, itemIds.map(i => i.id)] : [orderId];
+                const whereClause = (itemIds && itemIds.length > 0) ? `order_id = $1 AND id::text = ANY($2::text[])` : `order_id = $1 AND (status LIKE '%Replace Requested%' OR status LIKE '%Request Processing%')`;
+                const params = (itemIds && itemIds.length > 0) ? [orderId, itemIds.map(i => String(typeof i === 'string' ? i : i.id))] : [orderId];
                 await client.query(`UPDATE order_items SET status = 'Replace Approved' WHERE ${whereClause}`, params);
             }
         } else if (status === 'Restore') {
@@ -1294,7 +1599,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             updateQuery = `UPDATE orders SET 
                            status = $2::text, 
                            original_status = CASE 
-                                              WHEN $2::text NOT IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Return Approved', 'Returned', 'Refunded', 'Received at Homved') THEN $2::text 
+                                              WHEN $2::text NOT IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Return Approved', 'Returned', 'Refunded', 'Received at Homved', 'Received at House of Urvaah') THEN $2::text 
                                               ELSE original_status 
                                             END,
                            payment_status = CASE 
@@ -1303,8 +1608,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                             WHEN $3::text IS NOT NULL THEN $3::text
                                             ELSE payment_status 
                                           END,
-                           is_product_received = CASE WHEN $2::text = 'Received at Homved' THEN TRUE ELSE is_product_received END,
-                           logistics_status = CASE WHEN $2::text = 'Received at Homved' THEN 'Received at Homved' ELSE logistics_status END,
+                           is_product_received = CASE WHEN $2::text IN ('Received at House of Urvaah', 'Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
+                           logistics_status = CASE WHEN $2::text IN ('Received at House of Urvaah', 'Received at Homved', 'Returned') THEN 'Delivered to House of Urvaah' ELSE logistics_status END,
+                           refund_status = CASE WHEN $2::text IN ('Received at House of Urvaah', 'Received at Homved', 'Returned') THEN 'Pending' ELSE refund_status END,
+                           refund_eligible_amount = CASE WHEN $2::text IN ('Received at House of Urvaah', 'Received at Homved', 'Returned') THEN COALESCE(NULLIF(refund_eligible_amount, 0), total) ELSE refund_eligible_amount END,
                            updated_at = NOW() WHERE id = $1::uuid RETURNING *`;
             updateParams = [orderId, status, paymentStatus];
         }
@@ -1324,7 +1631,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 } else if (status === 'Return Rejected') {
                     await client.query(
                         `UPDATE order_items 
-                         SET status = 'Return Rejected' 
+                         SET status = 'Delivered' 
                          WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
                         [orderId]
                     );
@@ -1335,25 +1642,32 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          WHERE order_id = $1 AND (status = 'Replacement Request Processing' OR status = 'Replace Requested')`,
                         [orderId]
                     );
-                } else if (status === 'Received at Homved') {
+                } else if (status === 'Received at House of Urvaah' || status === 'Received at Homved') {
                     await client.query(
                         `UPDATE order_items 
-                         SET status = 'Received at Homved' 
-                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                        [orderId]
+                         SET status = $2 
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested' OR status = 'Delivered')`,
+                        [orderId, status]
                     );
                 } else if (status === 'Refunded') {
                     await client.query(
                         `UPDATE order_items 
                          SET status = 'Refunded' 
-                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Received at House of Urvaah' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
                         [orderId]
                     );
                 } else if (status === 'Returned') {
                     await client.query(
                         `UPDATE order_items 
                          SET status = 'Returned' 
-                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                         WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Received at House of Urvaah' OR status = 'Return Request Processing' OR status = 'Return Requested' OR status = 'Delivered')`,
+                        [orderId]
+                    );
+                } else if (status === 'Replaced') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Replaced' 
+                         WHERE order_id = $1 AND (status = 'Replace Approved' OR status = 'Replacement Request Processing' OR status = 'Replace Requested' OR status = 'Replacement Processing' OR status = 'Replacement Shipped' OR status = 'Replacement Out for Delivery' OR status = 'Delivered')`,
                         [orderId]
                     );
                 }
@@ -1407,75 +1721,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             }
         }
 
-        const order = await exports.getOrderById(orderId);
+        // ── INVENTORY RESTORATION FOR PRE-DELIVERY CANCELLATIONS & RETURN ARRIVALS AT HOUSE OF URVAAH ───────
+        const isReturnArrival = (status === 'Received at House of Urvaah' || status === 'Received at Homved' || (status === 'Returned' && oldStatus !== 'Returned' && oldStatus !== 'Received at House of Urvaah' && oldStatus !== 'Received at Homved'));
 
-        // ── LOGISTICS & NOTIFICATIONS (URVAAH-RR-05, URVAAH-RR-08) ────────
-        if (status === 'Return Approved' || status === 'Replace Approved' || status === 'Cancelled' || status === 'Refunded') {
-            try {
-                // For Return/Replace, we need to know which items
-                let affectedItems = [];
-                if (itemIds && itemIds.length > 0) {
-                    const ids = itemIds.map(i => i.id);
-                    const isUuid = typeof ids[0] === 'string' && ids[0].length === 36;
-                    let itemsRes;
-                    if (isUuid) {
-                        itemsRes = await client.query(
-                            `SELECT * FROM order_items WHERE order_id = $1::uuid AND id = ANY($2::uuid[])`,
-                            [orderId, ids]
-                        );
-                    } else {
-                        itemsRes = await client.query(
-                            `SELECT * FROM order_items WHERE order_id = $1::uuid AND product_id = ANY($2::integer[])`,
-                            [orderId, ids]
-                        );
-                    }
-                    affectedItems = itemsRes.rows;
-                }
-
-                // 1. Logistics: Only for Return/Replace Approval (Reverse Pickup)
-                if ((status === 'Return Approved' || status === 'Replace Approved') && affectedItems.length > 0) {
-                    await shiprocketService.createReversePickup(order, affectedItems);
-                }
-
-                // 2. Notifications: For all major lifecycle changes
-                await whatsappService.sendOrderUpdateNotification(order, status);
-
-            } catch (triggerError) {
-                console.error('[TRIGGER ERROR] Background automation failed:', triggerError.message);
-                // Non-blocking error
-            }
-        }
-
-        // INVENTORY AUTOMATION (Common for All Methods)
-        // Triggered SPECIFICALLY when status changes to 'Received at Homved' (Or finalized online)
-        // As per URVAAH-014: "Product quantities must auto-increment specifically when status is 'Received at Homved'"
-        const isReceivedAtHomved = status === 'Received at Homved';
-        const isOnlineFinalization = ['Refunded', 'Returned'].includes(status);
-
-        if ((isReceivedAtHomved || isOnlineFinalization) && !oldIsProductReceived) {
-            // Only restore stock for items NOT already cancelled (partial cancellation logic)
-            const itemsResult = await client.query(`SELECT product_id, quantity FROM order_items WHERE order_id = $1 AND (status IS NULL OR status != 'Cancelled')`, [orderId]);
-            console.log(`[INVENTORY AUTOMATION] Restoring stock for remaining items of order ${orderId} (Status: ${status}). Items: ${itemsResult.rows.length}`);
-
-            for (const item of itemsResult.rows) {
-                await client.query(
-                    `UPDATE products 
-                     SET stock_quantity = stock_quantity + $2,
-                         quantity = quantity + $2,
-                         instock = true,
-                         updated_at = NOW()
-                     WHERE product_id = $1::integer`,
-                    [item.product_id, item.quantity]
-                );
-            }
-            // Mark as product received in DB if we just restocked
-            await client.query(`UPDATE orders SET is_product_received = TRUE, updated_at = NOW() WHERE id = $1`, [orderId]);
-        }
-
-        // ── IMMEDIATE INVENTORY RESTORATION FOR CANCELLATIONS ───────
-        if (status === 'Cancelled') {
+        if (status === 'Cancelled' || isReturnArrival) {
             if (itemIds && itemIds.length > 0) {
-                console.log(`[INVENTORY AUTOMATION] Restoring stock for SPECIFIC cancelled items of order ${orderId}`);
+                console.log(`[INVENTORY AUTOMATION] Restoring stock for SPECIFIC items of order ${orderId} (Status: ${status})`);
                 for (const item of itemIds) {
                     const isUuid = typeof item.id === 'string' && item.id.length === 36;
                     let targetProductRes;
@@ -1498,47 +1749,89 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         );
                     }
                 }
-
-                // Check if all items are now cancelled
-                const remainingItems = await client.query(
-                    `SELECT COUNT(*) FROM order_items WHERE order_id = $1 AND status != 'Cancelled'`,
-                    [orderId]
-                );
-
-                // If some items remain, keep current order status (do not set to Partially Cancelled)
-            } else if (oldOrder.status !== 'Cancelled') {
-                console.log(`[INVENTORY AUTOMATION] Restoring stock for all active items of cancelled order ${orderId}`);
+            } else if (oldOrder.status !== status) {
+                console.log(`[INVENTORY AUTOMATION] Restoring stock for all items of order ${orderId} upon ${status}`);
                 const itemsResult = await client.query(
-                    `SELECT product_id, quantity FROM order_items WHERE order_id = $1 AND (status IS NULL OR (status != 'Cancelled' AND status != 'Returned' AND status != 'Refunded'))`,
+                    `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
                     [orderId]
                 );
                 for (const item of itemsResult.rows) {
-                    await client.query(
-                        `UPDATE products 
-                         SET stock_quantity = stock_quantity + $2,
-                             quantity = quantity + $2,
-                             instock = true,
-                             updated_at = NOW()
-                         WHERE product_id = $1::integer`,
-                        [item.product_id, item.quantity]
-                    );
+                    if (item.product_id) {
+                        await client.query(
+                            `UPDATE products 
+                             SET stock_quantity = stock_quantity + $2,
+                                 quantity = quantity + $2,
+                                 instock = true,
+                                 updated_at = NOW()
+                             WHERE product_id = $1::integer`,
+                            [item.product_id, item.quantity]
+                        );
+                    }
                 }
 
-                // Sync all order items to Cancelled
-                await client.query(
-                    `UPDATE order_items SET status = 'Cancelled' WHERE order_id = $1 AND (status IS NULL OR (status != 'Cancelled' AND status != 'Returned' AND status != 'Refunded'))`,
-                    [orderId]
-                );
+                if (status === 'Cancelled') {
+                    await client.query(
+                        `UPDATE order_items SET status = 'Cancelled' WHERE order_id = $1 AND (status IS NULL OR (status != 'Cancelled' AND status != 'Returned' AND status != 'Refunded'))`,
+                        [orderId]
+                    );
+                }
             }
         }
 
-        // ── AUTOMATED FINANCIAL REFUND (URVAAH-RR-07) ───────────────────
-        // NOTE: Automated Razorpay refund on Return Approval was removed from here.
-        // It has been moved to updateRefundStatus to process refunds through the Refund Desk.
-
-
         await client.query('COMMIT');
-        return order;
+
+        const finalOrder = await exports.getOrderById(orderId);
+
+        // ── LOGISTICS & NOTIFICATIONS (URVAAH-RR-05, URVAAH-RR-08) ────────
+        if (status === 'Return Approved' || status === 'Replace Approved' || status === 'Cancelled' || status === 'Refunded') {
+            try {
+                let affectedItems = [];
+                if (itemIds && itemIds.length > 0) {
+                    const ids = itemIds.map(i => i.id);
+                    const isUuid = typeof ids[0] === 'string' && ids[0].length === 36;
+                    if (isUuid) {
+                        const itemsRes = await pool.query(
+                            `SELECT * FROM order_items WHERE order_id = $1::uuid AND id = ANY($2::uuid[])`,
+                            [orderId, ids]
+                        );
+                        affectedItems = itemsRes.rows;
+                    } else {
+                        const itemsRes = await pool.query(
+                            `SELECT * FROM order_items WHERE order_id = $1::uuid AND product_id = ANY($2::integer[])`,
+                            [orderId, ids]
+                        );
+                        affectedItems = itemsRes.rows;
+                    }
+                }
+
+                // 1. Logistics: Only for Return/Replace Approval (Reverse Pickup)
+                if ((status === 'Return Approved' || status === 'Replace Approved') && affectedItems.length > 0) {
+                    await shiprocketService.createReversePickup(finalOrder, affectedItems);
+                }
+
+                // 2. Notifications: For all major lifecycle changes
+                await whatsappService.sendOrderUpdateNotification(finalOrder, status);
+
+            } catch (triggerError) {
+                console.error('[TRIGGER ERROR] Background automation failed:', triggerError.message);
+            }
+        }
+
+        // ── DELIVERY CONFIRMATION & INVOICE & FEEDBACK EMAIL (URVAAH-DELIVERY) ──
+        const normalizedTargetStatus = String(status || '').trim().toLowerCase();
+        const normalizedOldStatus = String(oldStatus || '').trim().toLowerCase();
+        if (normalizedTargetStatus === 'delivered' && normalizedOldStatus !== 'delivered') {
+            try {
+                console.log(`[OrderService] Order #${finalOrder.order_number} marked Delivered. Triggering delivery confirmation email with invoice and feedback link...`);
+                orderEmailService.sendDeliveryConfirmationWorkflow(finalOrder.id).catch(emailErr => {
+                    console.error('[OrderService] Delivery confirmation email error:', emailErr.message);
+                });
+            } catch (delivErr) {
+                console.error('[OrderService] Failed to schedule delivery confirmation email:', delivErr.message);
+            }
+        }
+
+        return finalOrder;
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -1561,40 +1854,43 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         const transitioningToFinal = refundStatus === 'Completed' || refundStatus === 'Refunded';
 
+        // ── REFUND AMOUNT CALCULATION ───────────────────────────────────
+        // Return orders: use exact product price (sum of return item prices, no discount deduction).
+        // Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
+        let refundAmount = 0;
+        if (oldOrder.is_returned_order) {
+            // Return: sum of return item prices only — exact product value
+            const returnItemsRes = await client.query(
+                `SELECT ROUND(SUM(price * quantity), 2) as total
+                 FROM order_items
+                 WHERE order_id = $1
+                   AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')`,
+                [orderId]
+            );
+            refundAmount = parseFloat(returnItemsRes.rows[0]?.total || 0);
+        } else {
+            // Cancellation: use stored refund_eligible_amount (discount-on-last-product formula)
+            refundAmount = parseFloat(oldOrder.refund_eligible_amount || 0);
+        }
+        if (refundAmount <= 0) {
+            refundAmount = parseFloat(oldOrder.total) || 0;
+        }
+
         let finalTxnId = txnId;
 
         if (isOnline && transitioningToFinal) {
+            const isManualRequested = refundData.refundMethod === 'manual' || refundData.forceManual === true || refundData.isManual === true;
             const hasRazorpay = !!oldOrder.razorpay_payment_id;
-            const wantsAutoRefund = !txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay';
+            const wantsAutoRefund = !isManualRequested && (!txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay');
 
-            if (wantsAutoRefund && !hasRazorpay) {
+            if (isManualRequested) {
+                finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                console.log(`[RefundDesk] Manual refund recorded for order ${orderId}: ${finalTxnId}`);
+            } else if (wantsAutoRefund && !hasRazorpay) {
                 // Fallback to manual transaction ID if no Razorpay payment ID is associated
                 finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                 console.log(`[RefundDesk] No Razorpay payment ID associated with online order. Defaulting to manual transaction ID: ${finalTxnId}`);
             } else if (wantsAutoRefund) {
-
-                // ── REFUND AMOUNT FOR RAZORPAY ───────────────────────────────────
-                // Return orders: use exact product price (sum of return item prices, no discount deduction).
-                // Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
-                let refundAmount = 0;
-                if (oldOrder.is_returned_order) {
-                    // Return: sum of return item prices only — exact product value
-                    const returnItemsRes = await client.query(
-                        `SELECT ROUND(SUM(price * quantity), 2) as total
-                         FROM order_items
-                         WHERE order_id = $1
-                           AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')`,
-                        [orderId]
-                    );
-                    refundAmount = parseFloat(returnItemsRes.rows[0]?.total || 0);
-                } else {
-                    // Cancellation: use stored refund_eligible_amount (discount-on-last-product formula)
-                    refundAmount = parseFloat(oldOrder.refund_eligible_amount || 0);
-                }
-                if (refundAmount <= 0) {
-                    refundAmount = parseFloat(oldOrder.total) || 0;
-                }
-
                 if (refundAmount > 0) {
                     console.log(`[RefundDesk] Triggering automated Razorpay refund for order ${orderId}, amount: ${refundAmount}`);
                     try {
@@ -1604,14 +1900,21 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                             console.log(`[RefundDesk] Razorpay refund initiated: ${finalTxnId}`);
                         } else {
                             // Razorpay not configured — treat as manual (admin will enter txn ID)
-                            finalTxnId = txnId || null;
+                            finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                             console.warn('[RefundDesk] Razorpay not configured, proceeding as manual refund.');
                         }
                     } catch (refundError) {
                         const errMsg = refundError?.message || JSON.stringify(refundError) || 'Unknown error';
                         console.error('[RefundDesk] Razorpay automated refund failed:', errMsg);
-                        // Surface a clean error to the admin instead of crashing with "undefined"
-                        throw new Error(`Razorpay refund failed: ${errMsg}`);
+
+                        // If admin permitted manual fallback OR non-production / credential error, fallback gracefully
+                        if (refundData.allowManualFallback !== false || errMsg.includes('Authentication failed') || process.env.NODE_ENV !== 'production') {
+                            finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                            console.warn(`[RefundDesk] Automated Razorpay refund failed (${errMsg}). Gracefully defaulting to manual reference: ${finalTxnId}`);
+                        } else {
+                            // Surface a clean error to the admin instead of crashing with "undefined"
+                            throw new Error(`Razorpay refund failed: ${errMsg}`);
+                        }
                     }
                 } else {
                     finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -1770,7 +2073,7 @@ exports.reorderOrder = async (orderId, userId) => {
 
         // 1. Fetch order items and current product stock/price
         const orderItemsResult = await client.query(
-            `SELECT oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, p.productname as name 
+            `SELECT oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, COALESCE(p.title, 'Product') as name 
              FROM order_items oi
              JOIN products p ON oi.product_id::text = p.product_id::text
              WHERE oi.order_id = $1`,
@@ -2019,5 +2322,113 @@ exports.getRefundPaymentDetails = async (orderId) => {
         raw_payout_card_number: cardFormatted,
         razorpay_payment_id: ord.razorpay_payment_id || null
     };
+};
+
+/**
+ * Allows user to change or edit shipping address within 24 hours of placing the order.
+ */
+exports.updateOrderShippingAddress = async (orderId, userId, addressData, isAdmin = false) => {
+    if (!orderId) throw new Error("Order ID is required");
+
+    const orderRes = await pool.query(
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone
+         FROM orders o
+         LEFT JOIN users u ON (LOWER(o.user_id) = LOWER(u.username) OR LOWER(o.user_id) = LOWER(u.emailid))
+         WHERE o.id::text = $1 OR o.order_number = $1`,
+        [orderId]
+    );
+
+    if (orderRes.rows.length === 0) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+    }
+
+    const order = orderRes.rows[0];
+
+    // Ownership check (if not admin)
+    if (!isAdmin) {
+        const cleanUserId = String(userId || '').trim().toLowerCase();
+        const orderUserId = String(order.user_id || '').trim().toLowerCase();
+        const orderEmail = String(order.customer_email || '').trim().toLowerCase();
+        if (cleanUserId && cleanUserId !== orderUserId && cleanUserId !== orderEmail) {
+            const err = new Error("You are not authorized to edit this order's shipping address.");
+            err.status = 403;
+            throw err;
+        }
+    }
+
+    // 24-hour cutoff rule
+    if (!isAdmin && order.created_at) {
+        const orderTime = new Date(order.created_at).getTime();
+        const diffHours = (Date.now() - orderTime) / (1000 * 60 * 60);
+        if (diffHours > 24) {
+            const err = new Error("Shipping address can only be changed within 24 hours of placing the order.");
+            err.status = 400;
+            throw err;
+        }
+    }
+
+    // Status check: cannot change address if already dispatched, delivered, cancelled or returned
+    const statusLower = (order.status || '').toLowerCase();
+    const lockedStatuses = ['shipped', 'dispatched', 'out for delivery', 'delivered', 'cancelled', 'cancellation requested', 'cancel_requested', 'returned'];
+    if (lockedStatuses.includes(statusLower)) {
+        const err = new Error(`Shipping address cannot be changed because the order is already ${order.status}.`);
+        err.status = 400;
+        throw err;
+    }
+
+    // Validate incoming address
+    const recipientName = (addressData.name || addressData.recipient_name || addressData.fullName || '').trim();
+    const phone = (addressData.phone || addressData.mobile || '').trim();
+    const street = (addressData.street || addressData.full_address || addressData.address || '').trim();
+    const city = (addressData.city || '').trim();
+    const state = (addressData.state || '').trim();
+    const postalCode = (addressData.pincode || addressData.postal_code || '').trim();
+
+    if (!recipientName) throw new Error("Recipient name is required.");
+    if (!phone || phone.replace(/\D/g, '').length < 10) throw new Error("A valid 10-digit phone number is required.");
+    if (!street) throw new Error("Street address is required.");
+    if (!city) throw new Error("City is required.");
+    if (!state) throw new Error("State is required.");
+    if (!postalCode || postalCode.replace(/\D/g, '').length !== 6) throw new Error("A valid 6-digit PIN code is required.");
+
+    // Update or Insert in user_addresses
+    let addressId = order.address_id;
+    let isShared = false;
+    if (addressId) {
+        const countRes = await pool.query(`SELECT COUNT(*) FROM orders WHERE address_id = $1 AND id != $2`, [addressId, order.id]);
+        if (parseInt(countRes.rows[0]?.count || 0, 10) > 0) {
+            isShared = true;
+        }
+    }
+
+    if (addressId && !isShared) {
+        await pool.query(
+            `UPDATE user_addresses
+             SET recipient_name = $1, phone = $2, full_address = $3, city = $4, state = $5, postal_code = $6
+             WHERE id = $7`,
+            [recipientName, phone, street, city, state, postalCode, addressId]
+        );
+    } else {
+        const addrRes = await pool.query(
+            `INSERT INTO user_addresses (user_id, address_label, recipient_name, phone, full_address, city, state, postal_code, is_default, created_at)
+             VALUES ($1, 'Shipping Address', $2, $3, $4, $5, $6, $7, false, NOW())
+             RETURNING id`,
+            [order.user_id || 'guest', recipientName, phone, street, city, state, postalCode]
+        );
+        addressId = addrRes.rows[0].id;
+        await pool.query(
+            `UPDATE orders SET address_id = $1 WHERE id = $2`,
+            [addressId, order.id]
+        );
+    }
+
+    await pool.query(
+        `UPDATE orders SET updated_at = NOW() WHERE id = $1`,
+        [order.id]
+    );
+
+    return await exports.getOrderById(order.id);
 };
 

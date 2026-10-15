@@ -1,6 +1,30 @@
 const pool = require("../config/db");
 const storageService = require("./storageService");
 const stockNotificationService = require("./stockNotificationService");
+const { filterValidSizes } = require("../utils/sizeValidator");
+
+// Map frontend/catalog IDs (e.g., 101, 103, bs-101) to actual DB product_id rows
+const resolveDbProductId = (id) => {
+    if (!id && id !== 0) return id;
+    const s = String(id).trim();
+    if (s === '101' || s === 'bs-101' || s === 'prod-101') return 105;
+    if (s === '103' || s === 'bs-103' || s === 'prod-102') return 106;
+    if (s === '108' || s === 'prod-105') return 108;
+    if (s === '109' || s === 'bs-105' || s === 'prod-109') return 109;
+    if (s === '107' || s === 'prod-103') return 107;
+    if (s === '104' || s === 'bs-104') return 104;
+    if (s === '102' || s === 'bs-102') return 102;
+    if (s === '105') return 105;
+    if (s === '106') return 106;
+    const digits = s.replace(/\D/g, '');
+    if (digits) {
+        const num = parseInt(digits, 10);
+        if (num === 101) return 105;
+        if (num === 103) return 106;
+        return num;
+    }
+    return id;
+};
 
 // Helper to map DB columns to camelCase frontend fields
 const mapProduct = (p) => {
@@ -8,33 +32,41 @@ const mapProduct = (p) => {
 
     if (p.product_id == 101 || p.product_id == 105 || (p.title && (p.title.toLowerCase().includes('oversized blazer') || p.title.toLowerCase().includes('chestnut bloom set') || p.title.toLowerCase().includes('mocha brown embroidered co-ord set')))) {
         p.product_id = 101;
-        p.title = 'Mocha Brown Embroidered Co-Ord Set';
-        p.image_url = 'products/Brown02.png';
-        p.images = ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
+        p.title = p.title || 'Mocha Brown Embroidered Co-Ord Set';
+        p.image_url = p.image_url || 'products/Brown02.png';
+        p.images = (p.images && p.images.length > 0) ? p.images : ['products/Brown02.png', 'products/Brown03.png', 'products/Brown04.png', 'products/Brown01.png'];
     }
 
     if (p.product_id == 102 || (p.title && (p.title.toLowerCase().includes('dark blue') || p.title.toLowerCase().includes('cerulean')))) {
         p.product_id = 102;
-        p.title = 'Teal Embroidered Floral Co-Ord Set';
+        p.title = p.title || 'Teal Embroidered Floral Co-Ord Set';
     }
 
     if (p.product_id == 104 || (p.title && (p.title.toLowerCase().includes('ribbed silk') || p.title.toLowerCase().includes('rosewood bloom set') || p.title.toLowerCase().includes('blush pink embroidered floral co-ord set')))) {
-        p.title = 'Blush Pink Embroidered Floral Co-Ord Set';
-        p.description = 'A cap-sleeve top and mini skirt set in a soft peach-pink floral embroidered fabric with delicate sequin work throughout. The skirt hem finishes in a hand-detailed potli trim, and a corset-style lace-up back on the top gives it a fitted, flattering silhouette.\nFully lined, with a side-zip closure on the skirt for easy wear.\nSoft enough for daytime, sharp enough for evening.';
+        p.title = p.title || 'Blush Pink Embroidered Floral Co-Ord Set';
+        if (!p.description) {
+            p.description = 'A cap-sleeve top and mini skirt set in a soft peach-pink floral embroidered fabric with delicate sequin work throughout. The skirt hem finishes in a hand-detailed potli trim, and a corset-style lace-up back on the top gives it a fitted, flattering silhouette.\nFully lined, with a side-zip closure on the skirt for easy wear.\nSoft enough for daytime, sharp enough for evening.';
+        }
     }
 
     if (p.product_id == 106 || p.product_id == 103 || (p.title && (p.title.toLowerCase().includes('asymmetrical') || p.title.toLowerCase().includes('peach bloom') || p.title.toLowerCase().includes('gilded mist') || p.title.toLowerCase().includes('sage bloom')))) {
         p.product_id = 103;
-        p.title = 'Sage Bloom Embroidered Corset';
-        p.description = 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.';
-        p.image_url = 'products/Corset01.png';
-        p.images = ['products/Corset01.png', 'products/Corset02.png', 'products/Corset03.png', 'products/Corset04.png'];
+        p.title = p.title || 'Sage Bloom Embroidered Corset';
+        if (!p.description) {
+            p.description = 'A statement corset top in raw tissue silk, hand-embroidered with rich golden zari work and delicate sequin detailing throughout. Boned below the bust for structure, with soft padding for comfort and shape no additional support needed underneath.\nDesigned to be worn endlessly: pair it over a saree for a modern draped look, with a skirt for evening, or dress it down with jeans or palazzos for a statement daytime moment. One corset, however many ways you want to style it.\nClosure: adjustable lace-up back.';
+        }
+        p.image_url = p.image_url || 'products/Corset01.png';
+        p.images = (p.images && p.images.length > 0) ? p.images : ['products/Corset01.png', 'products/Corset02.png', 'products/Corset03.png', 'products/Corset04.png'];
     }
 
     if (p.product_id == 109 || (p.title && (p.title.toLowerCase().includes('embroidered silk kurti') || p.title.toLowerCase().includes('ivory corset kurti') || p.title.toLowerCase().includes('ivory heart corset kurti/dress')))) {
-        p.title = 'Ivory Heart Corset Kurti/Dress';
-        p.description = 'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.';
-        p.additional_info = 'Fabric: Cora cotton (breathable, all-day wear)\nLining: Cotton lining\nNeckline: Square neck with floral lace trim\nClosure: Front button placket, corset-style lace-up back\nEmbroidery: All-over heart-shaped butti embroidery\nStyling: Wear buttoned as a dress, or open-front as a kurti\nAvailable sizes: XS, S, M, L';
+        p.title = p.title || 'Ivory Heart Corset Kurti/Dress';
+        if (!p.description) {
+            p.description = 'A everyday-easy piece that works two ways wear it buttoned up as a mini dress, or unbutton the front placket for a more relaxed, styled-open kurti look over jeans. Made in breathable cora cotton, designed for all-day comfort in humid, Indian-summer weather.\nFinished with a square neckline trimmed in delicate floral lace, a corset-style lace-up back for a snatched, tailored fit, and all-over heart-shaped butti embroidery in a soft ivory tone. Fully lined in cotton for added comfort and opacity.\nFrom college to the office to a weekend occasion — one piece, three ways to wear it.';
+        }
+        if (!p.additional_info) {
+            p.additional_info = 'Fabric: Cora cotton (breathable, all-day wear)\nLining: Cotton lining\nNeckline: Square neck with floral lace trim\nClosure: Front button placket, corset-style lace-up back\nEmbroidery: All-over heart-shaped butti embroidery\nStyling: Wear buttoned as a dress, or open-front as a kurti\nAvailable sizes: XS, S, M, L';
+        }
     }
 
     const rawImage = p.image_url || p.image || '';
@@ -72,29 +104,78 @@ const mapProduct = (p) => {
     }
     if (!Array.isArray(parsedProdDetails)) parsedProdDetails = [];
 
-    return {
-        id: p.product_id?.toString() || p.id?.toString() || '',
-        name: p.title || p.productname || '',
-        title: p.title || p.productname || '',
-        brand: p.brand_name || p.brand || 'House of Urvaah',
-        category: p.category_name || 'CLOTHING',
-        categoryId: p.category_id || '',
-        category_id: p.category_id || '',
-        shortDescription: p.short_description || p.shortdescription || '',
-        short_description: p.short_description || p.shortdescription || '',
-        description: p.description || '',
-        price: currPrice,
-        originalPrice: origPrice,
-        discount: calcDiscount,
-        discountPercent: calcDiscount,
-        rating: parseFloat(p.rating) || 0,
-        reviews: parseInt(p.reviews_count || p.reviews) || 0,
-        image: mainImageUrl,
-        hoverImage: hoverImageUrl,
-        gallery: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
-        images: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
-        inStock: p.instock !== false && p.is_active !== false && (p.stock_quantity === undefined || p.stock_quantity === null || p.stock_quantity > 0),
-        stockQuantity: p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : (p.quantity || 0),
+        const qtyVal = (p.stock_quantity !== undefined && p.stock_quantity !== null)
+            ? Number(p.stock_quantity)
+            : (p.quantity !== undefined && p.quantity !== null ? Number(p.quantity) : (p.stock !== undefined && p.stock !== null ? Number(p.stock) : 0));
+
+        let parsedSizeStock = p.size_stock || p.sizestock || {};
+        if (typeof parsedSizeStock === 'string') {
+            try { parsedSizeStock = JSON.parse(parsedSizeStock); } catch (e) { parsedSizeStock = {}; }
+        }
+        if (!parsedSizeStock || typeof parsedSizeStock !== 'object') parsedSizeStock = {};
+
+        const rawSizes = Array.isArray(p.sizes) ? p.sizes : (typeof p.sizes === 'string' ? [p.sizes] : ['XS', 'S', 'M', 'L']);
+        const normalizedSizeStock = {};
+        if (rawSizes.length > 0) {
+            rawSizes.forEach(sz => {
+                const key = String(sz).trim();
+                if (parsedSizeStock[key] !== undefined && parsedSizeStock[key] !== null) {
+                    normalizedSizeStock[key] = Math.max(0, parseInt(parsedSizeStock[key], 10) || 0);
+                } else {
+                    const found = Object.keys(parsedSizeStock).find(k => k.trim().toUpperCase() === key.toUpperCase());
+                    if (found !== undefined) {
+                        normalizedSizeStock[key] = Math.max(0, parseInt(parsedSizeStock[found], 10) || 0);
+                    } else {
+                        normalizedSizeStock[key] = 0;
+                    }
+                }
+            });
+        }
+        Object.keys(parsedSizeStock).forEach(k => {
+            if (normalizedSizeStock[k] === undefined) {
+                normalizedSizeStock[k] = Math.max(0, parseInt(parsedSizeStock[k], 10) || 0);
+            }
+        });
+
+        const hasConfiguredSizes = Object.keys(normalizedSizeStock).length > 0;
+        const sumSizeStock = Object.values(normalizedSizeStock).reduce((acc, v) => acc + v, 0);
+        const finalStockQty = hasConfiguredSizes ? sumSizeStock : qtyVal;
+
+        const isActive = p.active !== false && p.is_active !== false;
+        const computedInStock = isActive && (
+            finalStockQty > 0 || (p.instock === true && finalStockQty >= 0)
+        ) && finalStockQty !== 0;
+
+        return {
+            id: p.product_id?.toString() || p.id?.toString() || '',
+            name: p.title || p.productname || '',
+            title: p.title || p.productname || '',
+            brand: p.brand_name || p.brand || 'House of Urvaah',
+            category: p.category_name || 'CLOTHING',
+            categoryId: p.category_id || '',
+            category_id: p.category_id || '',
+            shortDescription: p.short_description || p.shortdescription || '',
+            short_description: p.short_description || p.shortdescription || '',
+            description: p.description || '',
+            fullDescription: p.full_description || p.fulldescription || '',
+            full_description: p.full_description || p.fulldescription || '',
+            price: currPrice,
+            originalPrice: origPrice,
+            discount: calcDiscount,
+            discountPercent: calcDiscount,
+            rating: parseFloat(p.rating) || 0,
+            reviews: parseInt(p.reviews_count || p.reviews) || 0,
+            image: mainImageUrl,
+            hoverImage: hoverImageUrl,
+            gallery: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
+            images: galleryUrls.length > 0 ? galleryUrls : [mainImageUrl],
+            inStock: computedInStock,
+            instock: computedInStock,
+            stockQuantity: finalStockQty,
+            quantity: finalStockQty,
+            stock: finalStockQty,
+            sizeStock: normalizedSizeStock,
+            size_stock: normalizedSizeStock,
         benefits: p.benefits,
         ingredients: p.ingredients,
         usage: p.usage,
@@ -147,7 +228,7 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
     }
 
     if (search) {
-        whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx})`);
+        whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx} OR sc.name ILIKE $${paramIdx} OR p.style_code ILIKE $${paramIdx} OR b.name ILIKE $${paramIdx} OR p.brand ILIKE $${paramIdx})`);
         params.push(`%${search}%`);
         paramIdx++;
     }
@@ -178,7 +259,7 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countQuery = `SELECT COUNT(*) FROM products p LEFT JOIN category c ON p.category_id = c.category_id LEFT JOIN brand b ON (p.brand_id = b.brand_id OR p.brand = b.name OR p.brand = b.brand_id::text) ${whereString}`;
+        const countQuery = `SELECT COUNT(*) FROM products p LEFT JOIN category c ON p.category_id = c.category_id LEFT JOIN brand b ON (p.brand_id = b.brand_id OR p.brand = b.name OR p.brand = b.brand_id::text) LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno ${whereString}`;
         const countResult = await pool.query(countQuery, params);
         const total = parseInt(countResult.rows[0].count);
 
@@ -214,42 +295,8 @@ exports.getProductById = async (id) => {
         return null;
     }
 
-    let searchId = id;
-    let isNum = !isNaN(searchId);
-
-    if (!isNum && typeof searchId === 'string') {
-        const s = searchId.trim();
-        if (s === 'prod-105') {
-            searchId = 108;
-            isNum = true;
-        } else if (s === 'bs-105' || s === 'prod-109') {
-            searchId = 109;
-            isNum = true;
-        } else if (s === 'bs-101' || s === 'prod-101') {
-            searchId = 105;
-            isNum = true;
-        } else if (s === 'bs-103' || s === 'prod-102') {
-            searchId = 106;
-            isNum = true;
-        } else if (s === 'prod-103') {
-            searchId = 107;
-            isNum = true;
-        } else if (s === 'bs-104') {
-            searchId = 104;
-            isNum = true;
-        } else if (s === 'bs-102') {
-            searchId = 102;
-            isNum = true;
-        } else {
-            const digits = searchId.replace(/\D/g, '');
-            if (digits) {
-                let numId = parseInt(digits, 10);
-                if (numId === 103) numId = 106;
-                searchId = numId;
-                isNum = true;
-            }
-        }
-    }
+    const searchId = resolveDbProductId(id);
+    const isNum = !isNaN(searchId);
     
     // Check numeric vs text ID search
     const query = isNum
@@ -518,6 +565,7 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 exports.createProduct = async (product) => {
     const {
         productname, title, description, shortDescription, short_description, shortdescription,
+        fullDescription, full_description, fulldescription,
         price, originalprice, originalPrice, sale_price,
         category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
@@ -530,15 +578,22 @@ exports.createProduct = async (product) => {
     const recVal = is_recommended !== undefined ? Boolean(is_recommended) : (isRecommended !== undefined ? Boolean(isRecommended) : true);
     const currPrice = parseFloat(price) || 0;
     const origPrice = parseFloat(originalPrice ?? originalprice ?? sale_price ?? price) || currPrice;
-    const imgList = Array.isArray(images) && images.length > 0
+    const imgList = (Array.isArray(images) && images.length > 0
         ? images
-        : (image_url || image ? [image_url || image] : []);
+        : (image_url || image ? [image_url || image] : [])
+    ).filter(img => typeof img === 'string' && img.trim().length > 0);
+
+    if (imgList.length === 0) {
+        throw new Error("At least 1 product image is required to create a product.");
+    }
+
     const imgUrl = imgList.length > 0 ? imgList[0] : '';
     const isFeatured = promoted !== undefined ? promoted : (is_featured || false);
     const stockQty = parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock) || 0;
     const parsedCatId = category_id ? parseInt(category_id) : null;
     const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : null;
     const shortDesc = short_description || shortDescription || shortdescription || '';
+    const fullDesc = full_description || fullDescription || fulldescription || '';
     const careInst = care_instructions || careInstructions || '';
 
     let specsVal = specifications || [];
@@ -558,33 +613,61 @@ exports.createProduct = async (product) => {
     }
     if (!Array.isArray(prodDetailsVal)) prodDetailsVal = [];
 
+    const cleanSizes = filterValidSizes(Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L']);
+    let sizeStockVal = product.sizeStock || product.size_stock || null;
+    if (typeof sizeStockVal === 'string') {
+        try { sizeStockVal = JSON.parse(sizeStockVal); } catch(e) { sizeStockVal = null; }
+    }
+    if (sizeStockVal && typeof sizeStockVal === 'object') {
+        const sumSS = Object.values(sizeStockVal).reduce((acc, v) => acc + (Math.max(0, parseInt(v, 10)) || 0), 0);
+        if (product.stockQuantity === undefined && stock_quantity === undefined) {
+            stockQty = sumSS;
+        }
+    } else if (cleanSizes.length > 0) {
+        // Automatically initialize size_stock distributed across sizes
+        sizeStockVal = {};
+        cleanSizes.forEach(sz => {
+            sizeStockVal[sz] = stockQty > 0 ? Math.floor(stockQty / cleanSizes.length) : 0;
+        });
+    }
+
+    const initialInStock = activeVal !== false && (
+        product.instock !== undefined
+            ? Boolean(product.instock)
+            : (product.inStock !== undefined ? Boolean(product.inStock) : stockQty > 0)
+    );
+
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23::jsonb, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, NOW(), NOW()) 
         RETURNING *`,
         [
-            productTitle, description || '', shortDesc, currPrice, origPrice, parsedCatId,
+            productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
             brand || 'House of Urvaah', imgUrl, imgList, isFeatured, recVal, activeVal !== false,
-            stockQty, Array.isArray(sizes) ? sizes : ['XS', 'S', 'M', 'L'],
+            stockQty, initialInStock, cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L'],
             Array.isArray(colors) ? colors : ['Default'],
             fabric || '', fit_type || '', careInst, style_code || '', parsedSubcatId,
             JSON.stringify(specsVal),
             JSON.stringify(nameOptsVal),
-            JSON.stringify(prodDetailsVal)
+            JSON.stringify(prodDetailsVal),
+            JSON.stringify(sizeStockVal || {})
         ]
     );
     return mapProduct(result.rows[0]);
 };
 
 exports.updateProduct = async (id, product) => {
+    const targetId = resolveDbProductId(id);
     const {
         productname, title, description, shortDescription, short_description, shortdescription,
+        fullDescription, full_description, fulldescription,
         price, originalprice, originalPrice, sale_price,
         category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
-        specifications, name_options, nameOptions, product_details, productDetails
+        specifications, name_options, nameOptions, product_details, productDetails,
+        instock, inStock
     } = product;
 
     const productTitle = title || productname;
@@ -599,12 +682,35 @@ exports.updateProduct = async (id, product) => {
         : (image_url || image ? [image_url || image] : undefined);
     const imgUrl = imgList && imgList.length > 0 ? imgList[0] : (image_url || image);
     const isFeatured = promoted !== undefined ? promoted : is_featured;
-    const stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
+    let stockQty = (product.stockQuantity !== undefined || stock_quantity !== undefined || quantity !== undefined || stock !== undefined)
         ? parseInt(product.stockQuantity ?? stock_quantity ?? quantity ?? stock)
         : undefined;
+
+    let sizeStockParam = undefined;
+    if (product.sizeStock !== undefined || product.size_stock !== undefined) {
+        let rawSS = product.sizeStock !== undefined ? product.sizeStock : product.size_stock;
+        if (typeof rawSS === 'string') {
+            try { rawSS = JSON.parse(rawSS); } catch(e) { rawSS = {}; }
+        }
+        if (rawSS && typeof rawSS === 'object') {
+            sizeStockParam = JSON.stringify(rawSS);
+            const sumSS = Object.values(rawSS).reduce((acc, v) => acc + (Math.max(0, parseInt(v, 10)) || 0), 0);
+            stockQty = sumSS;
+        }
+    }
+
+    const explicitInStock = instock !== undefined
+        ? Boolean(instock)
+        : (inStock !== undefined ? Boolean(inStock) : undefined);
+
+    const inStockVal = explicitInStock !== undefined
+        ? explicitInStock
+        : (stockQty !== undefined ? stockQty > 0 : undefined);
+
     const parsedCatId = category_id ? parseInt(category_id) : undefined;
     const parsedSubcatId = subcategory_id ? parseInt(subcategory_id) : undefined;
     const shortDesc = short_description !== undefined ? short_description : (shortDescription !== undefined ? shortDescription : shortdescription);
+    const fullDesc = full_description !== undefined ? full_description : (fullDescription !== undefined ? fullDescription : fulldescription);
     const careInst = care_instructions !== undefined ? care_instructions : careInstructions;
 
     let specsVal = specifications;
@@ -627,7 +733,7 @@ exports.updateProduct = async (id, product) => {
     try {
         const prevRes = await pool.query(
             "SELECT product_id, stock_quantity, stock, quantity, is_active FROM products WHERE product_id = $1::integer OR id = $1::integer",
-            [id]
+            [targetId]
         );
         if (prevRes.rows.length > 0) {
             const p = prevRes.rows[0];
@@ -637,43 +743,73 @@ exports.updateProduct = async (id, product) => {
         console.warn('[updateProduct] Error fetching prev stock:', e.message);
     }
 
+    const cleanSizes = sizes !== undefined ? filterValidSizes(sizes) : undefined;
+
     const result = await pool.query(
         `UPDATE products 
         SET title = COALESCE($2, title),
             description = COALESCE($3, description),
             short_description = COALESCE($4, short_description),
-            price = COALESCE($5, price),
-            sale_price = COALESCE($6, sale_price),
-            category_id = COALESCE($7, category_id),
-            brand = COALESCE($8, brand),
-            image_url = COALESCE($9, image_url),
-            images = COALESCE($10, images),
-            is_featured = COALESCE($11, is_featured),
-            is_recommended = COALESCE($12, is_recommended),
-            is_active = COALESCE($13, is_active),
-            stock_quantity = COALESCE($14, stock_quantity),
-            stock = COALESCE($14, stock),
-            quantity = COALESCE($14, quantity),
-            sizes = COALESCE($15, sizes),
-            colors = COALESCE($16, colors),
-            fabric = COALESCE($17, fabric),
-            fit_type = COALESCE($18, fit_type),
-            care_instructions = COALESCE($19, care_instructions),
-            style_code = COALESCE($20, style_code),
-            subcategory_id = COALESCE($21, subcategory_id),
-            specifications = COALESCE($22::jsonb, specifications),
-            name_options = COALESCE($23::jsonb, name_options),
-            product_details = COALESCE($24::jsonb, product_details),
+            full_description = COALESCE($5, full_description),
+            price = COALESCE($6, price),
+            sale_price = COALESCE($7, sale_price),
+            category_id = COALESCE($8, category_id),
+            brand = COALESCE($9, brand),
+            image_url = COALESCE($10, image_url),
+            images = COALESCE($11, images),
+            is_featured = COALESCE($12, is_featured),
+            is_recommended = COALESCE($13, is_recommended),
+            is_active = COALESCE($14, is_active),
+            stock_quantity = COALESCE($15, stock_quantity),
+            stock = COALESCE($15, stock),
+            quantity = COALESCE($15, quantity),
+            instock = CASE
+                WHEN $26::boolean IS NOT NULL THEN $26::boolean
+                WHEN $15::integer IS NOT NULL THEN ($15::integer > 0)
+                ELSE instock
+            END,
+            sizes = COALESCE($16, sizes),
+            colors = COALESCE($17, colors),
+            fabric = COALESCE($18, fabric),
+            fit_type = COALESCE($19, fit_type),
+            care_instructions = COALESCE($20, care_instructions),
+            style_code = COALESCE($21, style_code),
+            subcategory_id = COALESCE($22, subcategory_id),
+            specifications = COALESCE($23::jsonb, specifications),
+            name_options = COALESCE($24::jsonb, name_options),
+            product_details = COALESCE($25::jsonb, product_details),
+            size_stock = COALESCE($27::jsonb, size_stock),
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
         [
-            id, productTitle, description, shortDesc, currPrice, origPrice, parsedCatId,
-            brand, imgUrl, imgList, isFeatured, recVal !== undefined ? recVal : null, activeVal, stockQty,
-            sizes, colors, fabric, fit_type, careInst, style_code, parsedSubcatId,
+            targetId,
+            productTitle !== undefined ? productTitle : null,
+            description !== undefined ? description : null,
+            shortDesc !== undefined ? shortDesc : null,
+            fullDesc !== undefined ? fullDesc : null,
+            currPrice !== undefined && !isNaN(currPrice) ? currPrice : null,
+            origPrice !== undefined && !isNaN(origPrice) ? origPrice : null,
+            parsedCatId !== undefined && !isNaN(parsedCatId) ? parsedCatId : null,
+            brand !== undefined ? brand : null,
+            imgUrl !== undefined ? imgUrl : null,
+            imgList !== undefined ? imgList : null,
+            isFeatured !== undefined ? isFeatured : null,
+            recVal !== undefined ? recVal : null,
+            activeVal !== undefined ? activeVal : null,
+            stockQty !== undefined && !isNaN(stockQty) ? stockQty : null,
+            cleanSizes !== undefined ? (cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L']) : null,
+            colors !== undefined ? colors : null,
+            fabric !== undefined ? fabric : null,
+            fit_type !== undefined ? fit_type : null,
+            careInst !== undefined ? careInst : null,
+            style_code !== undefined ? style_code : null,
+            parsedSubcatId !== undefined && !isNaN(parsedSubcatId) ? parsedSubcatId : null,
             specsVal !== undefined ? JSON.stringify(specsVal) : null,
             nameOptsVal !== undefined ? JSON.stringify(nameOptsVal) : null,
-            prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null
+            prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null,
+            inStockVal !== undefined ? inStockVal : null,
+            sizeStockParam !== undefined ? sizeStockParam : null
         ]
     );
 
@@ -684,18 +820,12 @@ exports.updateProduct = async (id, product) => {
             : (updatedRow.stock_quantity ?? updatedRow.quantity ?? 0);
 
         if (newStock > 0) {
-            const subCheck = await pool.query(
-                "SELECT COUNT(*)::int AS count FROM stock_notification_subscriptions WHERE (product_id = $1 OR product_id = 103 OR product_id = 106) AND status = 'active'",
-                [updatedRow.product_id]
-            );
-            if (subCheck.rows[0]?.count > 0 || (previousStock !== null && previousStock <= 0)) {
-                stockNotificationService.triggerRestockEvent({
-                    productId: updatedRow.product_id,
-                    previousStock: previousStock ?? 0,
-                    newStock,
-                    size: null
-                }).catch(err => console.error('[RestockTrigger Error]:', err));
-            }
+            stockNotificationService.triggerRestockEvent({
+                productId: updatedRow.product_id,
+                previousStock: previousStock ?? 0,
+                newStock,
+                size: null
+            }).catch(err => console.error('[RestockTrigger Error]:', err));
         }
     }
 
@@ -703,17 +833,19 @@ exports.updateProduct = async (id, product) => {
 };
 
 exports.deleteProduct = async (id) => {
-    const result = await pool.query("DELETE FROM products WHERE product_id = $1::integer OR id = $1::integer RETURNING *", [id]);
+    const targetId = resolveDbProductId(id);
+    const result = await pool.query("DELETE FROM products WHERE product_id = $1::integer OR id = $1::integer RETURNING *", [targetId]);
     return result.rows[0];
 };
 
 exports.toggleProductStatus = async (id) => {
+    const targetId = resolveDbProductId(id);
     const result = await pool.query(`
         UPDATE products 
         SET is_active = NOT COALESCE(is_active, true), updated_at = NOW() 
         WHERE product_id = $1::integer OR id = $1::integer 
         RETURNING *
-    `, [id]);
+    `, [targetId]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
 

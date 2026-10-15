@@ -9,5 +9,6 @@ router.use(protect);
 
 router.post('/create-order', paymentController.createRazorpayOrder);
 router.post('/verify', paymentController.verifyPayment);
+router.post('/failure', paymentController.recordPaymentFailure);
 
 module.exports = router;

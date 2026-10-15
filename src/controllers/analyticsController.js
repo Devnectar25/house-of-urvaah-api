@@ -173,15 +173,12 @@ async function trackEvent(req, res) {
 async function getDashboardSummary(req, res) {
   try {
     const pool = require("../config/db");
+    const orderService = require("../services/orderService");
     const [
       products,
       categories,
       subcategories,
-      orders,
-      delivered,
-      pending,
-      processing,
-      cancelled,
+      orderStats,
       users,
       coupons,
       reviews
@@ -189,11 +186,7 @@ async function getDashboardSummary(req, res) {
       pool.query('SELECT COUNT(*) as count FROM products').catch(() => ({ rows: [{ count: 0 }] })),
       pool.query('SELECT COUNT(*) as count FROM category').catch(() => ({ rows: [{ count: 0 }] })),
       pool.query('SELECT COUNT(*) as count FROM subcategories').catch(() => ({ rows: [{ count: 0 }] })),
-      pool.query('SELECT COUNT(*) as count FROM orders').catch(() => ({ rows: [{ count: 0 }] })),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered'").catch(() => ({ rows: [{ count: 0 }] })),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending'").catch(() => ({ rows: [{ count: 0 }] })),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing'").catch(() => ({ rows: [{ count: 0 }] })),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE status IN ('Cancelled', 'Cancellation Requested', 'Refunded')").catch(() => ({ rows: [{ count: 0 }] })),
+      orderService.getOrderStats().catch(() => ({ total: 0, delivered: 0, pending: 0, processing: 0, cancelled: 0 })),
       pool.query('SELECT COUNT(*) as count FROM public.users').catch(() => ({ rows: [{ count: 0 }] })),
       pool.query("SELECT COUNT(*) as count FROM coupons WHERE active = true").catch(() => ({ rows: [{ count: 0 }] })),
       pool.query('SELECT COUNT(*) as count FROM reviews').catch(() => ({ rows: [{ count: 0 }] }))
@@ -205,11 +198,11 @@ async function getDashboardSummary(req, res) {
         totalProducts: parseInt(products.rows[0]?.count) || 0,
         totalCategories: parseInt(categories.rows[0]?.count) || 0,
         totalSubcategories: parseInt(subcategories.rows[0]?.count) || 0,
-        totalOrders: parseInt(orders.rows[0]?.count) || 0,
-        deliveredOrders: parseInt(delivered.rows[0]?.count) || 0,
-        pendingOrders: parseInt(pending.rows[0]?.count) || 0,
-        processingOrders: parseInt(processing.rows[0]?.count) || 0,
-        cancelledOrders: parseInt(cancelled.rows[0]?.count) || 0,
+        totalOrders: orderStats?.total ?? 0,
+        deliveredOrders: orderStats?.delivered ?? 0,
+        pendingOrders: orderStats?.pending ?? 0,
+        processingOrders: orderStats?.processing ?? 0,
+        cancelledOrders: orderStats?.cancelled ?? 0,
         totalCustomers: parseInt(users.rows[0]?.count) || 0,
         activeCoupons: parseInt(coupons.rows[0]?.count) || 0,
         totalReviews: parseInt(reviews.rows[0]?.count) || 0

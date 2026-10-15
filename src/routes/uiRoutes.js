@@ -12,6 +12,7 @@ router.get('/hero', uiController.getPublicHeroSlides);
 router.get('/dual-campaign', uiController.getPublicDualCampaign);
 router.get('/trending-gram', uiController.getPublicTrendingGram);
 router.get('/fabric-video', uiController.getPublicFabricVideo);
+router.get('/contact-info', uiController.getPublicContactInfo);
 
 // ==========================================
 // SECURED ADMIN ROUTES
@@ -39,4 +40,14 @@ router.delete('/admin/trending-gram/:id', ...adminGuard, uiController.deleteTren
 router.get('/admin/fabric-video', ...adminGuard, uiController.getAdminFabricVideo);
 router.put('/admin/fabric-video', ...adminGuard, uiController.updateFabricVideo);
 
+// 5. Boutiques & Concierge
+router.get('/admin/contact-info', ...adminGuard, uiController.getAdminContactInfo);
+router.put('/admin/contact-info/concierge', ...adminGuard, uiController.updateConciergeSettings);
+router.put('/admin/contact-info/boutiques-header', ...adminGuard, uiController.updateBoutiquesHeader);
+router.post('/admin/contact-info/locations', ...adminGuard, uiController.createBoutiqueLocation);
+router.put('/admin/contact-info/locations/reorder', ...adminGuard, uiController.reorderBoutiqueLocations);
+router.put('/admin/contact-info/locations/:id', ...adminGuard, uiController.updateBoutiqueLocation);
+router.delete('/admin/contact-info/locations/:id', ...adminGuard, uiController.deleteBoutiqueLocation);
+
 module.exports = router;
+

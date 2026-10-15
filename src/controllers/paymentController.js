@@ -56,3 +56,18 @@ exports.handleWebhook = async (req, res) => {
     }
 };
 
+exports.recordPaymentFailure = async (req, res) => {
+    try {
+        const { order_id, reason, error_code, error_description } = req.body;
+        const result = await paymentService.recordPaymentFailure(order_id, {
+            reason,
+            error_code,
+            error_description
+        });
+        res.status(200).json({ success: true, message: 'Payment failure recorded and order cancelled', data: result });
+    } catch (error) {
+        console.error('Error in recordPaymentFailure:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
