@@ -26,13 +26,46 @@ exports.checkDelivery = async (req, res) => {
       });
     }
 
-    // 3. Query PostgreSQL delivery_zones table
-    const result = await pool.query(
-      'SELECT * FROM delivery_zones WHERE pincode = $1 AND is_serviceable = true',
-      [cleanPin]
-    );
+    // 3. Check serviceability via Shiprocket Logistics Service
+    const shiprocketService = require('../services/shiprocketService');
+    let isServiceable = false;
+    let minDays = 2;
+    let maxDays = 4;
+    let zoneName = 'INDIA';
+    let city = null;
+    let state = null;
 
-    if (result.rows.length === 0) {
+    try {
+      const srResult = await shiprocketService.checkServiceability({ deliveryPincode: cleanPin });
+      if (srResult && srResult.available) {
+        isServiceable = true;
+        minDays = srResult.minDays || 2;
+        maxDays = srResult.maxDays || 4;
+        zoneName = srResult.zone || 'DOMESTIC';
+      }
+    } catch (srErr) {
+      console.warn('[DeliveryCheck] Shiprocket service check notice:', srErr.message);
+    }
+
+    // 4. Fallback check against PostgreSQL delivery_zones table if not verified by Shiprocket
+    if (!isServiceable) {
+      const result = await pool.query(
+        'SELECT * FROM delivery_zones WHERE pincode = $1 AND is_serviceable = true',
+        [cleanPin]
+      );
+
+      if (result.rows.length > 0) {
+        const zoneRecord = result.rows[0];
+        isServiceable = true;
+        minDays = parseInt(zoneRecord.delivery_min_days || 2, 10);
+        maxDays = parseInt(zoneRecord.delivery_max_days || 3, 10);
+        zoneName = zoneRecord.zone || 'INDIA';
+        city = zoneRecord.city;
+        state = zoneRecord.state;
+      }
+    }
+
+    if (!isServiceable) {
       return res.json({
         success: true,
         available: false,
@@ -41,11 +74,7 @@ exports.checkDelivery = async (req, res) => {
       });
     }
 
-    const zoneRecord = result.rows[0];
-    const minDays = parseInt(zoneRecord.delivery_min_days || 2, 10);
-    const maxDays = parseInt(zoneRecord.delivery_max_days || 3, 10);
-
-    // 4. Calculate dynamic delivery date in Asia/Kolkata timezone
+    // 5. Calculate dynamic delivery date in Asia/Kolkata timezone
     const getISTDate = (offsetDays) => {
       const now = new Date();
       // Adjust to IST timezone (UTC+5:30)
@@ -77,9 +106,9 @@ exports.checkDelivery = async (req, res) => {
       success: true,
       available: true,
       pincode: cleanPin,
-      zone: zoneRecord.zone || 'INDIA',
-      city: zoneRecord.city,
-      state: zoneRecord.state,
+      zone: zoneName,
+      city: city || (zoneName === 'METRO' ? 'Metro Hub' : 'Domestic Hub'),
+      state: state || 'India',
       estimatedDelivery: {
         from: formatISODate(d1),
         to: formatISODate(d2),

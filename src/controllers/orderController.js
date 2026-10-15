@@ -145,6 +145,19 @@ exports.updateOrderStatus = async (req, res) => {
         }
 
         const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds);
+
+        // Synchronize with Shiprocket logistics if order is cancelled
+        if (status === 'Cancelled' || status === 'Cancellation Requested') {
+            try {
+                const shiprocketService = require('../services/shiprocketService');
+                const orderIdentifier = order.order_number || id;
+                await shiprocketService.cancelShipment([orderIdentifier]);
+                console.log(`[Shiprocket Sync] Shipment/Pickup voided successfully for order ${orderIdentifier}`);
+            } catch (srErr) {
+                console.warn('[Shiprocket Sync Warning]:', srErr.message);
+            }
+        }
+
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
