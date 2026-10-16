@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
 const orderService = require('./orderService');
+const settingsService = require('./settingsService');
 const pool = require('../config/db');
 
 /**
@@ -179,14 +180,21 @@ exports.getInvoiceData = async (orderId) => {
     const shippingFee = parseFloat(order.shipping || order.shipping_cost || 0);
 
     const netTaxable = Math.max(0, subtotal - discountAmount);
+    const storeSettings = await settingsService.getSettings();
     
-    // Determine tax rate: use order.tax if present, else apply > 2500 ? 18% : 5% rule
+    // Determine tax rate: use order.tax if present, else apply dynamic GST settings
     let taxRate = 18;
     if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
         const computedRate = Math.round((parseFloat(order.tax) / netTaxable) * 100);
-        taxRate = computedRate > 0 ? computedRate : (netTaxable > 2500 ? 18 : 5);
+        if (computedRate > 0) {
+            taxRate = computedRate;
+        } else {
+            const gstCalc = await settingsService.calculateGst(netTaxable, storeSettings);
+            taxRate = gstCalc.rate;
+        }
     } else {
-        taxRate = netTaxable > 2500 ? 18 : 5;
+        const gstCalc = await settingsService.calculateGst(netTaxable, storeSettings);
+        taxRate = gstCalc.rate;
     }
 
     // Calculated tax amount
@@ -195,7 +203,20 @@ exports.getInvoiceData = async (orderId) => {
         : Math.round(netTaxable * (taxRate / 100));
 
     const baseTaxableValue = netTaxable;
-    const grandTotalNum = baseTaxableValue + calculatedTax + shippingFee;
+
+    // Card processing surcharge detection
+    const isCard = String(order.payment_method || '').toLowerCase().includes('card') || String(order.payment_type || '').toLowerCase().includes('card');
+    let cardSurchargeNum = parseFloat(order.card_surcharge || order.cardSurcharge || 0);
+    if (cardSurchargeNum <= 0 && isCard && order.total) {
+        const orderTotal = parseFloat(order.total);
+        const subtotalWithTax = baseTaxableValue + calculatedTax + shippingFee;
+        if (orderTotal > subtotalWithTax) {
+            cardSurchargeNum = Math.round(orderTotal - subtotalWithTax);
+        }
+    }
+    const cardSurchargeRate = storeSettings.card_charge_percentage || 2;
+
+    const grandTotalNum = order.total ? parseFloat(order.total) : (baseTaxableValue + calculatedTax + shippingFee + cardSurchargeNum);
 
     const customerState = String(order.state || shippingAddr?.state || '').trim().toLowerCase();
     const isDelhi = customerState.includes('delhi') || customerState === 'dl';
@@ -340,6 +361,9 @@ exports.getInvoiceData = async (orderId) => {
         sgstAmount,
         igstAmount,
         taxAmount: calculatedTax.toFixed(2),
+        hasCardSurcharge: cardSurchargeNum > 0,
+        cardSurcharge: cardSurchargeNum.toFixed(2),
+        cardSurchargeRate: cardSurchargeRate,
         grandTotal: grandTotalNum.toFixed(2),
         amountInWords: numberToWords(grandTotalNum),
         authSignatoryDate: issueDate

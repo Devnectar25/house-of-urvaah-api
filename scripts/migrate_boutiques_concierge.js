@@ -44,7 +44,7 @@ async function migrate() {
     await pool.query(`
       INSERT INTO public.ui_boutique_locations (section_badge, section_title, name, address, phone, is_primary, display_order, is_active)
       VALUES 
-      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'MUMBAI FLAGSHIP & STYLING SALON', 'Kala Ghoda Arts District, Colaba Causeway, Mumbai 400001', '+91 22 4900 8800', true, 1, true),
+      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'House of Urvaah', E'Kala Ghoda Arts District,\\nColaba Causeway, Mumbai 400001', '+91 22 4900 8800', true, 1, true),
       ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'NEW DELHI CONCIERGE & SHOWROOM', 'Mehrauli Heritage District, Style Mile, New Delhi 110030', '+91 11 4800 7700', false, 2, true)
     `);
     console.log('Seeded ui_boutique_locations');
