@@ -5,6 +5,7 @@ const shiprocketService = require('./shiprocketService');
 const whatsappService = require('./whatsappService');
 const stockNotificationService = require('./stockNotificationService');
 const orderEmailService = require('./orderEmailService');
+const settingsService = require('./settingsService');
 
 /**
  * Normalizes order row to guarantee that delivered Cash on Delivery (COD)
@@ -237,28 +238,32 @@ exports.createOrder = async (orderData) => {
             validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
         }
 
-        // ── STEP 1.1: Tax calculation (Dynamic GST) ───────────────────────────
-        // If order amount after discount > 2500 then 18% tax, else 5% tax
+        // ── STEP 1.1: Tax calculation (Dynamic GST from store_settings) ───────
         const netTaxable = Math.max(0, dbSubtotal - discountAmount);
-        const taxRate = netTaxable > 2500 ? 18 : 5;
-        const taxAmount = netTaxable > 0 ? Math.round(netTaxable * (taxRate / 100)) : 0;
+        const gstResult = await settingsService.calculateGst(netTaxable);
+        const taxRate = gstResult.rate;
+        const taxAmount = gstResult.amount;
         const shippingFee = parseFloat(shipping || 0);
 
         // originalTotal = pre-discount total (dbSubtotal + tax + shipping); used for audit clarity
-        const originalTotal = Math.round(dbSubtotal + (dbSubtotal > 2500 ? dbSubtotal * 0.18 : dbSubtotal * 0.05) + shippingFee);
+        const origGstResult = await settingsService.calculateGst(dbSubtotal);
+        const originalTotal = Math.round(dbSubtotal + origGstResult.amount + shippingFee);
         let finalTotal = Math.round(netTaxable + taxAmount + shippingFee);
 
         if ((!finalTotal || finalTotal === 0) && total && parseFloat(total) > 0) {
             finalTotal = parseFloat(total);
         }
 
-        // Apply 2% processing surcharge if payment is via Credit / Debit Card
+        // Apply processing surcharge if payment is via Credit / Debit Card (Dynamic from store_settings)
         let cardSurcharge = 0;
         const isCardPayment = (paymentMethod === 'card' || paymentType === 'Card' || String(paymentMethod || '').toLowerCase().includes('card'));
         if (isCardPayment) {
-            cardSurcharge = orderData.cardSurcharge !== undefined ? parseFloat(orderData.cardSurcharge) : Math.round(finalTotal * 0.02);
-            finalTotal = Math.round(finalTotal + cardSurcharge);
-            console.log(`[OrderService] Card payment detected. Applied 2% surcharge of ₹${cardSurcharge}. Final Total: ₹${finalTotal}`);
+            const cardCalc = await settingsService.calculateCardSurcharge(finalTotal, true);
+            if (cardCalc.enabled && cardCalc.rate > 0) {
+                cardSurcharge = orderData.cardSurcharge !== undefined ? parseFloat(orderData.cardSurcharge) : cardCalc.surcharge;
+                finalTotal = Math.round(finalTotal + cardSurcharge);
+                console.log(`[OrderService] Card payment detected. Applied dynamic ${cardCalc.rate}% surcharge of ₹${cardSurcharge}. Final Total: ₹${finalTotal}`);
+            }
         }
 
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
@@ -2186,6 +2191,10 @@ exports.restockOrder = async (orderId) => {
                     newStock: prevStock + item.quantity,
                     size: null
                 }).catch(err => console.error('[OrderRestock Alert Error]:', err));
+
+                stockNotificationService.checkAndNotifyAllInStockSubscribers(item.product_id).catch(err => {
+                    console.error('[OrderRestock Check Error]:', err.message);
+                });
             }
         }
 

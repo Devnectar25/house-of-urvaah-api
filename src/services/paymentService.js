@@ -115,11 +115,13 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
         await client.query('BEGIN');
 
         let amount = 0;
+        let rzpPaymentMethod = null;
         try {
             const rzp = getRazorpay();
             if (rzp && razorpay_payment_id && !razorpay_payment_id.startsWith('pay_test_')) {
                 const payment = await rzp.payments.fetch(razorpay_payment_id);
                 amount = payment.amount / 100;
+                rzpPaymentMethod = payment.method;
             }
         } catch (e) {
             console.warn('[verifyPayment] Razorpay fetch payment note:', e.message);
@@ -145,6 +147,10 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                 [String(internalOrderId), razorpay_payment_id || `pay_${Date.now()}`]
             );
             orderRow = orderResult.rows[0];
+
+            if (orderRow && rzpPaymentMethod) {
+                console.log(`[PaymentService] Order #${orderRow.order_number}: Checkout selected mode was '${orderRow.payment_method}', Razorpay completed via '${rzpPaymentMethod}'.`);
+            }
         }
 
         // Clear user cart items in DB (both cart base table and cart_items view)

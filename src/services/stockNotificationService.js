@@ -146,20 +146,10 @@ class StockNotificationService {
 
         const subscription = insertRes.rows[0];
 
-        // 5. Send subscription confirmation email asynchronously
-        if (cleanEmail) {
-            const unsubscribeUrl = `${CLIENT_URL}/stock-notifications/unsubscribe?token=${unsubscribeToken}`;
-            sendStockSubscriptionConfirmationEmail({
-                toEmail: cleanEmail,
-                toName: null,
-                productTitle: product.title || 'House of Urvaah Creation',
-                size: cleanSize,
-                color: cleanColor,
-                unsubscribeUrl
-            }).catch(err => {
-                console.error('[StockNotification] Error sending confirmation email:', err.message);
-            });
-        }
+        // Subscription registered successfully.
+        // Do NOT send email upon filling the form.
+        // Email will trigger ONLY when stock becomes available for this product and requested size.
+        console.log(`[StockNotification] Subscription registered for Product ${numericId} (size: ${cleanSize || 'any'}, email: ${cleanEmail || 'none'}). Waiting for restock.`);
 
         return {
             success: true,
@@ -375,10 +365,11 @@ class StockNotificationService {
      */
     async processSingleJob(job) {
         try {
-            // Fetch subscription and product details
+            // Fetch subscription and product details with live stock columns
             const detailsRes = await pool.query(
                 `SELECT s.id AS sub_id, s.contact_email, s.contact_phone, s.size, s.color, s.unsubscribe_token,
-                        p.product_id, p.title, p.price, p.image_url, p.images
+                        p.product_id, p.title, p.price, p.image_url, p.images,
+                        p.stock_quantity, p.stock, p.quantity, p.size_stock, p.is_active
                  FROM stock_notification_subscriptions s
                  JOIN products p ON p.product_id = s.product_id
                  WHERE s.id = $1`,
@@ -397,6 +388,32 @@ class StockNotificationService {
             }
 
             const item = detailsRes.rows[0];
+
+            // Verify product is currently active
+            if (item.is_active === false) {
+                console.log(`[StockNotification] Product ${item.product_id} is inactive. Postponing alert.`);
+                return;
+            }
+
+            // Verify stock is actually available for this product and size
+            const totalStock = Math.max(0, parseInt(item.stock_quantity ?? item.quantity ?? item.stock, 10) || 0);
+            let hasStock = totalStock > 0;
+
+            if (item.size && item.size_stock && typeof item.size_stock === 'object') {
+                const sizeKey = Object.keys(item.size_stock).find(k => k.toLowerCase() === item.size.toLowerCase());
+                if (sizeKey !== undefined) {
+                    const sizeQty = parseInt(item.size_stock[sizeKey], 10);
+                    if (!isNaN(sizeQty)) {
+                        hasStock = sizeQty > 0;
+                    }
+                }
+            }
+
+            if (!hasStock) {
+                console.log(`[StockNotification] Stock is not yet available for Product ${item.product_id} (size: ${item.size || 'all'}). Keeping notification in waitlist.`);
+                return;
+            }
+
             const rawImg = item.image_url || (Array.isArray(item.images) && item.images[0]) || '';
             const mainImgUrl = rawImg ? storageService.getPublicMediaUrl(rawImg) : '';
             const productUrl = `${CLIENT_URL}/product/${item.product_id}`;
@@ -795,9 +812,9 @@ class StockNotificationService {
      * Automatic Scanner: Checks all active subscriptions against live product stock.
      * Any subscriber whose item is in stock receives their email alert and is removed from the waitlist.
      */
-    async checkAndNotifyAllInStockSubscribers() {
+    async checkAndNotifyAllInStockSubscribers(targetProductId = null) {
         try {
-            const query = `
+            let query = `
                 SELECT s.id, s.product_id, s.size, s.contact_email, s.contact_phone, s.channel,
                        p.title, p.stock_quantity, p.stock, p.quantity, p.size_stock, p.is_active
                 FROM stock_notification_subscriptions s
@@ -805,7 +822,15 @@ class StockNotificationService {
                 WHERE s.status = 'active'
                   AND p.is_active = true
             `;
-            const result = await pool.query(query);
+            const params = [];
+            if (targetProductId) {
+                const candidateNumericId = parseCandidateProductId(targetProductId);
+                if (candidateNumericId) {
+                    query += ` AND (p.product_id = $1 OR p.id = $1)`;
+                    params.push(candidateNumericId);
+                }
+            }
+            const result = await pool.query(query, params);
             const inStockSubs = [];
 
             for (const sub of result.rows) {

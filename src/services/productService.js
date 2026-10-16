@@ -827,6 +827,11 @@ exports.updateProduct = async (id, product) => {
                 size: null
             }).catch(err => console.error('[RestockTrigger Error]:', err));
         }
+
+        // Immediately notify and remove any waitlisted customers whose product/size is now in stock
+        stockNotificationService.checkAndNotifyAllInStockSubscribers(updatedRow.product_id).catch(err => {
+            console.error('[StockNotification Check Error]:', err.message);
+        });
     }
 
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
@@ -846,6 +851,13 @@ exports.toggleProductStatus = async (id) => {
         WHERE product_id = $1::integer OR id = $1::integer 
         RETURNING *
     `, [targetId]);
+
+    if (result.rows[0] && result.rows[0].is_active) {
+        stockNotificationService.checkAndNotifyAllInStockSubscribers(result.rows[0].product_id).catch(err => {
+            console.error('[StockNotification Toggle Check Error]:', err.message);
+        });
+    }
+
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
 
