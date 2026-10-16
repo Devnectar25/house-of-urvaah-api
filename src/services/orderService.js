@@ -837,7 +837,7 @@ exports.getOrderById = async (orderId) => {
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON (LOWER(o.user_id) = LOWER(u.username) OR LOWER(o.user_id) = LOWER(u.emailid))
-         WHERE o.id::text = $1 OR o.order_number = $1`,
+         WHERE o.id::text = $1 OR o.order_number = $1 OR o.tracking_number = $1 OR o.awb_code = $1 OR o.shipment_id = $1`,
         [orderId]
     );
 

@@ -23,7 +23,11 @@ router.post('/simulate/out-for-delivery', shippingController.simulateOutForDeliv
 router.post('/simulate/delivered', shippingController.simulateDelivered);
 
 // 8. Labels & Manifests
+router.get('/label/:identifier', shippingController.getShippingLabel);
+router.get('/label', shippingController.getShippingLabel);
 router.post('/label', shippingController.generateLabel);
+router.get('/manifest/:identifier', shippingController.getShippingManifest);
+router.get('/manifest', shippingController.getShippingManifest);
 router.post('/manifest', shippingController.generateManifest);
 
 // 9. Cancel Order

@@ -5,6 +5,8 @@
  */
 
 const shiprocketService = require('../services/shiprocketService');
+const shippingLabelService = require('../services/shippingLabelService');
+const orderService = require('../services/orderService');
 const pool = require('../config/db');
 
 // 1. Check Serviceability & EDD
@@ -187,6 +189,52 @@ exports.generateLabel = async (req, res) => {
     }
 };
 
+// Stream or render Shipping Label (PDF, HTML, or JSON)
+exports.getShippingLabel = async (req, res) => {
+    try {
+        const identifier = req.params.identifier || req.query.orderId || req.query.id || req.query.awb;
+        if (!identifier) {
+            return res.status(400).json({ success: false, message: 'Order ID or tracking number identifier is required.' });
+        }
+
+        const format = (req.query.format || '').toLowerCase();
+        const isReturn = req.query.isReturn === 'true' || req.query.type === 'return';
+
+        // 1. JSON Data Endpoint
+        if (format === 'json') {
+            const data = await shippingLabelService.getShippingLabelData(identifier, isReturn);
+            return res.status(200).json({ success: true, data });
+        }
+
+        // 2. HTML Printable Label
+        if (format === 'html' || req.query.print === '1' || req.headers.accept?.includes('text/html')) {
+            const html = await shippingLabelService.generateShippingLabelHTML(identifier, { isReturn });
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
+
+        // 3. Default: Binary PDF
+        try {
+            const pdfBuffer = await shippingLabelService.generateShippingLabelPDF(identifier, { isReturn });
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `inline; filename="HOUSE_OF_URVAAH_SHIPPING_LABEL_${identifier}.pdf"`);
+            res.setHeader('Content-Length', pdfBuffer.length);
+            return res.end(pdfBuffer);
+        } catch (pdfErr) {
+            console.warn('[getShippingLabel] PDF rendering warning, falling back to HTML:', pdfErr.message);
+            const html = await shippingLabelService.generateShippingLabelHTML(identifier, { isReturn });
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
+    } catch (err) {
+        console.error('[getShippingLabel Error]:', err);
+        return res.status(err.message.includes('not found') ? 404 : 500).json({
+            success: false,
+            message: err.message
+        });
+    }
+};
+
 exports.generateManifest = async (req, res) => {
     try {
         const { shipment_ids, shipment_id } = req.body;
@@ -202,17 +250,84 @@ exports.generateManifest = async (req, res) => {
     }
 };
 
+// Stream or render Handover Manifest (PDF or HTML)
+exports.getShippingManifest = async (req, res) => {
+    try {
+        const identifier = req.params.identifier || req.query.orderId || req.query.id;
+        if (!identifier) {
+            return res.status(400).json({ success: false, message: 'Order ID or tracking number identifier is required.' });
+        }
+
+        const format = (req.query.format || '').toLowerCase();
+
+        if (format === 'html' || req.query.print === '1' || req.headers.accept?.includes('text/html')) {
+            const html = await shippingLabelService.generateManifestHTML(identifier);
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
+
+        try {
+            const pdfBuffer = await shippingLabelService.generateManifestPDF(identifier);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `inline; filename="HOUSE_OF_URVAAH_MANIFEST_${identifier}.pdf"`);
+            res.setHeader('Content-Length', pdfBuffer.length);
+            return res.end(pdfBuffer);
+        } catch (pdfErr) {
+            const html = await shippingLabelService.generateManifestHTML(identifier);
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 // 9. Cancel Order / Shipment
 exports.cancelShipment = async (req, res) => {
     try {
-        const { order_ids, order_id } = req.body;
+        const { order_ids, order_id, reason, cancelReason, comments } = req.body;
         const targetIds = order_ids || order_id;
         if (!targetIds) {
             return res.status(400).json({ success: false, message: 'order_id or order_ids is required.' });
         }
 
-        const result = await shiprocketService.cancelShipment(targetIds);
-        return res.json(result);
+        const ids = Array.isArray(targetIds) ? targetIds : [targetIds];
+        const result = await shiprocketService.cancelShipment(ids);
+
+        const finalReason = reason || cancelReason || comments || 'Customer requested order cancellation';
+        const updatedOrders = [];
+
+        // Synchronize with database: update status and void courier assignment
+        for (const identifier of ids) {
+            try {
+                const order = await orderService.getOrderById(identifier);
+                if (order) {
+                    const currentStatus = (order.status || '').toLowerCase();
+                    const isDelivered = currentStatus === 'delivered' || currentStatus === 'completed';
+                    const targetStatus = isDelivered ? 'Cancellation Requested' : 'Cancelled';
+
+                    const updated = await orderService.updateOrderStatus(
+                        order.id,
+                        targetStatus,
+                        finalReason,
+                        null,
+                        order.payment_status
+                    );
+                    updatedOrders.push(updated);
+                    console.log(`[CancelShipment API] Order #${order.order_number || order.id} marked as "${targetStatus}" in DB`);
+                }
+            } catch (dbErr) {
+                console.warn(`[CancelShipment DB sync warning for ${identifier}]:`, dbErr.message);
+            }
+        }
+
+        return res.json({
+            success: true,
+            status_code: 200,
+            message: 'Order and shipment cancelled successfully.',
+            ...result,
+            updated_orders: updatedOrders
+        });
     } catch (err) {
         return res.status(500).json({ success: false, message: err.message });
     }
