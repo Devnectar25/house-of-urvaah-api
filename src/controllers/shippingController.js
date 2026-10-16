@@ -44,6 +44,27 @@ exports.createForwardShipment = async (req, res) => {
         }
 
         const result = await shiprocketService.createForwardShipment(orderData);
+
+        // Sync shipment_id & tracking_number into the orders DB row if order exists
+        const orderIdentifier = orderData.order_number || orderData.order_id || orderData.id;
+        const shipmentId = result.shipment_id || (result.order_id ? `SR-${result.order_id}` : null);
+        if (shipmentId && orderIdentifier) {
+            try {
+                await pool.query(
+                    `UPDATE orders 
+                     SET tracking_number = COALESCE(NULLIF(tracking_number, ''), $1),
+                         shipment_id = COALESCE(NULLIF(shipment_id, ''), $1),
+                         shipping_provider = COALESCE(shipping_provider, 'Shiprocket'),
+                         updated_at = NOW()
+                     WHERE order_number = $2 OR id::text = $2`,
+                    [String(shipmentId), String(orderIdentifier)]
+                );
+                console.log(`[ShippingController] Synced shipment ID ${shipmentId} to database order ${orderIdentifier}`);
+            } catch (dbErr) {
+                console.warn('[ShippingController DB Sync Warning]:', dbErr.message);
+            }
+        }
+
         return res.json(result);
     } catch (err) {
         console.error('[ShippingController Create Shipment Error]:', err.message);
@@ -77,6 +98,26 @@ exports.schedulePickup = async (req, res) => {
         }
 
         const result = await shiprocketService.schedulePickup(targetIds);
+
+        // Sync logistics status to database
+        try {
+            const idList = Array.isArray(targetIds) ? targetIds : [targetIds];
+            await pool.query(
+                `UPDATE orders 
+                 SET logistics_status = 'Pickup Scheduled',
+                     shipment_status = 'Pickup Scheduled',
+                     updated_at = NOW()
+                 WHERE shipment_id = ANY($1::text[]) 
+                    OR tracking_number = ANY($1::text[]) 
+                    OR order_number = ANY($1::text[]) 
+                    OR id::text = ANY($1::text[])`,
+                [idList.map(String)]
+            );
+            console.log(`[ShippingController] Updated logistics_status to 'Pickup Scheduled' for:`, idList);
+        } catch (dbErr) {
+            console.warn('[ShippingController DB Sync Warning]:', dbErr.message);
+        }
+
         return res.json(result);
     } catch (err) {
         console.error('[ShippingController Schedule Pickup Error]:', err.message);
