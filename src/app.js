@@ -118,6 +118,7 @@ app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/health-tips', healthTipRoutes);
 app.use('/api/delivery', require('./routes/deliveryRoutes'));
 app.use('/api/pincode', require('./routes/pincodeRoutes'));
+app.use('/api/shipping', require('./routes/shippingRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);

@@ -177,7 +177,7 @@ exports.updateOrderStatus = async (req, res) => {
         }
 
         // If order is COD and status is Delivered, payment is collected upon delivery and must be Paid
-        const isCod = (order.payment_method || '').toLowerCase() === 'cod' || 
+        const isCod = (order.payment_method || '').toLowerCase() === 'cod' ||
                       (order.payment_type || '').toLowerCase() === 'cod' ||
                       (order.payment_method || '').toLowerCase().includes('cash');
 
@@ -188,6 +188,18 @@ exports.updateOrderStatus = async (req, res) => {
 
         // Pass order.id (validated UUID) to ensure clean DB queries
         const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, targetPaymentStatus, itemIds);
+
+        // Synchronize with Shiprocket logistics if order is cancelled
+        if (targetStatus === 'Cancelled' || targetStatus === 'Cancellation Requested' || status === 'Cancelled' || status === 'Cancellation Requested') {
+            try {
+                const shiprocketService = require('../services/shiprocketService');
+                const orderIdentifier = order.order_number || order.id || id;
+                await shiprocketService.cancelShipment([orderIdentifier]);
+                console.log(`[Shiprocket Sync] Shipment/Pickup voided successfully for order ${orderIdentifier}`);
+            } catch (srErr) {
+                console.warn('[Shiprocket Sync Warning]:', srErr.message);
+            }
+        }
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -391,5 +403,3 @@ exports.updateOrderShippingAddress = async (req, res) => {
         });
     }
 };
-
-
