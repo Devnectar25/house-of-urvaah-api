@@ -167,7 +167,13 @@ exports.createOrder = async (orderData) => {
                 const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
 
                 if (prodRow) {
-                    const overallStock = parseInt(prodRow.stock_quantity ?? prodRow.quantity ?? 0, 10);
+                    let overallStock = parseInt(prodRow.stock_quantity ?? prodRow.quantity ?? 0, 10);
+                    if (prodRow.size_stock && typeof prodRow.size_stock === 'object') {
+                        const sumSizeStock = Object.values(prodRow.size_stock).reduce((acc, v) => acc + (parseInt(v, 10) || 0), 0);
+                        if (sumSizeStock > 0 && overallStock <= 0) {
+                            overallStock = sumSizeStock;
+                        }
+                    }
                     const isActive = prodRow.is_active !== false;
 
                     if (!isActive || overallStock <= 0) {

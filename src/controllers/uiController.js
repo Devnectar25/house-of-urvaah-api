@@ -301,7 +301,16 @@ exports.createTrendingGramPost = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Image or video URL is required' });
     }
 
-    const mType = media_type || (image.endsWith('.mp4') ? 'video' : 'image');
+    let mType = media_type;
+    if (image && typeof image === 'string') {
+      const cleanImg = image.split('?')[0].toLowerCase();
+      if (cleanImg.endsWith('.mp4') || cleanImg.endsWith('.webm') || cleanImg.endsWith('.mov') || cleanImg.includes('/videos/') || cleanImg.includes('/video/')) {
+        mType = 'video';
+      } else if (cleanImg.endsWith('.jpg') || cleanImg.endsWith('.jpeg') || cleanImg.endsWith('.png') || cleanImg.endsWith('.webp') || cleanImg.endsWith('.avif')) {
+        mType = 'image';
+      }
+    }
+    if (!mType) mType = 'video';
     const orderVal = Number.isInteger(display_order) ? display_order : 0;
     const activeVal = is_active !== undefined ? Boolean(is_active) : true;
     const galleryVal = Array.isArray(product_gallery)
@@ -313,7 +322,7 @@ exports.createTrendingGramPost = async (req, res) => {
          title, image, media_type, caption, post_link, display_order, is_active,
          product_image, product_id, product_name, product_price, product_gallery
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
        RETURNING *`,
       [
         title || '',
@@ -364,7 +373,17 @@ exports.updateTrendingGramPost = async (req, res) => {
 
     const current = existing.rows[0];
     const newImage = image !== undefined ? image : current.image;
-    const newMediaType = media_type !== undefined ? media_type : (newImage && newImage.endsWith('.mp4') ? 'video' : current.media_type);
+    let newMediaType = media_type !== undefined ? media_type : current.media_type;
+
+    if (newImage && typeof newImage === 'string') {
+      const cleanImg = newImage.split('?')[0].toLowerCase();
+      if (cleanImg.endsWith('.mp4') || cleanImg.endsWith('.webm') || cleanImg.endsWith('.mov') || cleanImg.includes('/videos/') || cleanImg.includes('/video/')) {
+        newMediaType = 'video';
+      } else if (cleanImg.endsWith('.jpg') || cleanImg.endsWith('.jpeg') || cleanImg.endsWith('.png') || cleanImg.endsWith('.webp') || cleanImg.endsWith('.avif')) {
+        newMediaType = 'image';
+      }
+    }
+    if (!newMediaType) newMediaType = 'video';
 
     const newProductImage = product_image !== undefined ? product_image : current.product_image;
     const newProductId = product_id !== undefined ? product_id : current.product_id;
@@ -387,7 +406,7 @@ exports.updateTrendingGramPost = async (req, res) => {
            product_id = $9,
            product_name = $10,
            product_price = $11,
-           product_gallery = $12,
+           product_gallery = $12::jsonb,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $13
        RETURNING *`,
@@ -508,7 +527,7 @@ exports.updateFabricVideo = async (req, res) => {
 
     let sanitizedVideos = null;
     if (Array.isArray(videos)) {
-      sanitizedVideos = videos.slice(0, 3).map((v, idx) => ({
+      sanitizedVideos = videos.slice(0, 10).map((v, idx) => ({
         id: v?.id || `video-${idx + 1}`,
         tag: typeof v?.tag === 'string' ? v.tag.trim() : '',
         title: typeof v?.title === 'string' ? v.title.trim() : (typeof v?.name === 'string' ? v.name.trim() : ''),
@@ -608,8 +627,8 @@ exports.getPublicContactInfo = async (req, res) => {
       concierge = {
         section_badge: 'CLIENT SERVICES',
         section_title: 'ATELIER CONCIERGE',
-        email: 'concierge@houseofurvaah.com',
-        phone: '+91 22 4900 8800',
+        email: 'houseofurvaah@gmail.com',
+        phone: '+91 98333 25657',
         hours: 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
       };
     }
@@ -658,7 +677,7 @@ exports.getAdminContactInfo = async (req, res) => {
     if (!concierge) {
       const inserted = await pool.query(
         `INSERT INTO ui_concierge_settings (section_badge, section_title, email, phone, hours)
-         VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'concierge@houseofurvaah.com', '+91 22 4900 8800', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
+         VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'houseofurvaah@gmail.com', '+91 98333 25657', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
          RETURNING *`
       );
       concierge = inserted.rows[0];
@@ -707,8 +726,8 @@ exports.updateConciergeSettings = async (req, res) => {
         [
           section_badge || 'CLIENT SERVICES',
           section_title || 'ATELIER CONCIERGE',
-          email || 'concierge@houseofurvaah.com',
-          phone || '+91 22 4900 8800',
+          email || 'houseofurvaah@gmail.com',
+          phone || '+91 98333 25657',
           hours || 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
         ]
       );

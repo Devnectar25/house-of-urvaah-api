@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS public.ui_concierge_settings (
     id SERIAL PRIMARY KEY,
     section_badge VARCHAR(100) DEFAULT 'CLIENT SERVICES',
     section_title VARCHAR(150) DEFAULT 'ATELIER CONCIERGE',
-    email VARCHAR(255) DEFAULT 'concierge@houseofurvaah.com',
+    email VARCHAR(255) DEFAULT 'houseofurvaah@gmail.com',
     phone VARCHAR(100) DEFAULT '+91 22 4900 8800',
     hours VARCHAR(255) DEFAULT 'Monday – Saturday: 10:00 AM – 8:00 PM IST',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,

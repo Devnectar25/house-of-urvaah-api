@@ -8,8 +8,8 @@ async function migrate() {
         id SERIAL PRIMARY KEY,
         section_badge VARCHAR(100) DEFAULT 'CLIENT SERVICES',
         section_title VARCHAR(150) DEFAULT 'ATELIER CONCIERGE',
-        email VARCHAR(255) DEFAULT 'concierge@houseofurvaah.com',
-        phone VARCHAR(100) DEFAULT '+91 22 4900 8800',
+        email VARCHAR(255) DEFAULT 'houseofurvaah@gmail.com',
+        phone VARCHAR(100) DEFAULT '+91 98333 25657',
         hours VARCHAR(255) DEFAULT 'Monday – Saturday: 10:00 AM – 8:00 PM IST',
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -34,7 +34,7 @@ async function migrate() {
   if (parseInt(cCount.rows[0].count) === 0) {
     await pool.query(`
       INSERT INTO public.ui_concierge_settings (section_badge, section_title, email, phone, hours)
-      VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'concierge@houseofurvaah.com', '+91 22 4900 8800', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
+      VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'houseofurvaah@gmail.com', '+91 98333 25657', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
     `);
     console.log('Seeded ui_concierge_settings');
   }
@@ -44,8 +44,8 @@ async function migrate() {
     await pool.query(`
       INSERT INTO public.ui_boutique_locations (section_badge, section_title, name, address, phone, is_primary, display_order, is_active)
       VALUES 
-      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'House of Urvaah', E'Kala Ghoda Arts District,\\nColaba Causeway, Mumbai 400001', '+91 22 4900 8800', true, 1, true),
-      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'NEW DELHI CONCIERGE & SHOWROOM', 'Mehrauli Heritage District, Style Mile, New Delhi 110030', '+91 11 4800 7700', false, 2, true)
+      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'House of Urvaah', 'Mumbai - 400070', '+91 98333 25657', true, 1, true),
+      ('FLAGSHIP BOUTIQUES', 'ATELIER LOCATIONS', 'NEW DELHI CONCIERGE & SHOWROOM', 'Mehrauli Heritage District, Style Mile, New Delhi 110030', '+91 98333 25657', false, 2, true)
     `);
     console.log('Seeded ui_boutique_locations');
   }
