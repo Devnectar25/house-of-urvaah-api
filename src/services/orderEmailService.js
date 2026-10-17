@@ -4,7 +4,7 @@ const { sendBrevoEmail } = require('./brevoEmailService');
 const invoiceService = require('./invoiceService');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || process.env.STORE_FRONT_URL || 'http://localhost:3000';
-const SUPPORT_EMAIL = 'support@houseofurvaah.com';
+const SUPPORT_EMAIL = 'houseofurvaah@gmail.com';
 
 /**
  * Validates whether a string is a well-formed email address
@@ -328,7 +328,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
             HOUSE OF URVAAH ATELIER CONCIERGE<br/>
-            KALA GHODA ARTS DISTRICT &bull; COLABA CAUSEWAY, MUMBAI<br/>
+            EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
             For inquiries, reply to this email or contact <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
 
@@ -589,7 +589,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
             HOUSE OF URVAAH TREASURY & BILLING<br/>
-            KALA GHODA ARTS DISTRICT &bull; COLABA CAUSEWAY, MUMBAI<br/>
+            EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
             For inquiries, contact <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
 
@@ -1084,7 +1084,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
             HOUSE OF URVAAH &bull; BESPOKE LUXURY ATELIER<br/>
-            KALA GHODA ARTS DISTRICT &bull; COLABA CAUSEWAY, MUMBAI<br/>
+            EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
             For concierge assistance, reach us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
 

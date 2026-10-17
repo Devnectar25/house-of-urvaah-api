@@ -35,12 +35,13 @@ exports.uploadImage = async (file, folder = 'brand') => {
             throw new Error('Invalid file: missing originalname');
         }
 
+        const cleanName = (file.originalname || 'media').replace(/[^a-zA-Z0-9.]/g, '_');
         // If it's a disk file (has path), use uploadFromFile
         if (file.path) {
-            return await exports.uploadFromFile(file.path, `${folder}/${Date.now()}-${file.originalname}`, file.mimetype);
+            return await exports.uploadFromFile(file.path, `${folder}/${Date.now()}-${cleanName}`, file.mimetype);
         }
 
-        return await exports.uploadBuffer(file.buffer, `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}`, file.mimetype || 'image/jpeg');
+        return await exports.uploadBuffer(file.buffer, `${folder}/${Date.now()}-${cleanName}`, file.mimetype || 'image/jpeg');
     } catch (error) {
         throw error;
     }

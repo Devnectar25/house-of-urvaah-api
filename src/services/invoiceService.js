@@ -148,7 +148,7 @@ exports.getInvoiceData = async (orderId) => {
         .join(' ');
 
     const customerPhone = order.recipient_phone || order.customer_phone || shippingAddr?.phone || user.contactno || user.phone || 'N/A';
-    const customerEmail = order.customer_email || user.emailid || 'concierge@houseofurvaah.com';
+    const customerEmail = order.customer_email || user.emailid || 'houseofurvaah@gmail.com';
 
     // Format address components clearly
     const street = (order.full_address || shippingAddr?.address || shippingAddr?.street || shippingAddr?.addressLine1 || '').trim();

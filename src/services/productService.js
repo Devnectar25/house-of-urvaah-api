@@ -72,6 +72,9 @@ const mapProduct = (p) => {
     const rawImage = p.image_url || p.image || '';
     const mainImageUrl = rawImage ? storageService.getPublicMediaUrl(rawImage) : 'https://via.placeholder.com/300';
 
+    const rawVideo = p.video_url || p.videoUrl || p.video || '';
+    const videoUrl = rawVideo ? storageService.getPublicMediaUrl(rawVideo) : '';
+
     const rawImagesArray = (p.images && p.images.length > 0)
         ? p.images
         : ((p.product_images && p.product_images.length > 0)
@@ -188,6 +191,9 @@ const mapProduct = (p) => {
         fitType: p.fit_type || '',
         careInstructions: p.care_instructions || '',
         care_instructions: p.care_instructions || '',
+        video: videoUrl,
+        videoUrl: videoUrl,
+        video_url: videoUrl,
         additionalInfo: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
         additionalInfoText: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
         additional_info: p.additional_info || p.additionalInfo || p.additionalInfoText || '',
@@ -570,7 +576,8 @@ exports.createProduct = async (product) => {
         category_id, brand, image, image_url, images, promoted, is_featured, is_recommended, isRecommended,
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
-        specifications, name_options, nameOptions, product_details, productDetails
+        specifications, name_options, nameOptions, product_details, productDetails,
+        video_url, videoUrl, video
     } = product;
 
     const productTitle = title || productname || '';
@@ -595,6 +602,7 @@ exports.createProduct = async (product) => {
     const shortDesc = short_description || shortDescription || shortdescription || '';
     const fullDesc = full_description || fullDescription || fulldescription || '';
     const careInst = care_instructions || careInstructions || '';
+    const productVideo = (video_url || videoUrl || video) ? String(video_url || videoUrl || video).trim() : null;
 
     let specsVal = specifications || [];
     if (typeof specsVal === 'string') {
@@ -639,8 +647,8 @@ exports.createProduct = async (product) => {
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, video_url, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, $27, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
@@ -651,7 +659,8 @@ exports.createProduct = async (product) => {
             JSON.stringify(specsVal),
             JSON.stringify(nameOptsVal),
             JSON.stringify(prodDetailsVal),
-            JSON.stringify(sizeStockVal || {})
+            JSON.stringify(sizeStockVal || {}),
+            productVideo
         ]
     );
     return mapProduct(result.rows[0]);
@@ -667,8 +676,12 @@ exports.updateProduct = async (id, product) => {
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
         specifications, name_options, nameOptions, product_details, productDetails,
-        instock, inStock
+        instock, inStock, video_url, videoUrl, video
     } = product;
+
+    const videoVal = (video_url !== undefined) ? video_url : (videoUrl !== undefined ? videoUrl : (video !== undefined ? video : undefined));
+    const hasVideoUpdate = videoVal !== undefined;
+    const cleanVideo = (hasVideoUpdate && videoVal && String(videoVal).trim().length > 0) ? String(videoVal).trim() : null;
 
     const productTitle = title || productname;
     const activeVal = active !== undefined ? active : is_active;
@@ -779,6 +792,7 @@ exports.updateProduct = async (id, product) => {
             name_options = COALESCE($24::jsonb, name_options),
             product_details = COALESCE($25::jsonb, product_details),
             size_stock = COALESCE($27::jsonb, size_stock),
+            video_url = CASE WHEN $28::boolean THEN $29 ELSE video_url END,
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
@@ -809,7 +823,9 @@ exports.updateProduct = async (id, product) => {
             nameOptsVal !== undefined ? JSON.stringify(nameOptsVal) : null,
             prodDetailsVal !== undefined ? JSON.stringify(prodDetailsVal) : null,
             inStockVal !== undefined ? inStockVal : null,
-            sizeStockParam !== undefined ? sizeStockParam : null
+            sizeStockParam !== undefined ? sizeStockParam : null,
+            hasVideoUpdate,
+            cleanVideo
         ]
     );
 

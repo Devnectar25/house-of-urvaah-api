@@ -19,7 +19,7 @@ class SettingsService {
                 card_charge_enabled: true,
                 card_charge_percentage: 2,
                 store_name: 'House of Urvaah',
-                support_email: 'support@houseofurvaah.com',
+                support_email: 'houseofurvaah@gmail.com',
                 free_shipping_threshold: 2999,
                 currency_symbol: '₹',
                 maintenance_mode: false
@@ -36,7 +36,7 @@ class SettingsService {
             card_charge_enabled: Boolean(row.card_charge_enabled),
             card_charge_percentage: parseFloat(row.card_charge_percentage) || 2,
             store_name: row.store_name || 'House of Urvaah',
-            support_email: row.support_email || 'support@houseofurvaah.com',
+            support_email: row.support_email || 'houseofurvaah@gmail.com',
             free_shipping_threshold: parseFloat(row.free_shipping_threshold) || 2999,
             currency_symbol: row.currency_symbol || '₹',
             maintenance_mode: Boolean(row.maintenance_mode),
