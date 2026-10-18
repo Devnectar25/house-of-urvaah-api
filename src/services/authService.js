@@ -275,11 +275,8 @@ exports.completeSignup = async (data) => {
         userRow = insertRes.rows[0];
     }
 
-    // Trigger welcome email in background
-    try {
-        const brevo = require('./brevoEmailService');
-        brevo.sendWelcomeEmail(cleanEmail, fullName).catch((e) => console.warn('[Welcome Email Warning]:', e.message));
-    } catch (e) {}
+    // Note: Welcome email is suppressed per customer notification policy.
+    // Customers only receive Login to website (OTP verification code).
 
     const token = generateToken(userRow.username || cleanEmail, 'user');
     const formattedUser = formatUserResponse(userRow);

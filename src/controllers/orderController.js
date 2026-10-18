@@ -43,9 +43,9 @@ exports.getAllOrders = async (req, res) => {
 
 exports.getCancelledOrders = async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
-        const offset = (page - 1) * limit;
+        const page = parseInt(req.query.page) || (req.query.offset !== undefined ? Math.floor(parseInt(req.query.offset) / limit) + 1 : 1);
+        const offset = req.query.offset !== undefined ? parseInt(req.query.offset) : (page - 1) * limit;
         const refundStatusFilter = req.query.refundStatusFilter || 'active';
         const searchTerm = req.query.searchTerm;
 
@@ -54,6 +54,8 @@ exports.getCancelledOrders = async (req, res) => {
         res.status(200).json({
             success: true,
             data: result.orders,
+            orders: result.orders,
+            totalCount: result.totalCount,
             pagination: {
                 totalOrders: result.totalCount,
                 currentPage: page,
@@ -165,9 +167,9 @@ exports.updateOrderStatus = async (req, res) => {
                 return res.status(400).json({ success: false, message: 'This order cycle has already been completed.' });
             }
             if (currentStatusLower === 'delivered') {
-                // Post-delivery: check if replacement or cancel
+                // Post-delivery: check if replacement or return
                 const isReplacement = (status || '').toLowerCase().includes('replace') || req.body.type === 'Replacement';
-                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Cancellation Requested';
+                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Return Requested';
             } else if (currentStatusLower === 'cancellation requested' || currentStatusLower === 'cancel_requested') {
                 return res.status(400).json({ success: false, message: 'A cancellation request for this order is already pending admin approval.' });
             } else {
@@ -182,15 +184,23 @@ exports.updateOrderStatus = async (req, res) => {
                       (order.payment_method || '').toLowerCase().includes('cash');
 
         let targetPaymentStatus = paymentStatus;
-        if ((targetStatus === 'Delivered' || (order.status || '').toLowerCase() === 'delivered') && isCod) {
+        const currentPaymentStatus = (order.payment_status || '').trim();
+        const isAlreadyPaid = currentPaymentStatus.toLowerCase() === 'paid';
+        const isDeliveredEver = (order.status || '').toLowerCase() === 'delivered' ||
+                                targetStatus === 'Delivered' ||
+                                Boolean(order.delivered_at) ||
+                                (order.original_status || '').toLowerCase() === 'delivered';
+
+        if (isAlreadyPaid || (isDeliveredEver && isCod)) {
             targetPaymentStatus = 'Paid';
         }
 
         // Pass order.id (validated UUID) to ensure clean DB queries
         const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, targetPaymentStatus, itemIds);
 
-        // Synchronize with Shiprocket logistics if order is cancelled
-        if (targetStatus === 'Cancelled' || targetStatus === 'Cancellation Requested' || status === 'Cancelled' || status === 'Cancellation Requested') {
+        // Synchronize with Shiprocket logistics only if order is cancelled before delivery
+        const isReturnOrReplacement = String(targetStatus || status || '').toLowerCase().includes('return') || String(targetStatus || status || '').toLowerCase().includes('replace');
+        if (!isReturnOrReplacement && (targetStatus === 'Cancelled' || targetStatus === 'Cancellation Requested' || status === 'Cancelled' || status === 'Cancellation Requested')) {
             try {
                 const shiprocketService = require('../services/shiprocketService');
                 const orderIdentifier = order.order_number || order.id || id;
@@ -227,6 +237,22 @@ exports.downloadInvoice = async (req, res) => {
 
         if (!isOwner && !isAdmin) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        // Business Rule: End users / customers should only get the invoice once the order or replacement is delivered
+        if (!isAdmin) {
+            const statusLower = String(order.status || '').toLowerCase();
+            const originalStatusLower = String(order.original_status || '').toLowerCase();
+            const isDelivered = statusLower.includes('delivered') ||
+                                originalStatusLower.includes('delivered') ||
+                                Boolean(order.delivered_at);
+
+            if (!isDelivered) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Official tax invoice is only accessible once your order or replacement piece has been delivered.'
+                });
+            }
         }
 
         const format = (req.query.format || '').toLowerCase();

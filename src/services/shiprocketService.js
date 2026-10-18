@@ -13,34 +13,67 @@ let cachedToken = null;
 let tokenExpiresAt = null;
 
 /**
- * Checks whether mock mode is enabled (default is true for safe local testing)
+ * Checks whether mock mode is enabled.
+ * Default is TRUE for local testing.
+ * 
+ * Switching to Real Live Shiprocket API:
+ * 1. Set SHIPROCKET_MOCK=false in your .env
+ * 2. Set SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD (or SHIPROCKET_API_TOKEN)
+ * 
+ * Safe Fallback: If SHIPROCKET_MOCK=false is set but credentials are missing,
+ * the service safely falls back to MOCK mode with a console warning instead of crashing.
  */
 const isMockMode = () => {
-    return process.env.SHIPROCKET_MOCK !== 'false';
+    const isExplicitlyReal = 
+        process.env.SHIPROCKET_MOCK === 'false' || 
+        process.env.SHIPROCKET_USE_MOCK === 'false' || 
+        process.env.SHIPROCKET_ENV === 'production' ||
+        process.env.SHIPROCKET_MODE === 'real';
+
+    if (isExplicitlyReal) {
+        const hasEmailPass = Boolean(process.env.SHIPROCKET_EMAIL && process.env.SHIPROCKET_PASSWORD);
+        const hasToken = Boolean(process.env.SHIPROCKET_API_TOKEN);
+
+        if (!hasEmailPass && !hasToken) {
+            console.warn('[Shiprocket Service] ⚠️ REAL mode was requested (SHIPROCKET_MOCK=false) but SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD are not set in .env. Falling back safely to MOCK mode.');
+            return true;
+        }
+        return false;
+    }
+
+    return true; // Default safe mock mode
 };
 
 /**
  * Retrieves valid Shiprocket JWT Auth Token.
- * Caches token in memory for up to 9 days (Shiprocket tokens expire in 10 days).
+ * - Supports direct static token via SHIPROCKET_API_TOKEN
+ * - Or dynamic token via POST /auth/login with SHIPROCKET_EMAIL & SHIPROCKET_PASSWORD
+ * - Caches token in memory for up to 9 days (Shiprocket tokens expire in 10 days).
  */
-const getAuthToken = async () => {
+const getAuthToken = async (forceRefresh = false) => {
     if (isMockMode()) {
         return 'mock_jwt_shiprocket_token_urvaah_2026';
     }
 
+    // Direct API token takes priority if provided
+    if (process.env.SHIPROCKET_API_TOKEN) {
+        return process.env.SHIPROCKET_API_TOKEN.trim();
+    }
+
     const now = Date.now();
-    if (cachedToken && tokenExpiresAt && now < tokenExpiresAt) {
+    if (!forceRefresh && cachedToken && tokenExpiresAt && now < tokenExpiresAt) {
         return cachedToken;
     }
 
-    const email = process.env.SHIPROCKET_EMAIL;
-    const password = process.env.SHIPROCKET_PASSWORD;
+    const email = process.env.SHIPROCKET_EMAIL?.trim();
+    const password = process.env.SHIPROCKET_PASSWORD?.trim();
 
     if (!email || !password) {
         throw new Error('Shiprocket credentials missing. Set SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD in .env.');
     }
 
     try {
+        console.log('[Shiprocket Auth] Authenticating with Shiprocket API v2...');
         const response = await axios.post(`${SHIPROCKET_BASE_URL}/auth/login`, {
             email,
             password
@@ -50,6 +83,7 @@ const getAuthToken = async () => {
             cachedToken = response.data.token;
             // Cache for 9 days in milliseconds
             tokenExpiresAt = now + (9 * 24 * 60 * 60 * 1000);
+            console.log('[Shiprocket Auth] Successfully obtained and cached JWT token.');
             return cachedToken;
         } else {
             throw new Error('Failed to obtain token from Shiprocket authentication API.');
@@ -61,20 +95,80 @@ const getAuthToken = async () => {
 };
 
 /**
- * Common Axios requester with authorization headers
+ * Common Axios requester with authorization headers and automatic 401 retry
  */
 const apiClient = async (method, endpoint, data = null, params = null) => {
     const token = await getAuthToken();
-    return axios({
-        method,
-        url: `${SHIPROCKET_BASE_URL}${endpoint}`,
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        data,
-        params
-    });
+    try {
+        return await axios({
+            method,
+            url: `${SHIPROCKET_BASE_URL}${endpoint}`,
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            data,
+            params
+        });
+    } catch (err) {
+        // If 401 Unauthorized, token might have expired on Shiprocket. Invalidate cached token and retry once!
+        if (err.response?.status === 401 && !isMockMode()) {
+            console.warn('[Shiprocket Service] 401 Unauthorized received from Shiprocket. Refreshing token and retrying request...');
+            cachedToken = null;
+            tokenExpiresAt = null;
+            const freshToken = await getAuthToken(true);
+            return axios({
+                method,
+                url: `${SHIPROCKET_BASE_URL}${endpoint}`,
+                headers: {
+                    'Authorization': `Bearer ${freshToken}`,
+                    'Content-Type': 'application/json'
+                },
+                data,
+                params
+            });
+        }
+        throw err;
+    }
+};
+
+/**
+ * Diagnostic status check for developers and admins
+ */
+exports.getConfigStatus = async () => {
+    const mock = isMockMode();
+    const hasCreds = Boolean(
+        (process.env.SHIPROCKET_EMAIL && process.env.SHIPROCKET_PASSWORD) ||
+        process.env.SHIPROCKET_API_TOKEN
+    );
+
+    let authVerified = false;
+    let authError = null;
+
+    if (!mock && hasCreds) {
+        try {
+            await getAuthToken();
+            authVerified = true;
+        } catch (err) {
+            authError = err.message;
+        }
+    }
+
+    return {
+        success: true,
+        is_mock_mode: mock,
+        active_mode: mock ? 'MOCK / SIMULATED' : 'LIVE PRODUCTION SHIPROCKET',
+        credentials_configured: hasCreds,
+        email_set: Boolean(process.env.SHIPROCKET_EMAIL),
+        pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Atelier',
+        pickup_pincode: process.env.SHIPROCKET_PICKUP_PINCODE || '411001',
+        token_cached: Boolean(cachedToken),
+        auth_verified: authVerified,
+        auth_error: authError,
+        instructions: mock 
+            ? 'Running in safe MOCK mode. To switch to live Shiprocket APIs, set SHIPROCKET_MOCK=false and enter SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD in house-of-urvaah-api/.env.'
+            : 'Running in LIVE PRODUCTION mode connected to Shiprocket API v2.'
+    };
 };
 
 // ============================================================================
@@ -190,19 +284,30 @@ exports.checkServiceability = async ({
 // 2. CREATE FORWARD SHIPMENT (Simulated / Live Order Push)
 // ============================================================================
 exports.createForwardShipment = async (order) => {
+    const rawPhone = order.shippingAddress?.phone || order.recipient_phone || order.customer_phone || order.phone || '9999999999';
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9999999999';
+
+    const rawFirst = order.shippingAddress?.firstName || order.recipient_name?.split(' ')[0] || order.customer_name?.split(' ')[0] || 'Customer';
+    const rawLast = order.shippingAddress?.lastName || order.recipient_name?.split(' ').slice(1).join(' ') || order.customer_name?.split(' ').slice(1).join(' ') || '.';
+
+    let rawAddress = order.shippingAddress?.address || order.shipping_address_line || order.address || 'Boutique Address';
+    if (rawAddress.length < 10) {
+        rawAddress = `${rawAddress}, House of Urvaah`;
+    }
+
     const payload = {
         order_id: String(order.order_number || order.id),
         order_date: order.created_at || new Date().toISOString().replace('T', ' ').substring(0, 16),
         pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Atelier',
-        billing_customer_name: order.shippingAddress?.firstName || order.recipient_name?.split(' ')[0] || 'Customer',
-        billing_last_name: order.shippingAddress?.lastName || order.recipient_name?.split(' ').slice(1).join(' ') || '',
-        billing_address: order.shippingAddress?.address || order.shipping_address_line || 'Boutique Address',
+        billing_customer_name: rawFirst,
+        billing_last_name: rawLast,
+        billing_address: rawAddress,
         billing_city: order.shippingAddress?.city || order.city || 'Mumbai',
         billing_pincode: String(order.shippingAddress?.pincode || order.pincode || '400001'),
         billing_state: order.shippingAddress?.state || order.state || 'Maharashtra',
         billing_country: order.shippingAddress?.country || 'India',
         billing_email: order.shippingAddress?.email || order.customer_email || 'customer@houseofurvaah.com',
-        billing_phone: String(order.shippingAddress?.phone || order.recipient_phone || '9999999999'),
+        billing_phone: cleanPhone,
         shipping_is_billing: true,
         order_items: (order.items || []).map(item => ({
             name: item.name || item.title || 'Luxury Garment',
@@ -234,9 +339,15 @@ exports.createForwardShipment = async (order) => {
 
     try {
         const response = await apiClient('POST', '/orders/create/adhoc', payload);
+        const resData = response.data || {};
         return {
             success: true,
-            ...response.data
+            status_code: resData.status_code || 1,
+            status: resData.status || 'NEW',
+            order_id: resData.order_id,
+            shipment_id: resData.shipment_id,
+            message: 'Forward shipment created successfully in live Shiprocket.',
+            ...resData
         };
     } catch (err) {
         console.error('[Shiprocket Create Shipment Error]:', err.response?.data || err.message);
@@ -362,9 +473,35 @@ exports.trackShipment = async (awbCode) => {
 
     try {
         const response = await apiClient('GET', `/courier/track/awb/${cleanAwb}`);
+        const realData = response.data?.tracking_data || response.data || {};
+        const trackItem = Array.isArray(realData.shipment_track) ? realData.shipment_track[0] : (realData.shipment_track || {});
+        
+        const rawActivities = realData.shipment_track_activities || realData.scans || [];
+        const normalizedScans = rawActivities.map(a => ({
+            date: a.date || a['current_timestamp'] || '',
+            activity: a.activity || a.status || '',
+            location: a.location || ''
+        }));
+
         return {
             success: true,
-            ...response.data
+            tracking_data: {
+                track_status: realData.track_status ?? 1,
+                shipment_status: trackItem.current_status || realData.shipment_status || 'IN TRANSIT',
+                current_status: trackItem.current_status || realData.current_status || 'IN TRANSIT',
+                awb_code: cleanAwb,
+                etd: trackItem.etd || realData.etd || null,
+                origin: trackItem.origin || realData.origin || 'House of Urvaah Atelier',
+                destination: trackItem.destination || realData.destination || 'Customer Location',
+                scans: normalizedScans.length > 0 ? normalizedScans : [
+                    {
+                        date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+                        activity: trackItem.current_status || 'Tracking Details Received from Courier',
+                        location: trackItem.location || 'Hub'
+                    }
+                ]
+            },
+            raw_response: response.data
         };
     } catch (err) {
         console.error('[Shiprocket Tracking Error]:', err.response?.data || err.message);
@@ -416,10 +553,11 @@ exports.generateLabel = async (shipmentIds) => {
 
     if (isMockMode()) {
         console.log(`[SHIPROCKET MOCK] Generating Shipping Label for: ${ids.join(', ')}`);
+        const apiBase = process.env.API_BASE_URL || 'http://localhost:4000';
         return {
             success: true,
             is_label_created: 1,
-            label_url: `https://storage.urvaah.com/mock-labels/label_${ids[0]}.pdf`
+            label_url: `${apiBase}/api/shipping/label/view/${ids[0]}`
         };
     }
 
@@ -440,9 +578,10 @@ exports.generateManifest = async (shipmentIds) => {
 
     if (isMockMode()) {
         console.log(`[SHIPROCKET MOCK] Generating Courier Manifest for: ${ids.join(', ')}`);
+        const apiBase = process.env.API_BASE_URL || 'http://localhost:4000';
         return {
             success: true,
-            manifest_url: `https://storage.urvaah.com/mock-manifests/manifest_${Date.now()}.pdf`
+            manifest_url: `${apiBase}/api/shipping/manifest/view/${ids[0]}`
         };
     }
 
@@ -513,18 +652,29 @@ exports.notifyCustomer = async (order, status, trackingInfo = {}) => {
 // 11. CREATE REVERSE PICKUP (Return / Exchange Approval)
 // ============================================================================
 exports.createReversePickup = async (order, itemsToReturn, reason = 'Customer Return') => {
+    const rawPhone = order.shippingAddress?.phone || order.recipient_phone || order.customer_phone || order.phone || '9999999999';
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9999999999';
+
+    const rawFirst = order.shippingAddress?.firstName || order.recipient_name?.split(' ')[0] || order.customer_name?.split(' ')[0] || 'Customer';
+    const rawLast = order.shippingAddress?.lastName || order.recipient_name?.split(' ').slice(1).join(' ') || order.customer_name?.split(' ').slice(1).join(' ') || '.';
+
+    let rawAddress = order.shippingAddress?.address || order.shipping_address_line || order.address || 'Customer Address';
+    if (rawAddress.length < 10) {
+        rawAddress = `${rawAddress}, Customer Location`;
+    }
+
     const payload = {
         order_id: String(order.order_number || order.id),
         order_date: order.created_at || order.createdate || new Date().toISOString().substring(0, 10),
-        pickup_customer_name: `${order.shippingAddress?.firstName || order.recipient_name?.split(' ')[0] || 'Customer'} ${order.shippingAddress?.lastName || ''}`.trim(),
-        pickup_last_name: order.shippingAddress?.lastName || '',
-        pickup_address: order.shippingAddress?.address || order.shipping_address_line || 'Customer Address',
+        pickup_customer_name: rawFirst,
+        pickup_last_name: rawLast,
+        pickup_address: rawAddress,
         pickup_city: order.shippingAddress?.city || order.city || 'City',
         pickup_state: order.shippingAddress?.state || order.state || 'State',
         pickup_country: order.shippingAddress?.country || 'India',
         pickup_pincode: String(order.shippingAddress?.pincode || order.pincode || '400001'),
         pickup_email: order.shippingAddress?.email || order.customer_email || 'customer@example.com',
-        pickup_phone: String(order.shippingAddress?.phone || order.recipient_phone || '9999999999'),
+        pickup_phone: cleanPhone,
         order_items: (itemsToReturn || []).map(item => ({
             name: item.name || item.title || 'Returned Item',
             sku: String(item.product_id || item.sku || 'REV-SKU-01'),
@@ -557,9 +707,14 @@ exports.createReversePickup = async (order, itemsToReturn, reason = 'Customer Re
 
     try {
         const response = await apiClient('POST', '/orders/create/return', payload);
+        const resData = response.data || {};
         return {
             success: true,
-            ...response.data
+            shipment_id: resData.shipment_id || resData.return_order_id,
+            awb_code: resData.awb_code || null,
+            status: resData.status || 'RETURN_INITIATED',
+            message: 'Reverse pickup order registered in Shiprocket.',
+            ...resData
         };
     } catch (err) {
         console.error('[Shiprocket Create Return Error]:', err.response?.data || err.message);
@@ -666,9 +821,28 @@ exports.trackReturnParcel = async (awbCode) => {
 
     try {
         const response = await apiClient('GET', `/courier/track/awb/${cleanAwb}`);
+        const realData = response.data?.tracking_data || response.data || {};
+        const trackItem = Array.isArray(realData.shipment_track) ? realData.shipment_track[0] : (realData.shipment_track || {});
+        
+        const rawActivities = realData.shipment_track_activities || realData.scans || [];
+        const normalizedScans = rawActivities.map(a => ({
+            date: a.date || a['current_timestamp'] || '',
+            activity: a.activity || a.status || '',
+            location: a.location || ''
+        }));
+
         return {
             success: true,
-            ...response.data
+            tracking_data: {
+                track_status: realData.track_status ?? 1,
+                shipment_status: trackItem.current_status || realData.shipment_status || 'RETURN_IN_TRANSIT',
+                current_status: trackItem.current_status || realData.current_status || 'In Transit to Atelier',
+                awb_code: cleanAwb,
+                origin: trackItem.origin || realData.origin || 'Customer Doorstep',
+                destination: trackItem.destination || realData.destination || 'House of Urvaah Atelier',
+                scans: normalizedScans
+            },
+            raw_response: response.data
         };
     } catch (err) {
         console.error('[Shiprocket Track Return Error]:', err.response?.data || err.message);

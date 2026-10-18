@@ -155,50 +155,15 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachmen
   });
 };
 
-/**
- * Branded Welcome Email Template
- */
 const sendWelcomeEmail = async (email, name) => {
-  const firstName = name ? name.split(' ')[0] : 'Valued Member';
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 20px; }
-        .container { max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #E5E5E5; padding: 40px; text-align: center; }
-        .logo { font-size: 24px; font-weight: 300; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 30px; }
-        .title { font-size: 20px; font-weight: 400; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 20px; color: #111111; }
-        .content { font-size: 14px; line-height: 1.8; color: #444444; margin-bottom: 30px; text-align: left; }
-        .btn { display: inline-block; background-color: #111111; color: #ffffff !important; padding: 14px 28px; text-decoration: none; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase; font-weight: 600; }
-        .footer { margin-top: 40px; font-size: 10px; letter-spacing: 0.2em; color: #888888; text-transform: uppercase; border-t: 1px solid #EEEEEE; padding-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="logo">HOUSE OF URVAAH</div>
-        <div class="title">WELCOME TO THE ATELIER</div>
-        <div class="content">
-          <p>Dear ${firstName},</p>
-          <p>Thank you for creating your private account with House of Urvaah Atelier. You now hold exclusive access to our seasonal capsule releases, bespoke tailoring services, and priority concierge.</p>
-          <p>Explore our curated collections or visit your personal member sanctuary anytime.</p>
-        </div>
-        <a href="http://localhost:5173" class="btn">DISCOVER THE COLLECTION</a>
-        <div class="footer">
-          HOUSE OF URVAAH CONCIERGE &bull; 256-BIT ENCRYPTED ATELIER PRIVILÈGE
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  return sendBrevoEmail({
-    toEmail: email,
-    toName: name,
-    subject: 'Welcome to House of Urvaah Atelier',
-    htmlContent
-  });
+  // Policy: Customer emails are strictly restricted to:
+  // 1. Login to the website
+  // 2. Order confirmation
+  // 3. Successful delivered
+  // 4. Refund amount
+  // 5. Notify me when stock is available
+  console.log(`[Brevo Email] Welcome email for ${email} suppressed per notification policy.`);
+  return { success: true, skipped: true, reason: 'Welcome email suppressed per notification policy' };
 };
 
 /**
@@ -245,7 +210,7 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
 };
 
 /**
- * Branded OTP Email Template
+ * Branded OTP Email Template - Login to the website
  */
 const sendOtpEmail = async (email, otp) => {
   const htmlContent = `
@@ -253,29 +218,35 @@ const sendOtpEmail = async (email, otp) => {
     <html>
     <head>
       <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
         body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 20px; }
-        .container { max-width: 500px; margin: 0 auto; background: #ffffff; border: 1px solid #E5E5E5; padding: 40px; text-align: center; }
+        .container { max-width: 500px; width: 100%; margin: 0 auto; background: #ffffff; border: 1px solid #E5E5E5; padding: 40px; text-align: center; box-sizing: border-box; }
         .logo { font-size: 22px; font-weight: 300; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 25px; color: #111; }
         .title { font-size: 16px; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 15px; color: #111111; }
         .otp-box { font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #111111; background-color: #FAF8F3; padding: 18px 24px; border: 1px solid #E5E5E5; margin: 25px 0; display: inline-block; }
         .content { font-size: 13px; line-height: 1.8; color: #555555; margin-bottom: 25px; text-align: center; }
         .footer { margin-top: 30px; font-size: 10px; letter-spacing: 0.2em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 20px; }
+        @media only screen and (max-width: 600px) {
+          body { padding: 20px 10px !important; }
+          .container { padding: 25px 16px !important; width: 100% !important; }
+          .otp-box { font-size: 26px !important; letter-spacing: 5px !important; padding: 14px 16px !important; width: 85% !important; box-sizing: border-box !important; }
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="logo">HOUSE OF URVAAH</div>
-        <div class="title">VERIFICATION CODE</div>
+        <div class="title">LOGIN TO WEBSITE</div>
         <div class="content">
-          Please use the following 6-digit verification code to complete your authentication:
+          Please use the following 6-digit verification code to complete your login to House of Urvaah:
         </div>
         <div class="otp-box">${otp}</div>
         <div class="content">
           This code is valid for <strong>10 minutes</strong>. For your security, do not share this code with anyone.
         </div>
         <div class="footer">
-          HOUSE OF URVAAH CONCIERGE &bull; SECURE SINGLE SIGN-ON
+          HOUSE OF URVAAH CONCIERGE &bull; SECURE LOGIN VERIFICATION
         </div>
       </div>
     </body>
@@ -284,7 +255,7 @@ const sendOtpEmail = async (email, otp) => {
 
   return sendBrevoEmail({
     toEmail: email,
-    subject: `Your Verification Code: ${otp} - House of Urvaah`,
+    subject: `Login Verification Code: ${otp} — House of Urvaah`,
     htmlContent
   });
 };
@@ -316,7 +287,7 @@ const sendStockAlertEmail = async ({
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
         body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 15px; -webkit-font-smoothing: antialiased; }
-        .container { max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; text-align: center; }
+        .container { max-width: 600px; width: 100%; margin: 0 auto; background: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; text-align: center; box-sizing: border-box; }
         .brand-header { font-size: 24px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; color: #111111; }
         .status-badge { display: inline-block; background-color: #FAF8F3; border: 1px solid #D6D0C5; color: #111111; font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; padding: 6px 16px; margin-bottom: 20px; }
         .title { font-size: 20px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 18px; color: #111111; line-height: 1.4; }
@@ -330,6 +301,13 @@ const sendStockAlertEmail = async ({
         .urgency-note { font-size: 12px; color: #888888; font-style: italic; margin-top: 25px; line-height: 1.6; }
         .footer { margin-top: 40px; font-size: 10px; letter-spacing: 0.15em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 25px; line-height: 1.8; }
         .unsubscribe-link { color: #888888; text-decoration: underline; }
+        @media only screen and (max-width: 600px) {
+          body { padding: 20px 10px !important; }
+          .container { padding: 25px 16px !important; width: 100% !important; }
+          .product-card { padding: 18px 12px !important; }
+          .btn-shop { width: 100% !important; padding: 14px 10px !important; box-sizing: border-box !important; display: block !important; text-align: center !important; }
+          .mobile-break { word-break: break-all !important; overflow-wrap: anywhere !important; }
+        }
       </style>
     </head>
     <body>
@@ -354,14 +332,14 @@ const sendStockAlertEmail = async ({
         </div>
 
         <!-- Explicit Website & Product URL Mention -->
-        <div style="background-color: #FAF8F3; border: 1px solid #EAE6DF; padding: 14px 18px; margin: 25px 0; text-align: left; font-size: 13px; line-height: 1.8;">
-          <div style="margin-bottom: 6px;">
+        <div style="background-color: #FAF8F3; border: 1px solid #EAE6DF; padding: 14px 18px; margin: 25px 0; text-align: left; font-size: 13px; line-height: 1.8; box-sizing: border-box;">
+          <div style="margin-bottom: 6px; word-break: break-all; overflow-wrap: anywhere;">
             <strong style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: #111111;">Website:</strong> 
-            <a href="${websiteUrl}" style="color: #111111; font-weight: 600; text-decoration: underline;">${websiteUrl}</a>
+            <a href="${websiteUrl}" class="mobile-break" style="color: #111111; font-weight: 600; text-decoration: underline; word-break: break-all; overflow-wrap: anywhere;">${websiteUrl}</a>
           </div>
-          <div>
+          <div style="word-break: break-all; overflow-wrap: anywhere;">
             <strong style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: #111111;">Product Link:</strong> 
-            <a href="${productUrl}" style="color: #111111; font-weight: 600; text-decoration: underline;">${productUrl}</a>
+            <a href="${productUrl}" class="mobile-break" style="color: #111111; font-weight: 600; text-decoration: underline; word-break: break-all; overflow-wrap: anywhere;">${productUrl}</a>
           </div>
         </div>
 
@@ -387,60 +365,15 @@ const sendStockAlertEmail = async ({
 };
 
 /**
- * Branded Subscription Confirmation Email Template
+ * Stock Subscription Confirmation Email (Suppressed per policy)
+ * Policy: Customer only receives the notification when stock is actually back in stock.
  */
 const sendStockSubscriptionConfirmationEmail = async ({
   toEmail,
-  toName,
-  productTitle,
-  size,
-  color,
-  unsubscribeUrl
+  productTitle
 }) => {
-  const sizeColorText = [size ? `Size: ${size}` : '', color ? `Color: ${color}` : 'Color: Default'].filter(Boolean).join(' &bull; ');
-
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 15px; }
-        .container { max-width: 550px; margin: 0 auto; background: #ffffff; border: 1px solid #EAE6DF; padding: 40px 30px; text-align: center; }
-        .brand-header { font-size: 20px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; color: #111111; }
-        .title { font-size: 15px; font-weight: 400; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 20px; color: #111111; }
-        .content { font-size: 13px; line-height: 1.8; color: #333333; margin-bottom: 25px; text-align: center; }
-        .item-box { background: #FAF8F3; border: 1px solid #EAE6DF; padding: 18px; margin: 22px auto; max-width: 440px; font-size: 13px; text-align: center; }
-        .footer { margin-top: 30px; font-size: 10px; letter-spacing: 0.15em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand-header">HOUSE OF URVAAH</div>
-        <div class="title">STOCK ALERT CONFIRMED</div>
-        <div class="content">
-          <p>Thank you. Your back-in-stock alert has been registered successfully.</p>
-          <div class="item-box">
-            <strong>${productTitle}</strong><br/>
-            <span style="color:#666; font-size:12px; display:inline-block; margin-top:4px;">${sizeColorText}</span>
-          </div>
-          <p>The moment this item returns to our atelier inventory, you will receive priority notification directly in your inbox.</p>
-        </div>
-        <div class="footer">
-          HOUSE OF URVAAH CONCIERGE<br/>
-          <a href="${unsubscribeUrl}" style="color: #888888; text-decoration: underline; font-size: 10px; letter-spacing: 0.15em;">CANCEL ALERT REQUEST</a>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  return sendBrevoEmail({
-    toEmail,
-    toName,
-    subject: `Alert Registered: ${productTitle} - House of Urvaah`,
-    htmlContent
-  });
+  console.log(`[Brevo Email] Subscription confirmation for ${toEmail} (${productTitle}) suppressed per notification policy. Email will trigger only upon restock.`);
+  return { success: true, skipped: true, reason: 'Subscription confirmation email suppressed per notification policy' };
 };
 
 module.exports = {

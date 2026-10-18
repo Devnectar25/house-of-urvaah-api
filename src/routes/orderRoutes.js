@@ -32,9 +32,10 @@ router.post('/:id/replace', (req, res, next) => {
 });
 router.post('/:id/return', (req, res, next) => {
     if (req.user?.role !== 'admin') {
-        req.body.status = 'Cancellation Requested';
+        req.body.status = 'Return Requested';
+        req.body.type = 'Return';
     } else {
-        req.body.status = req.body.status || 'Cancelled';
+        req.body.status = req.body.status || 'Return Approved';
     }
     return orderController.updateOrderStatus(req, res, next);
 });
