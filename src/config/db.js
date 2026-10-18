@@ -40,9 +40,14 @@ pool.on('error', (err) => {
 if (process.env.RUN_AUTO_MIGRATIONS === 'true') {
     pool.query(`
         ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_order_id UUID DEFAULT NULL;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_order_number VARCHAR(100) DEFAULT NULL;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS original_order_id UUID DEFAULT NULL;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS original_order_number VARCHAR(100) DEFAULT NULL;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_size VARCHAR(50) DEFAULT NULL;
     `).catch((err) => {
         if (!err.message?.includes('timeout')) {
-            console.warn('[DB Auto Migration Warning] Could not check/add delivered_at column:', err.message);
+            console.warn('[DB Auto Migration Warning] Could not check/add columns:', err.message);
         }
     });
 }
