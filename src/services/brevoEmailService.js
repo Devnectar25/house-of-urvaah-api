@@ -54,12 +54,13 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachmen
         auth: {
           user: smtpUser,
           pass: process.env.BREVO_API_KEY
-        }
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 5000,
+        socketTimeout: 15000
       });
 
-      const effectiveSender = (senderEmail && !senderEmail.endsWith('@gmail.com'))
-        ? senderEmail
-        : 'devnectar27@12038968.brevosend.com';
+      const effectiveSender = senderEmail || 'devnectar27@gmail.com';
 
       const mailOptions = {
         from: `"${senderName}" <${effectiveSender}>`,
@@ -78,6 +79,7 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachmen
       return { success: true, statusCode: 200, data: info.messageId };
     } catch (smtpErr) {
       console.error(`[Brevo SMTP Error]:`, smtpErr.message);
+      return { success: false, error: smtpErr.message };
     }
   }
 
@@ -96,10 +98,7 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachmen
     return { success: false, error: 'BREVO_API_KEY environment variable is missing' };
   }
 
-  // If BREVO_SENDER_EMAIL is a @gmail.com address, use Brevo's verified relay subdomain to prevent DMARC bouncing
-  const effectiveSenderEmail = (senderEmail && !senderEmail.endsWith('@gmail.com'))
-    ? senderEmail
-    : 'devnectar27@12038968.brevosend.com';
+  const effectiveSenderEmail = senderEmail || 'devnectar27@gmail.com';
 
   const payloadData = {
     sender: { name: senderName, email: effectiveSenderEmail },

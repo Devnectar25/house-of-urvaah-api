@@ -61,12 +61,13 @@ exports.sendOtp = async (email) => {
             throw new Error(`Account temporarily locked out due to failed attempts. Try again in ${minutesLeft} minute(s).`);
         }
 
-        // Check 10-minute sliding window rate limit (max 3 requests)
+        // Check 10-minute sliding window rate limit (max 5 requests; in dev mode allow 15)
         const firstSendAt = new Date(record.first_send_at || record.created_at);
         const windowDurationMs = 10 * 60 * 1000; // 10 minutes
+        const maxRequests = process.env.NODE_ENV !== 'production' ? 15 : 5;
 
         if (now - firstSendAt < windowDurationMs) {
-            if (record.send_count >= 3) {
+            if (record.send_count >= maxRequests) {
                 const minutesLeft = Math.ceil((windowDurationMs - (now - firstSendAt)) / (60 * 1000));
                 throw new Error(`Too many OTP requests. Please wait ${minutesLeft} minute(s) before requesting again.`);
             }
@@ -77,7 +78,7 @@ exports.sendOtp = async (email) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const salt = await bcrypt.genSalt(10);
     const otpHash = await bcrypt.hash(otp, salt);
-    const OTP_EXPIRY_MS = 60 * 1000; // 60 seconds (1 minute expiry matching frontend countdown timer)
+    const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes (matching email template notice)
     const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MS);
 
     let newSendCount = 1;
@@ -87,7 +88,7 @@ exports.sendOtp = async (email) => {
         const firstSendAt = new Date(record.first_send_at || record.created_at);
         if (now - firstSendAt < 10 * 60 * 1000) {
             newSendCount = (record.send_count || 0) + 1;
-            newFirstSendAt = record.first_send_at;
+            newFirstSendAt = record.first_send_at || record.created_at;
         }
     }
 
@@ -111,7 +112,9 @@ exports.sendOtp = async (email) => {
     
     // In development mode, log the generated OTP to console for easy testing
     if (process.env.NODE_ENV !== 'production') {
-        console.log(`🔑 [OTP DEV MODE] Generated Verification Code for ${cleanEmail}: ${otp}`);
+        console.log(`\n======================================================`);
+        console.log(`🔑 [OTP DEV MODE] Verification Code for ${cleanEmail}: ${otp}`);
+        console.log(`======================================================\n`);
     }
 
     const brevoResult = await brevo.sendOtpEmail(cleanEmail, otp);
@@ -126,7 +129,8 @@ exports.sendOtp = async (email) => {
     return {
         success: true,
         message: "Verification code sent to your email",
-        email: cleanEmail
+        email: cleanEmail,
+        ...(process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {})
     };
 };
 
