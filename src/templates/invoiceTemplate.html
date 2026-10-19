@@ -176,6 +176,7 @@
 
         .invoice-badge-block {
             text-align: right;
+            padding-top: 20px;
         }
 
         .tax-invoice-title {
@@ -222,12 +223,12 @@
         /* Metadata Banner */
         .meta-strip {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 14px;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
             background: #faf8f5;
             border: 1px solid #eae3d8;
             border-radius: 4px;
-            padding: 12px 16px;
+            padding: 12px 14px;
             margin: 16px 0;
         }
 
@@ -662,7 +663,7 @@
 
             <div class="invoice-badge-block">
                 <div class="tax-invoice-title">Tax Invoice</div>
-                <div class="tax-invoice-sub">Original for Recipient &bull; Rule 48 CGST</div>
+                <div class="tax-invoice-sub">Original for Recipient</div>
             </div>
         </div>
 
@@ -671,6 +672,10 @@
             <div class="meta-item">
                 <span class="meta-label">Invoice Number</span>
                 <span class="meta-value">{{invoiceNumber}}</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Order Number</span>
+                <span class="meta-value">{{orderNumber}}</span>
             </div>
             <div class="meta-item">
                 <span class="meta-label">Client / Patron</span>
@@ -682,7 +687,7 @@
             </div>
             <div class="meta-item">
                 <span class="meta-label">Place of Supply</span>
-                <span class="meta-value">{{placeOfSupply}} ({{stateCode}})</span>
+                <span class="meta-value">{{placeOfSupply}}</span>
             </div>
         </div>
 
@@ -691,17 +696,12 @@
             <div class="dossier-card">
                 <div class="dossier-card-header">
                     <span>Sold By &bull; Registered Atelier</span>
-                    <span>GSTIN / CIN</span>
+                    <span>Concierge</span>
                 </div>
                 <div class="dossier-name">House of Urvaah Private Limited</div>
                 <div class="dossier-body">
-                    Eastern winds, 1402, E wing, Kurla East<br>
                     Mumbai 400070, Maharashtra, India<br>
-                    <strong>GSTIN:</strong> 07AAECH9988K1Z3 &bull; <strong>State Code:</strong> 27 (Maharashtra)<br>
-                    <strong>CIN:</strong> U18101DL2024PTC123456<br>
-                    <div class="dossier-detail-row">
-                        <strong>Concierge:</strong> houseofurvaah@gmail.com
-                    </div>
+                    <strong>Email:</strong> houseofurvaah@gmail.com
                 </div>
             </div>
 
@@ -721,7 +721,7 @@
                     <strong>Contact:</strong> {{userPhone}}<br>
                     <strong>Email:</strong> {{userEmail}}<br>
                     <div class="dossier-detail-row">
-                        <strong>Payment Mode:</strong> {{paymentMethod}} &bull; <strong>Ref:</strong> {{paymentReference}}
+                        <strong>Order No:</strong> {{orderNumber}} &bull; <strong>Payment Mode:</strong> {{paymentMethod}} &bull; <strong>Ref:</strong> {{paymentReference}}
                     </div>
                 </div>
             </div>
@@ -746,6 +746,10 @@
                         <td class="text-center" style="color: #8c734b; font-weight: 700;">{{this.index}}</td>
                         <td>
                             <div class="item-main-title">{{this.name}}</div>
+                            <div style="font-size: 8.5px; color: #737373; margin-top: 2px;">
+                                Order No: <strong style="color: #404040;">{{../orderNumber}}</strong>
+                                {{#if this.sku}} &bull; SKU: <strong style="color: #404040;">{{this.sku}}</strong>{{/if}}
+                            </div>
                         </td>
                         <td class="text-center" style="font-weight: 600; font-size: 9.5px;">{{this.size}}</td>
                         <td class="text-center" style="font-weight: 700;">{{this.quantity}}</td>
