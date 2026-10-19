@@ -527,13 +527,20 @@ exports.updateFabricVideo = async (req, res) => {
 
     let sanitizedVideos = null;
     if (Array.isArray(videos)) {
-      sanitizedVideos = videos.slice(0, 10).map((v, idx) => ({
-        id: v?.id || `video-${idx + 1}`,
-        tag: typeof v?.tag === 'string' ? v.tag.trim() : '',
-        title: typeof v?.title === 'string' ? v.title.trim() : (typeof v?.name === 'string' ? v.name.trim() : ''),
-        video_url: typeof v?.video_url === 'string' ? v.video_url.trim() : (typeof v?.url === 'string' ? v.url.trim() : ''),
-        poster_url: typeof v?.poster_url === 'string' ? v.poster_url.trim() : ''
-      }));
+      sanitizedVideos = videos.slice(0, 10).map((v, idx) => {
+        const tag = typeof v?.tag === 'string' ? v.tag.trim() : '';
+        const derivedSlug = tag ? tag.toLowerCase().replace(/[^a-z0-9]+/g, '-') : (v?.id || `video-${idx + 1}`);
+        return {
+          id: v?.id || `video-${idx + 1}`,
+          tag,
+          title: typeof v?.title === 'string' ? v.title.trim() : (typeof v?.name === 'string' ? v.name.trim() : ''),
+          slug: v?.slug || v?.fabric_slug || derivedSlug,
+          fabric_slug: v?.fabric_slug || v?.slug || derivedSlug,
+          description: typeof v?.description === 'string' ? v.description.trim() : '',
+          video_url: typeof v?.video_url === 'string' ? v.video_url.trim() : (typeof v?.url === 'string' ? v.url.trim() : ''),
+          poster_url: typeof v?.poster_url === 'string' ? v.poster_url.trim() : ''
+        };
+      });
     }
 
     const existing = await pool.query('SELECT * FROM ui_fabric_video ORDER BY id ASC LIMIT 1');
