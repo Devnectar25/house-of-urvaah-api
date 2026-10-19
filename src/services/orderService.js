@@ -57,25 +57,34 @@ pool.query(`
     console.warn('[OrderService] Non-blocking COD delivered payment sync note:', err.message);
 });
 
-// Self-healing startup sync: Ensure all orders have an invoice_number formatted as HOU-YYYYMM<count>
+// Self-healing startup sync: Ensure all orders have an invoice_number formatted as YYyyMM<seq> (e.g. 26271001)
 pool.query(`
     WITH numbered_orders AS (
       SELECT id,
-        'HOU-' || 
-        TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') || 
-        LPAD(ROW_NUMBER() OVER (
+        LPAD(((CASE 
+          WHEN EXTRACT(MONTH FROM COALESCE(created_at, NOW())) >= 4 
+          THEN (EXTRACT(YEAR FROM COALESCE(created_at, NOW())) % 100)
+          ELSE ((EXTRACT(YEAR FROM COALESCE(created_at, NOW())) - 1) % 100)
+        END))::text, 2, '0') || 
+        LPAD(((CASE 
+          WHEN EXTRACT(MONTH FROM COALESCE(created_at, NOW())) >= 4 
+          THEN ((EXTRACT(YEAR FROM COALESCE(created_at, NOW())) + 1) % 100)
+          ELSE (EXTRACT(YEAR FROM COALESCE(created_at, NOW())) % 100)
+        END))::text, 2, '0') || 
+        TO_CHAR(COALESCE(created_at, NOW()), 'MM') || 
+        LPAD((ROW_NUMBER() OVER (
           PARTITION BY TO_CHAR(COALESCE(created_at, NOW()), 'YYYYMM') 
           ORDER BY created_at ASC, id ASC
-        )::text, 2, '0') AS gen_invoice_number
+        ))::text, 2, '0') AS gen_invoice_number
       FROM orders
     )
     UPDATE orders o
     SET invoice_number = no.gen_invoice_number
     FROM numbered_orders no
-    WHERE o.id = no.id AND (o.invoice_number IS NULL OR o.invoice_number = '')
+    WHERE o.id = no.id AND (o.invoice_number IS NULL OR o.invoice_number = '' OR o.invoice_number LIKE 'HOU-%' OR o.invoice_number LIKE '20%');
 `).then(res => {
     if (res && res.rowCount > 0) {
-        console.log(`[OrderService] Backfilled invoice_number for ${res.rowCount} order(s)`);
+        console.log(`[OrderService] Backfilled/migrated invoice_number for ${res.rowCount} order(s) to 26271001 format`);
     }
 }).catch(err => {
     console.warn('[OrderService] Non-blocking invoice_number sync note:', err.message);
@@ -360,16 +369,22 @@ exports.createOrder = async (orderData) => {
             }
         }
 
-        // Calculate monthly sequence for invoice_number (format: HOU-YYYYMM<count>)
+        // Calculate monthly sequence for invoice_number (format: YYyyMM<seq>, e.g. 26271001)
         const countRes = await client.query(
             "SELECT COUNT(*) FROM orders WHERE date_trunc('month', created_at) = date_trunc('month', NOW())"
         );
         const nextMonthSeq = parseInt(countRes.rows[0]?.count || 0, 10) + 1;
         const now = new Date();
-        const invYear = now.getFullYear();
-        const invMonth = String(now.getMonth() + 1).padStart(2, '0');
-        const invCount = String(nextMonthSeq).padStart(2, '0');
-        const generatedInvoiceNumber = `HOU-${invYear}${invMonth}${invCount}`;
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
+        const sYr = month >= 4 ? year : year - 1;
+        const eYr = month >= 4 ? year + 1 : year;
+        const sYr2 = String(sYr % 100).padStart(2, '0');
+        const eYr2 = String(eYr % 100).padStart(2, '0');
+        const fy = `${sYr2}${eYr2}`;
+        const invMonth = String(month).padStart(2, '0');
+        const seqStr = String(nextMonthSeq).padStart(2, '0');
+        const generatedInvoiceNumber = `${fy}${invMonth}${seqStr}`;
 
         const orderResult = await client.query(
             `INSERT INTO orders (
@@ -538,6 +553,8 @@ exports.getAllOrders = async (options = {}) => {
             baseQuery += ` AND o.status ILIKE 'Delivered'`;
         } else if (sLower === 'returned' || sLower === 'return' || sLower === 'returns') {
             baseQuery += ` AND (o.status ILIKE 'Returned' OR o.status ILIKE 'Return%' OR o.is_returned_order = true)`;
+        } else if (sLower === 'return requested' || sLower === 'return request processing' || sLower === 'return request' || sLower === 'return requests') {
+            baseQuery += ` AND (o.status ILIKE 'Return Request%' OR o.status = 'Return Requested' OR o.status = 'Return Request Processing' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status ILIKE 'Return Request%' OR oi.status = 'Return Requested')))`;
         } else if (sLower === 'exchanged' || sLower === 'exchange' || sLower === 'exchanges' || sLower === 'replaced' || sLower === 'replace' || sLower === 'replacement' || sLower === 'replacements') {
             baseQuery += ` AND (o.status ILIKE 'Exchanged' OR o.status ILIKE 'Exchange%' OR o.return_type ILIKE 'exchange' OR o.status ILIKE 'Replace%' OR o.status ILIKE 'Replacement%' OR o.return_type ILIKE 'Replacement')`;
         } else {
@@ -1324,6 +1341,7 @@ exports.getOrderStats = async () => {
             COUNT(*) FILTER (WHERE status ILIKE 'Out for Delivery')::int as out_for_delivery,
             COUNT(*) FILTER (WHERE status ILIKE 'Delivered')::int as delivered,
             COUNT(*) FILTER (WHERE status ILIKE 'Cancellation Requested' OR status ILIKE 'CANCEL_REQUESTED' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status ILIKE 'Cancellation Requested' OR oi.status ILIKE 'CANCEL_REQUESTED')))::int as cancellation_requested,
+            COUNT(*) FILTER (WHERE status ILIKE 'Return Request%' OR status ILIKE 'Return Requested' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status ILIKE 'Return Request%' OR oi.status = 'Return Requested')))::int as return_requested,
             COUNT(*) FILTER (WHERE status ILIKE 'Cancelled' OR status ILIKE 'Refunded')::int as cancelled,
             COUNT(*) FILTER (WHERE status ILIKE 'Returned' OR status ILIKE 'Return%' OR is_returned_order = true)::int as returns,
             COUNT(*) FILTER (WHERE status ILIKE 'Exchanged' OR status ILIKE 'Exchange%' OR return_type ILIKE 'exchange' OR status ILIKE 'Replace%' OR status ILIKE 'Replacement%' OR return_type ILIKE 'Replacement')::int as exchanges,
@@ -1341,6 +1359,7 @@ exports.getOrderStats = async () => {
         outForDelivery: parseInt(stats.out_for_delivery || 0),
         delivered: parseInt(stats.delivered || 0),
         cancellationRequested: parseInt(stats.cancellation_requested || 0),
+        returnRequested: parseInt(stats.return_requested || 0),
         cancelled: parseInt(stats.cancelled || 0),
         canceled: parseInt(stats.cancelled || 0),
         returns: parseInt(stats.returns || 0),

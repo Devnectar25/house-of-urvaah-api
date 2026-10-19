@@ -296,11 +296,47 @@ exports.getInvoiceData = async (orderId) => {
 
     const currencySymbol = getCurrencySymbol();
 
-    // Resolve authoritative Invoice Number in format HOU-YYYYMM<count>
+    // Resolve authoritative Invoice Number in format YYyyMM<seq> (e.g. 26271001, 26271002)
     let finalInvoiceNumber = order.invoice_number;
-    if (!finalInvoiceNumber || !/^HOU-\d{6,}/.test(finalInvoiceNumber)) {
-        const yr = createdAt.getFullYear();
-        const mo = String(createdAt.getMonth() + 1).padStart(2, '0');
+    const yr = createdAt.getFullYear();
+    const moNum = createdAt.getMonth() + 1;
+    const sYr = moNum >= 4 ? yr : yr - 1;
+    const eYr = moNum >= 4 ? yr + 1 : yr;
+    const sYr2 = String(sYr % 100).padStart(2, '0');
+    const eYr2 = String(eYr % 100).padStart(2, '0');
+    const fyPrefix = `${sYr2}${eYr2}`; // e.g. "2627"
+    const moStr = String(moNum).padStart(2, '0'); // e.g. "10"
+
+    // Convert legacy formats (e.g. 2026-2710156, HOU-202610156) if present
+    if (finalInvoiceNumber) {
+        const stripped = finalInvoiceNumber.replace(/^HOU-/, '');
+        const fyMatch = stripped.match(/^(\d{2})?(\d{2})-(\d{2})(\d{2})(\d+)$/);
+        if (fyMatch) {
+            const rawSeq = fyMatch[5];
+            const seqPadded = rawSeq.length === 1 ? `0${rawSeq}` : rawSeq;
+            finalInvoiceNumber = `${fyMatch[2]}${fyMatch[3]}${fyMatch[4]}${seqPadded}`;
+            if (order.id) {
+                await pool.query('UPDATE orders SET invoice_number = $1 WHERE id = $2', [finalInvoiceNumber, order.id]).catch(() => {});
+            }
+        } else {
+            const match = stripped.match(/^(\d{4})(\d{2})(\d+)$/);
+            if (match) {
+                const rawYr = parseInt(match[1], 10);
+                const rawMo = parseInt(match[2], 10);
+                const rawSeq = parseInt(match[3], 10);
+                const rawSYr = rawMo >= 4 ? rawYr : rawYr - 1;
+                const rawEYr = rawMo >= 4 ? rawYr + 1 : rawYr;
+                const s2 = String(rawSYr % 100).padStart(2, '0');
+                const e2 = String(rawEYr % 100).padStart(2, '0');
+                finalInvoiceNumber = `${s2}${e2}${String(rawMo).padStart(2, '0')}${String(rawSeq).padStart(2, '0')}`;
+                if (order.id) {
+                    await pool.query('UPDATE orders SET invoice_number = $1 WHERE id = $2', [finalInvoiceNumber, order.id]).catch(() => {});
+                }
+            }
+        }
+    }
+
+    if (!finalInvoiceNumber || !/^\d{8,}$/.test(finalInvoiceNumber)) {
         try {
             const seqRes = await pool.query(
                 `SELECT COUNT(*) FROM orders 
@@ -309,14 +345,16 @@ exports.getInvoiceData = async (orderId) => {
                 [order.created_at || new Date(), order.id]
             );
             const seq = Math.max(1, parseInt(seqRes.rows[0]?.count || 1, 10));
-            finalInvoiceNumber = `HOU-${yr}${mo}${String(seq).padStart(2, '0')}`;
+            const seqStr = String(seq).padStart(2, '0');
+            finalInvoiceNumber = `${fyPrefix}${moStr}${seqStr}`;
             if (order.id) {
                 await pool.query('UPDATE orders SET invoice_number = $1 WHERE id = $2', [finalInvoiceNumber, order.id]).catch(() => {});
             }
         } catch (seqErr) {
             const digits = String(order.order_number || order.id || '').replace(/\D/g, '');
-            const fallbackSeq = digits ? String(parseInt(digits.slice(-2), 10) || 1).padStart(2, '0') : '01';
-            finalInvoiceNumber = `HOU-${yr}${mo}${fallbackSeq}`;
+            const fallbackSeq = digits ? parseInt(digits.slice(-2), 10) || 1 : 1;
+            const seqStr = String(fallbackSeq).padStart(2, '0');
+            finalInvoiceNumber = `${fyPrefix}${moStr}${seqStr}`;
         }
     }
 
@@ -328,8 +366,8 @@ exports.getInvoiceData = async (orderId) => {
         orderNumber: order.order_number,
         orderDate,
         issueDate,
-        placeOfSupply: order.state || shippingAddr?.state || 'Delhi, India',
-        stateCode: isDelhi ? '07 (Delhi)' : `${order.state || 'Inter-State'}`,
+        placeOfSupply: 'Mumbai, India',
+        stateCode: '27 (Maharashtra)',
         userName: customerName,
         userAddress: fullFormattedAddress,
         userStreet: street,

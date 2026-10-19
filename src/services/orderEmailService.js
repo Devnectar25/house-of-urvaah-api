@@ -779,8 +779,38 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
     const { email: recipientEmail, name: recipientName } = await resolveAuthoritativeRecipient(order);
     const orderCreatedAt = new Date(order.created_at || Date.now());
     const invYr = orderCreatedAt.getFullYear();
-    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
-    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
+    const invMoNum = orderCreatedAt.getMonth() + 1;
+    const invSYr = invMoNum >= 4 ? invYr : invYr - 1;
+    const invEYr = invMoNum >= 4 ? invYr + 1 : invYr;
+    const invSYr2 = String(invSYr % 100).padStart(2, '0');
+    const invEYr2 = String(invEYr % 100).padStart(2, '0');
+    const invFY = `${invSYr2}${invEYr2}`;
+    const invMo = String(invMoNum).padStart(2, '0');
+    let invoiceNumber = order.invoice_number;
+    if (invoiceNumber) {
+      const stripped = invoiceNumber.replace(/^HOU-/, '');
+      const fyMatch = stripped.match(/^(\d{2})?(\d{2})-(\d{2})(\d{2})(\d+)$/);
+      if (fyMatch) {
+        invoiceNumber = `${fyMatch[2]}${fyMatch[3]}${fyMatch[4]}${fyMatch[5].length === 1 ? '0' + fyMatch[5] : fyMatch[5]}`;
+      } else {
+        const match = stripped.match(/^(\d{4})(\d{2})(\d+)$/);
+        if (match) {
+          const rawYr = parseInt(match[1], 10);
+          const rawMo = parseInt(match[2], 10);
+          const rawSeq = parseInt(match[3], 10);
+          const rawSYr = rawMo >= 4 ? rawYr : rawYr - 1;
+          const rawEYr = rawMo >= 4 ? rawYr + 1 : rawYr;
+          const s2 = String(rawSYr % 100).padStart(2, '0');
+          const e2 = String(rawEYr % 100).padStart(2, '0');
+          invoiceNumber = `${s2}${e2}${String(rawMo).padStart(2, '0')}${String(rawSeq).padStart(2, '0')}`;
+        } else if (/^\d{8,}$/.test(stripped)) {
+          invoiceNumber = stripped;
+        }
+      }
+    }
+    if (!invoiceNumber || !/^\d{8,}$/.test(invoiceNumber)) {
+      invoiceNumber = `${invFY}${invMo}01`;
+    }
     const idempotencyKey = `invoice:${order.id}:${invoiceNumber}`;
 
     // 1. Check idempotency record
@@ -1060,8 +1090,38 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
 
     const orderCreatedAt = new Date(order.created_at || Date.now());
     const invYr = orderCreatedAt.getFullYear();
-    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
-    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
+    const invMoNum = orderCreatedAt.getMonth() + 1;
+    const invSYr = invMoNum >= 4 ? invYr : invYr - 1;
+    const invEYr = invMoNum >= 4 ? invYr + 1 : invYr;
+    const invSYr2 = String(invSYr % 100).padStart(2, '0');
+    const invEYr2 = String(invEYr % 100).padStart(2, '0');
+    const invFY = `${invSYr2}${invEYr2}`;
+    const invMo = String(invMoNum).padStart(2, '0');
+    let invoiceNumber = order.invoice_number;
+    if (invoiceNumber) {
+      const stripped = invoiceNumber.replace(/^HOU-/, '');
+      const fyMatch = stripped.match(/^(\d{2})?(\d{2})-(\d{2})(\d{2})(\d+)$/);
+      if (fyMatch) {
+        invoiceNumber = `${fyMatch[2]}${fyMatch[3]}${fyMatch[4]}${fyMatch[5].length === 1 ? '0' + fyMatch[5] : fyMatch[5]}`;
+      } else {
+        const match = stripped.match(/^(\d{4})(\d{2})(\d+)$/);
+        if (match) {
+          const rawYr = parseInt(match[1], 10);
+          const rawMo = parseInt(match[2], 10);
+          const rawSeq = parseInt(match[3], 10);
+          const rawSYr = rawMo >= 4 ? rawYr : rawYr - 1;
+          const rawEYr = rawMo >= 4 ? rawYr + 1 : rawYr;
+          const s2 = String(rawSYr % 100).padStart(2, '0');
+          const e2 = String(rawEYr % 100).padStart(2, '0');
+          invoiceNumber = `${s2}${e2}${String(rawMo).padStart(2, '0')}${String(rawSeq).padStart(2, '0')}`;
+        } else if (/^\d{8,}$/.test(stripped)) {
+          invoiceNumber = stripped;
+        }
+      }
+    }
+    if (!invoiceNumber || !/^\d{8,}$/.test(invoiceNumber)) {
+      invoiceNumber = `${invFY}${invMo}01`;
+    }
     const attachmentFilename = `HOUSE_OF_URVAAH_INVOICE_${invoiceNumber}.pdf`;
     const subject = `Delivered: Your House of Urvaah Order #${order.order_number} has arrived`;
 
