@@ -57,7 +57,9 @@ const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent, attachmen
         }
       });
 
-      const effectiveSender = senderEmail || 'devnectar27@gmail.com';
+      const effectiveSender = (senderEmail && !senderEmail.endsWith('@gmail.com'))
+        ? senderEmail
+        : 'devnectar27@12038968.brevosend.com';
 
       const mailOptions = {
         from: `"${senderName}" <${effectiveSender}>`,
@@ -277,7 +279,10 @@ const sendStockAlertEmail = async ({
 }) => {
   const customerGreeting = toName ? `Dear ${toName.split(' ')[0]},` : 'Dear Valued Patron,';
   const sizeColorText = [size ? `Size: ${size}` : '', color ? `Color: ${color}` : ''].filter(Boolean).join(' &bull; ');
-  const websiteUrl = clientUrl || process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+  const websiteUrl = clientUrl || 
+    (process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost') ? process.env.FRONTEND_URL : null) || 
+    (process.env.CLIENT_URL && !process.env.CLIENT_URL.includes('localhost') ? process.env.CLIENT_URL : null) || 
+    'https://house-of-urvaah-fe.vercel.app';
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -365,15 +370,92 @@ const sendStockAlertEmail = async ({
 };
 
 /**
- * Stock Subscription Confirmation Email (Suppressed per policy)
- * Policy: Customer only receives the notification when stock is actually back in stock.
+ * Stock Subscription Confirmation Email
+ * Sent immediately to customer upon submitting the "Notify Me" request.
  */
 const sendStockSubscriptionConfirmationEmail = async ({
   toEmail,
-  productTitle
+  toName,
+  productTitle,
+  productImage,
+  productUrl,
+  size,
+  color,
+  price,
+  unsubscribeUrl
 }) => {
-  console.log(`[Brevo Email] Subscription confirmation for ${toEmail} (${productTitle}) suppressed per notification policy. Email will trigger only upon restock.`);
-  return { success: true, skipped: true, reason: 'Subscription confirmation email suppressed per notification policy' };
+  const customerGreeting = toName ? `Dear ${toName.split(' ')[0]},` : 'Dear Valued Patron,';
+  const sizeColorText = [size ? `Requested Size: ${size}` : '', color ? `Color: ${color}` : ''].filter(Boolean).join(' &bull; ');
+  const websiteUrl = 'https://house-of-urvaah-fe.vercel.app';
+  const finalProductUrl = productUrl || websiteUrl;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #FAF8F3; color: #111111; margin: 0; padding: 40px 15px; -webkit-font-smoothing: antialiased; }
+        .container { max-width: 600px; width: 100%; margin: 0 auto; background: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; text-align: center; box-sizing: border-box; }
+        .brand-header { font-size: 24px; font-weight: 300; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 25px; color: #111111; }
+        .status-badge { display: inline-block; background-color: #FAF8F3; border: 1px solid #D6D0C5; color: #111111; font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; padding: 6px 16px; margin-bottom: 20px; }
+        .title { font-size: 20px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 18px; color: #111111; line-height: 1.4; }
+        .message { font-size: 14px; line-height: 1.8; color: #4A4A4A; margin-bottom: 25px; text-align: left; }
+        .product-card { background-color: #FCFBF9; border: 1px solid #EAE6DF; padding: 25px; margin: 25px 0; text-align: center; }
+        .product-img { max-width: 240px; width: 100%; height: auto; object-fit: cover; border: 1px solid #EAE6DF; margin-bottom: 15px; display: inline-block; }
+        .product-name { font-size: 16px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; color: #111111; }
+        .product-variant { font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #777777; margin-bottom: 12px; }
+        .product-price { font-size: 15px; font-weight: 500; color: #111111; margin-bottom: 20px; }
+        .btn-shop { display: inline-block; background-color: #111111; color: #ffffff !important; padding: 15px 36px; text-decoration: none; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase; font-weight: 600; }
+        .footer { margin-top: 40px; font-size: 10px; letter-spacing: 0.15em; color: #888888; text-transform: uppercase; border-top: 1px solid #EEEEEE; padding-top: 25px; line-height: 1.8; }
+        .unsubscribe-link { color: #888888; text-decoration: underline; }
+        @media only screen and (max-width: 600px) {
+          body { padding: 20px 10px !important; }
+          .container { padding: 25px 16px !important; width: 100% !important; }
+          .product-card { padding: 18px 12px !important; }
+          .btn-shop { width: 100% !important; padding: 14px 10px !important; box-sizing: border-box !important; display: block !important; text-align: center !important; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand-header">HOUSE OF URVAAH</div>
+        <div class="status-badge">WAITLIST CONFIRMED</div>
+        <div class="title">YOU'RE ON THE LIST</div>
+        
+        <div class="message">
+          <p>${customerGreeting}</p>
+          <p>Thank you for your interest in House of Urvaah. We have recorded your notification request for <strong>${productTitle}</strong>${size ? ` (Size: <strong>${size}</strong>)` : ''}.</p>
+          <p>The moment our atelier restocks this coveted silhouette, you will be the very first to receive an exclusive notification to secure your piece before it sells out.</p>
+        </div>
+
+        <div class="product-card">
+          ${productImage ? `<img src="${productImage}" alt="${productTitle}" class="product-img" />` : ''}
+          <div class="product-name">${productTitle}</div>
+          ${sizeColorText ? `<div class="product-variant">${sizeColorText}</div>` : ''}
+          ${price ? `<div class="product-price">&#8377;${Number(price).toLocaleString('en-IN')}</div>` : ''}
+          <div>
+            <a href="${finalProductUrl}" class="btn-shop">VIEW CREATION</a>
+          </div>
+        </div>
+
+        <div class="footer">
+          HOUSE OF URVAAH ATELIER CONCIERGE<br/>
+          EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
+          ${unsubscribeUrl ? `To manage preferences or opt-out, <a href="${unsubscribeUrl}" class="unsubscribe-link">click here to unsubscribe</a>.` : ''}
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendBrevoEmail({
+    toEmail,
+    toName,
+    subject: `Waitlist Confirmed: ${productTitle} | House of Urvaah`,
+    htmlContent
+  });
 };
 
 module.exports = {

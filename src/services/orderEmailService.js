@@ -3,7 +3,35 @@ const pool = require('../config/db');
 const { sendBrevoEmail } = require('./brevoEmailService');
 const invoiceService = require('./invoiceService');
 
-const FRONTEND_URL = process.env.FRONTEND_URL || process.env.STORE_FRONT_URL || 'http://localhost:3000';
+const LIVE_VERCEL_FRONTEND_URL = 'https://house-of-urvaah-fe.vercel.app';
+
+/**
+ * Resolves the public frontend website URL for email links.
+ * In production or for customer transactional emails (like Brevo delivery feedback),
+ * ensures links always point to the live authoritative store deployment on Vercel
+ * (https://house-of-urvaah-fe.vercel.app) rather than localhost:3000, which causes
+ * ERR_CONNECTION_REFUSED on mobile devices.
+ */
+const getPublicFrontendUrl = () => {
+  const explicitUrl = process.env.FRONTEND_URL || process.env.STORE_FRONT_URL || process.env.VERCEL_URL;
+  if (explicitUrl && !explicitUrl.includes('localhost') && !explicitUrl.includes('127.0.0.1')) {
+    let clean = explicitUrl.trim().replace(/\/+$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `https://${clean}`;
+    }
+    return clean;
+  }
+
+  // If developer explicitly opted into local email links for desktop testing
+  if (process.env.USE_LOCAL_EMAIL_LINKS === 'true') {
+    return (process.env.CLIENT_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+  }
+
+  // Default to live production Vercel domain so links open on phones & across all networks
+  return LIVE_VERCEL_FRONTEND_URL;
+};
+
+const FRONTEND_URL = getPublicFrontendUrl();
 const SUPPORT_EMAIL = 'houseofurvaah@gmail.com';
 
 /**
@@ -438,14 +466,14 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
     // 1. Login to the website
     // 2. Order confirmation
     // 3. Successful delivered (with invoice attached)
-    // 4. Refund amount
+    // 4. Refund amount (ONLY upon completion: 'Refunded' or 'Completed')
     // 5. Notify me when stock is available
     //
-    // All other payment status notifications ('Paid', 'Failed', 'Pending') are suppressed for customers.
-    const isRefund = normalizedStatus.toLowerCase() === 'refunded' || normalizedStatus.toLowerCase() === 'refund initiated';
+    // All in-process statuses ('Processing', 'In-Review', 'Pending', 'Refund Initiated') and other payment statuses are suppressed.
+    const isRefund = normalizedStatus.toLowerCase() === 'refunded' || normalizedStatus.toLowerCase() === 'completed';
 
     if (!isRefund && !forceResend) {
-      console.log(`[PaymentStatusWorkflow] Payment status '${normalizedStatus}' email suppressed. Customer emails are strictly restricted to Order Confirmation, Successful Delivery, Refund Amount, Login, and Stock Restock alerts.`);
+      console.log(`[PaymentStatusWorkflow] Payment status '${normalizedStatus}' email suppressed. Customer emails are strictly restricted to Order Confirmation, Successful Delivery, Completed Refund Amount, Login, and Stock Restock alerts.`);
       return {
         success: true,
         skipped: true,
@@ -463,11 +491,11 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
 
     if (isRefund) {
       const refundAmount = paymentDetails.amount || order.refund_amount || amount;
-      subject = `Refund Processed: ${formatINR(refundAmount)} — House of Urvaah Order #${order.order_number}`;
+      subject = `Refund Completed: ${formatINR(refundAmount)} — House of Urvaah Order #${order.order_number}`;
       eventType = 'PAYMENT_REFUNDED';
-      statusBadgeText = 'REFUND PROCESSED';
-      statusHeadline = 'REFUND CONFIRMATION';
-      statusMessage = `A refund of <strong>${formatINR(refundAmount)}</strong> for Order #${order.order_number} has been processed by our finance desk. Funds will reflect in your account within 5-7 business days depending on your banking provider.`;
+      statusBadgeText = 'REFUND COMPLETED';
+      statusHeadline = 'REFUND COMPLETED';
+      statusMessage = `A refund of <strong>${formatINR(refundAmount)}</strong> for Order #${order.order_number} has been completed successfully. Funds will reflect in your account within 5-7 business days depending on your banking provider.`;
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
           <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
@@ -1085,9 +1113,10 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
 
     // 4. Compile Product Feedback Cards and Links
     const items = order.items || [];
+    const publicUrl = getPublicFrontendUrl();
     const itemsHtml = items.map((item) => {
-      const prodId = item.product_id || item.productId || item.id;
-      const feedbackUrl = `${FRONTEND_URL}/product/${prodId}?openReview=true#customer-reviews`;
+      const prodId = item.product_id || item.productId || (item.product && (item.product.id || item.product.product_id)) || item.id;
+      const feedbackUrl = `${publicUrl}/product/${prodId}?openReview=true#customer-reviews`;
       const itemPrice = parseFloat(item.price || 0);
       const itemQty = parseInt(item.quantity || 1, 10);
       const variantText = item.size ? `Size: ${item.size}` : '';
@@ -1124,7 +1153,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
       year: 'numeric'
     });
 
-    const accountUrl = `${FRONTEND_URL}/account`;
+    const accountUrl = `${publicUrl}/account`;
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -1423,6 +1452,7 @@ const downloadInvoiceByToken = async (token) => {
 };
 
 module.exports = {
+  getPublicFrontendUrl,
   resolveAuthoritativeRecipient,
   sendOrderConfirmationWorkflow,
   sendPaymentStatusWorkflow,

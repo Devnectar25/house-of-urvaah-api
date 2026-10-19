@@ -644,7 +644,7 @@ exports.notifyCustomer = async (order, status, trackingInfo = {}) => {
         status,
         notified_at: new Date().toISOString(),
         channels: ['whatsapp', 'email'],
-        tracking_url: trackingInfo.awb_code ? `https://houseofurvaah.com/account?track=${trackingInfo.awb_code}` : null
+        tracking_url: trackingInfo.awb_code ? `https://house-of-urvaah-fe.vercel.app/account?track=${trackingInfo.awb_code}` : null
     };
 };
 
