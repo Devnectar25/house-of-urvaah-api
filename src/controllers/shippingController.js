@@ -484,9 +484,10 @@ exports.dispatchReplacement = async (req, res) => {
 
                         const origTotal = Number(origRow.total || 0);
                         const origSubtotal = Number(origRow.subtotal || origTotal || 0);
-                        const repItems = replacement_items || original_order.items || [];
-                        const itemToCopy = repItems[0] || {};
-                        const itemPrice = Number(itemToCopy.price || origSubtotal || origTotal || 0);
+                        const repItems = (replacement_items && replacement_items.length > 0) 
+                            ? replacement_items 
+                            : (original_order.items || []);
+                        const repSubtotal = repItems.reduce((acc, it) => acc + (Number(it.price || 0) * (it.quantity || 1)), 0) || origSubtotal;
 
                         const insertRes = await pool.query(
                             `INSERT INTO orders (
@@ -498,9 +499,9 @@ exports.dispatchReplacement = async (req, res) => {
                             ) VALUES (
                                 $1, $2, $3, $4, $5,
                                 'Replacement Exchange', 'Paid', 'Exchange',
-                                $6, $7, $7, 0, 0, 0,
-                                'Confirmed', 'Order Placed & Confirmed', 'Processing', $8, $8,
-                                $9, $10, 'exchange', $11, $12, $13, NOW(), NOW()
+                                $6, $6, $6, 0, 0, 0,
+                                'Confirmed', 'Order Placed & Confirmed', 'Processing', $7, $7,
+                                $8, $9, 'exchange', $10, $11, $12, NOW(), NOW()
                             ) RETURNING id`,
                             [
                                 origRow.user_id,
@@ -508,8 +509,7 @@ exports.dispatchReplacement = async (req, res) => {
                                 `HOU-REP-${Date.now().toString().slice(-6)}`,
                                 origRow.address_id,
                                 origRow.shipping_address,
-                                origSubtotal,
-                                origTotal,
+                                repSubtotal,
                                 result.awb_code,
                                 result.courier_name,
                                 result.shipment_id,
@@ -520,20 +520,24 @@ exports.dispatchReplacement = async (req, res) => {
                         );
 
                         const newRepId = insertRes.rows[0]?.id;
-                        await pool.query(
-                            `INSERT INTO order_items (order_id, product_id, name, image, price, quantity, size, status, created_at)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, 'Confirmed', NOW())`,
-                            [
-                                newRepId,
-                                itemToCopy.product_id || itemToCopy.id || 1,
-                                itemToCopy.name || itemToCopy.title || 'Replacement Garment',
-                                itemToCopy.image || itemToCopy.image_url || origRow.image || '/assets/Images/Brown01.png',
-                                itemPrice,
-                                itemToCopy.quantity || 1,
-                                targetSize
-                            ]
-                        );
-                        console.log(`[ShippingController] Created database replacement order #${repNumber} (ID: ${newRepId}, Size: ${targetSize}, Price: ${itemPrice})`);
+                        for (const itemToCopy of repItems) {
+                            const itemTargetSize = itemToCopy.replacement_size || itemToCopy.size || targetSize;
+                            const itemPrice = Number(itemToCopy.price || (repSubtotal / repItems.length) || 0);
+                            await pool.query(
+                                `INSERT INTO order_items (order_id, product_id, name, image, price, quantity, size, status, created_at)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'Confirmed', NOW())`,
+                                [
+                                    newRepId,
+                                    itemToCopy.product_id || itemToCopy.id || 1,
+                                    itemToCopy.name || itemToCopy.title || 'Replacement Garment',
+                                    itemToCopy.image || itemToCopy.image_url || origRow.image || '/assets/Images/Brown01.png',
+                                    itemPrice,
+                                    itemToCopy.quantity || 1,
+                                    itemTargetSize
+                                ]
+                            );
+                        }
+                        console.log(`[ShippingController] Created database replacement order #${repNumber} (ID: ${newRepId}, Items: ${repItems.length}, Size: ${targetSize})`);
 
                         // Also update original parent order with replacement links
                         await pool.query(

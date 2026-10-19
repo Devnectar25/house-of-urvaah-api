@@ -6,7 +6,10 @@ const {
     sendStockSubscriptionConfirmationEmail
 } = require('./brevoEmailService');
 
-const CLIENT_URL = process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+const CLIENT_URL = 
+    (process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost') ? process.env.FRONTEND_URL : null) || 
+    (process.env.CLIENT_URL && !process.env.CLIENT_URL.includes('localhost') ? process.env.CLIENT_URL : null) || 
+    'https://house-of-urvaah-fe.vercel.app';
 
 function parseCandidateProductId(rawId) {
     if (!rawId) return null;
@@ -100,9 +103,31 @@ class StockNotificationService {
         const existingRes = await pool.query(existingCheckQuery, queryParams);
 
         if (existingRes.rows.length > 0) {
+            const rawImg = product.image_url || (Array.isArray(product.images) && product.images[0]) || '';
+            const mainImgUrl = rawImg ? storageService.getPublicMediaUrl(rawImg) : '';
+            const productUrl = `${CLIENT_URL}/product/${numericId}`;
+            const unsubscribeUrl = `${CLIENT_URL}/stock-notifications/unsubscribe?token=${existingRes.rows[0].unsubscribe_token}`;
+
+            if (cleanEmail) {
+                sendStockSubscriptionConfirmationEmail({
+                    toEmail: cleanEmail,
+                    toName: null,
+                    productTitle: product.title,
+                    productImage: mainImgUrl,
+                    productUrl,
+                    size: cleanSize,
+                    color: cleanColor,
+                    price: product.price,
+                    unsubscribeUrl
+                }).catch(err => {
+                    console.error('[StockNotification] Re-confirmation email error:', err.message);
+                });
+            }
+
             return {
+                success: true,
                 alreadySubscribed: true,
-                message: "You're already subscribed to this item.",
+                message: "You're on the list! We've resent the confirmation to your email and will notify you when this item is back in stock.",
                 subscription: existingRes.rows[0]
             };
         }
@@ -146,15 +171,41 @@ class StockNotificationService {
 
         const subscription = insertRes.rows[0];
 
-        // Subscription registered successfully.
-        // Do NOT send email upon filling the form.
-        // Email will trigger ONLY when stock becomes available for this product and requested size.
-        console.log(`[StockNotification] Subscription registered for Product ${numericId} (size: ${cleanSize || 'any'}, email: ${cleanEmail || 'none'}). Waiting for restock.`);
+        const rawImg = product.image_url || (Array.isArray(product.images) && product.images[0]) || '';
+        const mainImgUrl = rawImg ? storageService.getPublicMediaUrl(rawImg) : '';
+        const productUrl = `${CLIENT_URL}/product/${numericId}`;
+        const unsubscribeUrl = `${CLIENT_URL}/stock-notifications/unsubscribe?token=${unsubscribeToken}`;
+
+        // Immediately send Waitlist Confirmation email upon subscribing
+        if (cleanEmail) {
+            sendStockSubscriptionConfirmationEmail({
+                toEmail: cleanEmail,
+                toName: null,
+                productTitle: product.title,
+                productImage: mainImgUrl,
+                productUrl,
+                size: cleanSize,
+                color: cleanColor,
+                price: product.price,
+                unsubscribeUrl
+            }).then(() => {
+                console.log(`[StockNotification] Subscription confirmation email sent to ${cleanEmail} for "${product.title}"`);
+            }).catch(err => {
+                console.error('[StockNotification] Subscription confirmation email error:', err.message);
+            });
+        }
+
+        // Also check if this product/size is already in stock (e.g. testing or immediate availability)
+        this.checkAndNotifyAllInStockSubscribers(numericId).catch(err => {
+            console.error('[StockNotification] Auto in-stock check error:', err.message);
+        });
+
+        console.log(`[StockNotification] Subscription registered for Product ${numericId} (size: ${cleanSize || 'any'}, email: ${cleanEmail || 'none'}).`);
 
         return {
             success: true,
             alreadySubscribed: false,
-            message: "You're on the list! We'll notify you when this item is back in stock.",
+            message: "You're on the list! We've sent a confirmation to your email and will notify you when this item is back in stock.",
             subscription
         };
     }

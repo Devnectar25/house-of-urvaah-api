@@ -323,7 +323,8 @@ exports.handleWebhook = async (payload, signature) => {
         }
     }
 
-    if (event === 'refund.processed' || event === 'refund.created') {
+    // Trigger customer email strictly on refund.processed (completed refund), NOT on refund.created (processing/initiated)
+    if (event === 'refund.processed') {
         const refund = payload.payload?.refund?.entity;
         const paymentId = refund?.payment_id;
         if (paymentId) {

@@ -32,6 +32,12 @@ const handleReviewUpload = (req, res, next) => {
     next();
 };
 
+router.get('/redirect/:productId?', (req, res) => {
+    const productId = req.params.productId || req.query.productId || '102';
+    const targetUrl = `https://house-of-urvaah-fe.vercel.app/product/${productId}?openReview=true#customer-reviews`;
+    return res.redirect(302, targetUrl);
+});
+
 router.get('/:productId', reviewController.getProductReviews);
 router.post('/', handleReviewUpload, reviewController.addProductReview);
 router.delete('/:id', protect, authorize('admin', 'super_admin'), checkPermission('reviews'), reviewController.deleteReview);
