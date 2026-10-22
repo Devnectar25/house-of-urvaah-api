@@ -629,7 +629,9 @@ exports.getAllOrders = async (options = {}) => {
                                   END
                                 ) as image,
                                 p.images,
-                                p.image_url
+                                p.image_url,
+                                p.size_stock,
+                                p.sizes
                          FROM order_items oi
                          LEFT JOIN products p ON oi.product_id = p.id
                          WHERE oi.order_id = o.id
@@ -756,7 +758,9 @@ exports.getCancelledOrders = async (options = {}) => {
                                   END
                                 ) as image,
                                 p.images,
-                                p.image_url
+                                p.image_url,
+                                p.size_stock,
+                                p.sizes
                          FROM order_items oi
                          LEFT JOIN products p ON oi.product_id = p.id
                          WHERE oi.order_id = o.id
@@ -916,7 +920,9 @@ exports.getOrdersByUser = async (userId) => {
                                   END
                                 ) as image,
                                 p.images,
-                                p.image_url
+                                p.image_url,
+                                p.size_stock,
+                                p.sizes
                          FROM order_items oi
                          LEFT JOIN products p ON (oi.product_id = p.id OR oi.product_id = p.product_id)
                          WHERE oi.order_id = o.id
@@ -953,7 +959,9 @@ exports.getOrderById = async (orderId) => {
                                   END
                                 ) as image,
                                 p.images,
-                                p.image_url
+                                p.image_url,
+                                p.size_stock,
+                                p.sizes
                          FROM order_items oi
                          LEFT JOIN products p ON (oi.product_id = p.id OR oi.product_id = p.product_id)
                          WHERE oi.order_id = o.id
@@ -1096,11 +1104,11 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
             const isInt = Number.isInteger(Number(itemId));
             let itemRes;
             if (isUuid) {
-                itemRes = await client.query(`SELECT * FROM order_items WHERE id = $1::uuid AND order_id = $2::uuid`, [itemId, orderId]);
+                itemRes = await client.query(`SELECT * FROM order_items WHERE id::text = $1 AND order_id = $2::uuid`, [itemId, orderId]);
             } else if (isInt) {
-                itemRes = await client.query(`SELECT * FROM order_items WHERE product_id = $1::integer AND order_id = $2::uuid`, [parseInt(itemId, 10), orderId]);
+                itemRes = await client.query(`SELECT * FROM order_items WHERE (id = $1 OR product_id = $1) AND order_id = $2::uuid`, [parseInt(itemId, 10), orderId]);
             } else {
-                itemRes = await client.query(`SELECT * FROM order_items WHERE id::text = $1 AND order_id = $2::uuid`, [String(itemId), orderId]);
+                itemRes = await client.query(`SELECT * FROM order_items WHERE (id::text = $1 OR product_id::text = $1) AND order_id = $2::uuid`, [String(itemId), orderId]);
             }
             if (itemRes.rows.length === 0) continue;
             const originalItem = itemRes.rows[0];
@@ -1111,7 +1119,7 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
 
             if (returnQty < originalItem.quantity) {
                 // SPLIT ROW: Reduce original quantity
-                await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [returnQty, dbItemId]);
+                await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2`, [returnQty, dbItemId]);
 
                 // INSERT new row as requested for return/replace
                 await client.query(
@@ -1125,18 +1133,37 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
                 await client.query(
                     `UPDATE order_items 
                      SET status = $1, return_action = $2, replacement_size = $3 
-                     WHERE id = $4::uuid`, 
+                     WHERE id = $4`, 
                     [itemStatus, itemAction, repItemSize, dbItemId]
                 );
             }
         }
 
-        // 4. Update Main Order Status
+        // 4. Update Main Order Status and calculate refund_eligible_amount
         let orderStatus = isReturn ? 'Return Request Processing' : 'Replacement Request Processing';
         if (hasReplaceItems && !hasReturnItems) {
             orderStatus = 'Replacement Request Processing';
         } else if (hasReturnItems) {
             orderStatus = 'Return Request Processing';
+        }
+
+        let calculatedRefund = 0;
+        if (isReturn || hasReturnItems) {
+            const retSumRes = await client.query(
+                `SELECT COALESCE(SUM(price * quantity), 0) as ret_sum FROM order_items WHERE order_id = $1::uuid AND (return_action ILIKE 'Return' OR status ILIKE 'Return Request%')`,
+                [orderId]
+            );
+            const retSum = Number(retSumRes.rows[0]?.ret_sum || 0);
+            const totalNum = Number(order.total || 0);
+            const subtotalNum = Number(order.subtotal || 0);
+            if (retSum >= subtotalNum && totalNum > 0) {
+                calculatedRefund = totalNum;
+            } else if (retSum > 0) {
+                const ratio = subtotalNum > 0 ? (totalNum / subtotalNum) : 1;
+                calculatedRefund = Math.round(retSum * ratio * 100) / 100;
+            } else {
+                calculatedRefund = totalNum;
+            }
         }
 
         await client.query(
@@ -1151,7 +1178,8 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
                 refund_ifsc_code = $7::text,
                 refund_holder_name = $8::text,
                 is_returned_order = $9::boolean,
-                replacement_size = CASE WHEN $11::boolean = true THEN COALESCE($10::text, replacement_size) ELSE NULL END
+                replacement_size = CASE WHEN $11::boolean = true THEN COALESCE($10::text, replacement_size) ELSE NULL END,
+                refund_eligible_amount = CASE WHEN $12::numeric > 0 THEN $12::numeric ELSE COALESCE(NULLIF(refund_eligible_amount, 0), total) END
             WHERE id = $1::uuid`,
             [
                 orderId,
@@ -1164,7 +1192,8 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
                 isReturn ? (validBank?.holderName || null) : order.refund_holder_name,
                 isReturn,
                 detectedReplacementSize,
-                hasReplaceItems
+                hasReplaceItems,
+                calculatedRefund
             ]
         );
 
@@ -1464,23 +1493,23 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             for (const reqItem of itemIds) {
                 const { id: itemId, quantity: cancelQty } = reqItem;
 
-                // Fetch current item state (supporting both UUID and product ID)
-                const isUuid = typeof itemId === 'string' && itemId.length === 36;
+                // Fetch current item state (supporting both ID and product ID)
+                const isUuid = typeof itemId === 'string' && itemId.length === 36 && itemId.includes('-');
                 let itemRes;
                 if (isUuid) {
-                    itemRes = await client.query(`SELECT * FROM order_items WHERE id = $1::uuid AND order_id = $2::uuid`, [itemId, orderId]);
+                    itemRes = await client.query(`SELECT * FROM order_items WHERE id::text = $1 AND order_id = $2::uuid`, [itemId, orderId]);
                 } else {
-                    itemRes = await client.query(`SELECT * FROM order_items WHERE product_id = $1::integer AND order_id = $2::uuid`, [itemId, orderId]);
+                    itemRes = await client.query(`SELECT * FROM order_items WHERE (id::text = $1 OR product_id::text = $1) AND order_id = $2::uuid`, [String(itemId), orderId]);
                 }
                 if (itemRes.rows.length === 0) continue;
                 const originalItem = itemRes.rows[0];
-                const dbItemId = originalItem.id; // This is a valid UUID!
+                const dbItemId = originalItem.id;
 
                 if (cancelQty > originalItem.quantity) throw new Error(`Cannot cancel more than purchased for ${originalItem.name}`);
 
                 if (cancelQty < originalItem.quantity) {
-                    // SPLIT ROW: Reduce original quantity using UUID
-                    await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [cancelQty, dbItemId]);
+                    // SPLIT ROW: Reduce original quantity
+                    await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2`, [cancelQty, dbItemId]);
 
                     // INSERT new row with the requested status
                     await client.query(
@@ -1490,8 +1519,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         [orderId, originalItem.product_id, originalItem.name, cancelQty, originalItem.price, originalItem.image, status, cancelReason]
                     );
                 } else {
-                    // FULL ROW: Just update status using UUID
-                    await client.query(`UPDATE order_items SET status = $1::text, cancel_reason = $2::text WHERE id = $3::uuid`, [status, cancelReason, dbItemId]);
+                    // FULL ROW: Just update status
+                    await client.query(`UPDATE order_items SET status = $1::text, cancel_reason = $2::text WHERE id = $3`, [status, cancelReason, dbItemId]);
                 }
 
                 // Determine stock adjustment
@@ -1785,7 +1814,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 isOnlinePayment ? 'Pending' : (oldOrder.refund_status || null),
                 validBank?.accountNumber || null,
                 validBank?.ifscCode || null,
-                validBank?.holderName || null
+                validBank?.holderName || null,
+                preservedPaymentStatus
             ];
 
             try {
