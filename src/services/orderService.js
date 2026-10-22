@@ -1105,38 +1105,11 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
             if (itemRes.rows.length === 0) continue;
             const originalItem = itemRes.rows[0];
             const dbItemId = originalItem.id;
-
-            if (itemAction === 'Keep') {
-                keptItemsCount += originalItem.quantity;
-                await client.query(
-                    `UPDATE order_items 
-                     SET return_action = 'Keep' 
-                     WHERE id = $1`,
-                    [originalItem.id]
-                );
-                continue;
-            }
-
-            if (itemQty > originalItem.quantity) {
+            if (returnQty > originalItem.quantity) {
                 throw new Error(`Cannot return/replace more than purchased quantity for ${originalItem.name}`);
             }
 
-            const isItemReturn = itemAction.toLowerCase().includes('return');
-            const isItemReplace = itemAction.toLowerCase().includes('replace') || itemAction.toLowerCase().includes('exchange');
-            const itemStatus = isItemReturn 
-                ? 'Return Request Processing' 
-                : 'Replacement Request Processing';
-
-            if (isItemReturn) {
-                returnItemsCount += itemQty;
-                totalRefundEligibleAmount += (parseFloat(originalItem.price || 0) * itemQty);
-                processedReasons.push(`Return: ${originalItem.name} (${itemReason})`);
-            } else if (isItemReplace) {
-                replaceItemsCount += itemQty;
-                processedReasons.push(`Replace: ${originalItem.name} with Size ${itemRepSize} (${itemReason})`);
-            }
-
-            if (itemQty < originalItem.quantity) {
+            if (returnQty < originalItem.quantity) {
                 // SPLIT ROW: Reduce original quantity
                 await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [returnQty, dbItemId]);
 
