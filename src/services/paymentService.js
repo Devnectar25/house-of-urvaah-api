@@ -100,12 +100,6 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                 `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id::text = $1 OR order_number = $1`,
                 [String(internalOrderId)]
             ).catch(err => console.warn('[verifyPayment] Cancel update note:', err.message));
-
-            // Trigger Workflow 2: Payment Status Email (Failed)
-            orderEmailService.sendPaymentStatusWorkflow(internalOrderId, 'Failed', {
-                transactionId: razorpay_payment_id || null,
-                message: 'Payment verification failed'
-            }).catch(e => console.error('[PaymentService] Failed payment notification error:', e.message));
         }
         return { success: false, message: 'Invalid signature' };
     }
@@ -163,20 +157,12 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
 
         await client.query('COMMIT');
 
-        // Asynchronously trigger Workflow 1 (Order Confirmation for online order), Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+        // Asynchronously trigger Workflow 1 (Order Confirmation for online order)
+        // (Note: Invoice and delivery confirmation are sent strictly upon delivery)
         const targetOrderId = orderRow?.id || internalOrderId;
         if (targetOrderId) {
             orderEmailService.sendOrderConfirmationWorkflow(targetOrderId).catch(e => {
                 console.error('[PaymentService] Order confirmation email workflow error:', e.message);
-            });
-
-            orderEmailService.sendPaymentStatusWorkflow(targetOrderId, 'Paid', {
-                transactionId: razorpay_payment_id,
-                amount: amount || orderRow?.total
-            }).catch(e => console.error('[PaymentService] Payment status email error:', e.message));
-
-            orderEmailService.sendInvoiceWorkflow(targetOrderId).catch(e => {
-                console.error('[PaymentService] Invoice email workflow error:', e.message);
             });
         }
 
@@ -229,11 +215,7 @@ exports.recordPaymentFailure = async (internalOrderId, errorDetails = {}) => {
 
         await client.query('COMMIT');
 
-        if (order) {
-            orderEmailService.sendPaymentStatusWorkflow(order.id, 'Failed', {
-                message: errorDetails.error_description || errorDetails.reason || 'Payment was declined or cancelled.'
-            }).catch(e => console.error('[PaymentService] Failed payment email note:', e.message));
-        }
+
 
         return order;
     } catch (err) {
@@ -303,20 +285,11 @@ exports.handleWebhook = async (payload, signature) => {
             }
             await client.query('COMMIT');
 
-            // Asynchronously trigger Workflow 1 (Order Confirmation), Workflow 2 (Payment Status: Paid) and Workflow 3 (Invoice Delivery with PDF)
+            // Asynchronously trigger Workflow 1 (Order Confirmation for webhook paid order)
             if (orderRes.rows.length > 0) {
                 const targetOrder = orderRes.rows[0];
                 orderEmailService.sendOrderConfirmationWorkflow(targetOrder.id).catch(e => {
                     console.error('[Webhook] Order confirmation email error:', e.message);
-                });
-
-                orderEmailService.sendPaymentStatusWorkflow(targetOrder.id, 'Paid', {
-                    transactionId: razorpayPaymentId,
-                    amount: amount
-                }).catch(e => console.error('[Webhook] Payment status email error:', e.message));
-
-                orderEmailService.sendInvoiceWorkflow(targetOrder.id).catch(e => {
-                    console.error('[Webhook] Invoice delivery email error:', e.message);
                 });
             }
         } catch (error) {
@@ -350,7 +323,8 @@ exports.handleWebhook = async (payload, signature) => {
         }
     }
 
-    if (event === 'refund.processed' || event === 'refund.created') {
+    // Trigger customer email strictly on refund.processed (completed refund), NOT on refund.created (processing/initiated)
+    if (event === 'refund.processed') {
         const refund = payload.payload?.refund?.entity;
         const paymentId = refund?.payment_id;
         if (paymentId) {

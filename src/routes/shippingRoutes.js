@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const shippingController = require('../controllers/shippingController');
 
+// 0. Configuration & Connectivity Status Check
+router.get('/config-status', shippingController.getConfigStatus);
+
 // 1. Availability / Serviceability
 router.get('/serviceability', shippingController.checkServiceability);
 
@@ -25,6 +28,8 @@ router.post('/simulate/delivered', shippingController.simulateDelivered);
 // 8. Labels & Manifests
 router.post('/label', shippingController.generateLabel);
 router.post('/manifest', shippingController.generateManifest);
+router.get('/label/view/:targetId', shippingController.viewLabelHtml);
+router.get('/manifest/view/:targetId', shippingController.viewManifestHtml);
 
 // 9. Cancel Order
 router.post('/order/cancel', shippingController.cancelShipment);

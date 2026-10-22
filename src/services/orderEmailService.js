@@ -3,7 +3,35 @@ const pool = require('../config/db');
 const { sendBrevoEmail } = require('./brevoEmailService');
 const invoiceService = require('./invoiceService');
 
-const FRONTEND_URL = process.env.FRONTEND_URL || process.env.STORE_FRONT_URL || 'http://localhost:3000';
+const LIVE_VERCEL_FRONTEND_URL = 'https://house-of-urvaah-fe.vercel.app';
+
+/**
+ * Resolves the public frontend website URL for email links.
+ * In production or for customer transactional emails (like Brevo delivery feedback),
+ * ensures links always point to the live authoritative store deployment on Vercel
+ * (https://house-of-urvaah-fe.vercel.app) rather than localhost:3000, which causes
+ * ERR_CONNECTION_REFUSED on mobile devices.
+ */
+const getPublicFrontendUrl = () => {
+  const explicitUrl = process.env.FRONTEND_URL || process.env.STORE_FRONT_URL || process.env.VERCEL_URL;
+  if (explicitUrl && !explicitUrl.includes('localhost') && !explicitUrl.includes('127.0.0.1')) {
+    let clean = explicitUrl.trim().replace(/\/+$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `https://${clean}`;
+    }
+    return clean;
+  }
+
+  // If developer explicitly opted into local email links for desktop testing
+  if (process.env.USE_LOCAL_EMAIL_LINKS === 'true') {
+    return (process.env.CLIENT_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+  }
+
+  // Default to live production Vercel domain so links open on phones & across all networks
+  return LIVE_VERCEL_FRONTEND_URL;
+};
+
+const FRONTEND_URL = getPublicFrontendUrl();
 const SUPPORT_EMAIL = 'houseofurvaah@gmail.com';
 
 /**
@@ -225,9 +253,17 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${subject}</title>
+        <style>
+          @media only screen and (max-width: 600px) {
+            .email-wrapper { padding: 12px 6px !important; }
+            .email-container { padding: 25px 16px !important; width: 100% !important; max-width: 100% !important; }
+            .mobile-btn { display: block !important; width: 100% !important; padding: 14px 10px !important; box-sizing: border-box !important; text-align: center !important; }
+            .mobile-break { word-break: break-all !important; overflow-wrap: anywhere !important; }
+          }
+        </style>
       </head>
-      <body style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
-        <div style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px;">
+      <body class="email-wrapper" style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
+        <div class="email-container" style="max-width: 620px; width: 100%; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; box-sizing: border-box;">
           
           <!-- Header -->
           <div style="text-align: center; border-bottom: 1px solid #EAE6DF; padding-bottom: 25px; margin-bottom: 30px;">
@@ -251,19 +287,33 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
           </div>
 
           <!-- Order Summary Card -->
-          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px 22px; margin-bottom: 30px; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; line-height: 1.8;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Order Date:</span>
-              <span style="color: #111111; font-weight: 500;">${orderDate}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Payment Method:</span>
-              <span style="color: #111111; font-weight: 500; text-transform: uppercase;">${order.payment_method || 'Online'}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Payment Status:</span>
-              <span style="color: #111111; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">${paymentStatusBadge}</span>
-            </div>
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px 20px; margin-bottom: 30px; box-sizing: border-box;">
+            <table style="width: 100%; border-collapse: collapse; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; line-height: 1.6;">
+              <tr>
+                <td style="padding: 5px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 42%; vertical-align: top;">
+                  Order Date:
+                </td>
+                <td style="padding: 5px 0; color: #111111; font-weight: 500; text-align: right; vertical-align: top; width: 58%;">
+                  ${orderDate}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 42%; vertical-align: top;">
+                  Payment Method:
+                </td>
+                <td style="padding: 5px 0; color: #111111; font-weight: 500; text-align: right; vertical-align: top; text-transform: uppercase; width: 58%;">
+                  ${order.payment_method || 'Online'}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 42%; vertical-align: top;">
+                  Payment Status:
+                </td>
+                <td style="padding: 5px 0; color: #111111; font-weight: 600; text-align: right; vertical-align: top; text-transform: uppercase; letter-spacing: 0.05em; width: 58%;">
+                  ${paymentStatusBadge}
+                </td>
+              </tr>
+            </table>
           </div>
 
           <!-- Items Table -->
@@ -275,8 +325,8 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
               <thead>
                 <tr style="font-size: 10px; color: #888888; text-transform: uppercase; letter-spacing: 0.15em; font-family: 'Helvetica Neue', Arial, sans-serif; text-align: left;">
                   <th style="padding: 10px 0; border-bottom: 1px solid #EAE6DF; font-weight: 500;">Item</th>
-                  <th style="padding: 10px 0; border-bottom: 1px solid #EAE6DF; font-weight: 500; text-align: center;">Qty</th>
-                  <th style="padding: 10px 0; border-bottom: 1px solid #EAE6DF; font-weight: 500; text-align: right;">Total</th>
+                  <th style="padding: 10px 0; border-bottom: 1px solid #EAE6DF; font-weight: 500; text-align: center; width: 45px;">Qty</th>
+                  <th style="padding: 10px 0; border-bottom: 1px solid #EAE6DF; font-weight: 500; text-align: right; width: 90px;">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -286,29 +336,31 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
           </div>
 
           <!-- Totals Breakdown -->
-          <div style="border-top: 1px solid #EAE6DF; padding-top: 15px; margin-bottom: 30px; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 13px; line-height: 2;">
-            <div style="display: flex; justify-content: space-between; color: #555555;">
-              <span>Subtotal:</span>
-              <span>${formatINR(order.subtotal || order.total)}</span>
-            </div>
-            ${parseFloat(order.discount_amount || 0) > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #2E7D32;">
-                <span>Discount Applied:</span>
-                <span>-${formatINR(order.discount_amount)}</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between; color: #555555;">
-              <span>Shipping & Delivery:</span>
-              <span>${parseFloat(order.shipping || 0) > 0 ? formatINR(order.shipping) : 'COMPLIMENTARY'}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 16px; font-weight: 700; color: #111111; border-top: 1px solid #111111; padding-top: 10px; margin-top: 10px;">
-              <span>Final Total:</span>
-              <span>${formatINR(order.total)}</span>
-            </div>
+          <div style="border-top: 1px solid #EAE6DF; padding-top: 15px; margin-bottom: 30px; box-sizing: border-box;">
+            <table style="width: 100%; border-collapse: collapse; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 13px; line-height: 1.8;">
+              <tr>
+                <td style="padding: 4px 0; color: #555555; vertical-align: top;">Subtotal:</td>
+                <td style="padding: 4px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 500;">${formatINR(order.subtotal || order.total)}</td>
+              </tr>
+              ${parseFloat(order.discount_amount || 0) > 0 ? `
+              <tr>
+                <td style="padding: 4px 0; color: #2E7D32; vertical-align: top;">Discount Applied:</td>
+                <td style="padding: 4px 0; color: #2E7D32; text-align: right; vertical-align: top; font-weight: 500;">-${formatINR(order.discount_amount)}</td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 4px 0; color: #555555; vertical-align: top;">Shipping &amp; Delivery:</td>
+                <td style="padding: 4px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 500;">${parseFloat(order.shipping || 0) > 0 ? formatINR(order.shipping) : 'COMPLIMENTARY'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 0 4px 0; font-size: 15px; font-weight: 700; color: #111111; border-top: 1px solid #111111; vertical-align: top;">Final Total:</td>
+                <td style="padding: 12px 0 4px 0; font-size: 15px; font-weight: 700; color: #111111; border-top: 1px solid #111111; text-align: right; vertical-align: top;">${formatINR(order.total)}</td>
+              </tr>
+            </table>
           </div>
 
           <!-- Delivery Address Summary -->
-          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin-bottom: 30px;">
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin-bottom: 30px; box-sizing: border-box;">
             <div style="font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #111111; font-weight: 600; margin-bottom: 8px;">
               DELIVERY DESTINATION
             </div>
@@ -320,7 +372,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
 
           <!-- Action Button -->
           <div style="text-align: center; margin: 35px 0 25px 0;">
-            <a href="${orderUrl}" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+            <a href="${orderUrl}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
               VIEW ORDER IN ACCOUNT
             </a>
           </div>
@@ -410,6 +462,25 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
       }
     }
 
+    // Policy: Customers should ONLY receive emails for:
+    // 1. Login to the website
+    // 2. Order confirmation
+    // 3. Successful delivered (with invoice attached)
+    // 4. Refund amount (ONLY upon completion: 'Refunded' or 'Completed')
+    // 5. Notify me when stock is available
+    //
+    // All in-process statuses ('Processing', 'In-Review', 'Pending', 'Refund Initiated') and other payment statuses are suppressed.
+    const isRefund = normalizedStatus.toLowerCase() === 'refunded' || normalizedStatus.toLowerCase() === 'completed';
+
+    if (!isRefund && !forceResend) {
+      console.log(`[PaymentStatusWorkflow] Payment status '${normalizedStatus}' email suppressed. Customer emails are strictly restricted to Order Confirmation, Successful Delivery, Completed Refund Amount, Login, and Stock Restock alerts.`);
+      return {
+        success: true,
+        skipped: true,
+        reason: `Customer email for status '${normalizedStatus}' suppressed per notification policy.`
+      };
+    }
+
     // 2. Select Status-Specific Subject and Badge
     let subject = '';
     let statusBadgeText = '';
@@ -418,7 +489,21 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
     let statusActionBtn = '';
     let eventType = 'PAYMENT_STATUS_UPDATE';
 
-    if (normalizedStatus === 'Paid' || normalizedStatus === 'Successful') {
+    if (isRefund) {
+      const refundAmount = paymentDetails.amount || order.refund_amount || amount;
+      subject = `Refund Completed: ${formatINR(refundAmount)} — House of Urvaah Order #${order.order_number}`;
+      eventType = 'PAYMENT_REFUNDED';
+      statusBadgeText = 'REFUND COMPLETED';
+      statusHeadline = 'REFUND COMPLETED';
+      statusMessage = `A refund of <strong>${formatINR(refundAmount)}</strong> for Order #${order.order_number} has been completed successfully. Funds will reflect in your account within 5-7 business days depending on your banking provider.`;
+      statusActionBtn = `
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
+            VIEW ATELIER ACCOUNT
+          </a>
+        </div>
+      `;
+    } else if (normalizedStatus === 'Paid' || normalizedStatus === 'Successful') {
       subject = `Payment Received — House of Urvaah Order #${order.order_number}`;
       eventType = 'PAYMENT_SUCCESS';
       statusBadgeText = 'PAYMENT VERIFIED &bull; SUCCESSFUL';
@@ -426,7 +511,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
       statusMessage = `We have successfully received your payment of <strong>${formatINR(amount)}</strong> for Order #${order.order_number}. Your piece has moved directly into our tailoring and atelier preparation workflow.`;
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${FRONTEND_URL}/account" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+          <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
             TRACK ORDER STATUS
           </a>
         </div>
@@ -439,21 +524,8 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
       statusMessage = `We were unable to process your payment for Order #${order.order_number}. Your selected garments are securely reserved in your private session. Please complete payment within 24 hours to secure your order.`;
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${FRONTEND_URL}/checkout" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+          <a href="${FRONTEND_URL}/checkout" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
             RETRY SECURE CHECKOUT
-          </a>
-        </div>
-      `;
-    } else if (normalizedStatus === 'Refunded' || normalizedStatus === 'Refund Initiated') {
-      subject = `Refund Update — House of Urvaah Order #${order.order_number}`;
-      eventType = 'PAYMENT_REFUNDED';
-      statusBadgeText = 'REFUND PROCESSED';
-      statusHeadline = 'REFUND NOTIFICATION';
-      statusMessage = `A refund of <strong>${formatINR(amount)}</strong> for Order #${order.order_number} has been processed by our finance desk. Funds will reflect in your account within 5-7 business days depending on your banking provider.`;
-      statusActionBtn = `
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${FRONTEND_URL}/account" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
-            VIEW ATELIER ACCOUNT
           </a>
         </div>
       `;
@@ -469,7 +541,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
         : `Your payment transaction for Order #${order.order_number} is currently awaiting confirmation from your payment provider.`;
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${FRONTEND_URL}/account" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+          <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
             VIEW ORDER DETAILS
           </a>
         </div>
@@ -525,9 +597,17 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${subject}</title>
+        <style>
+          @media only screen and (max-width: 600px) {
+            .email-wrapper { padding: 12px 6px !important; }
+            .email-container { padding: 25px 16px !important; width: 100% !important; max-width: 100% !important; }
+            .mobile-btn { display: block !important; width: 100% !important; padding: 14px 10px !important; box-sizing: border-box !important; text-align: center !important; }
+            .mobile-break { word-break: break-all !important; overflow-wrap: anywhere !important; }
+          }
+        </style>
       </head>
-      <body style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
-        <div style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px;">
+      <body class="email-wrapper" style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
+        <div class="email-container" style="max-width: 580px; width: 100%; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; box-sizing: border-box;">
           
           <!-- Header -->
           <div style="text-align: center; border-bottom: 1px solid #EAE6DF; padding-bottom: 25px; margin-bottom: 30px;">
@@ -558,29 +638,51 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
           </div>
 
           <!-- Transaction Card -->
-          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin-bottom: 30px; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 13px; line-height: 2;">
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Order Number:</span>
-              <strong style="color: #111111;">#${order.order_number}</strong>
-            </div>
-            ${txnId && txnId !== 'N/A' ? `
-              <div style="display: flex; justify-content: space-between;">
-                <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Transaction Ref:</span>
-                <span style="color: #111111; font-family: monospace; font-size: 12px;">${txnId}</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Amount:</span>
-              <strong style="color: #111111;">${formatINR(amount)}</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Payment Method:</span>
-              <span style="color: #111111; text-transform: uppercase;">${order.payment_method || 'Online'}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Timestamp:</span>
-              <span style="color: #111111;">${paymentDate}</span>
-            </div>
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px 16px; margin-bottom: 30px; box-sizing: border-box;">
+            <table style="width: 100%; border-collapse: collapse; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; line-height: 1.6;">
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 38%; vertical-align: top;">
+                  Order Number:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 700; width: 62%;">
+                  #${order.order_number}
+                </td>
+              </tr>
+              ${txnId && txnId !== 'N/A' ? `
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 38%; vertical-align: top;">
+                  Transaction Ref:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; font-family: monospace; font-size: 11px; width: 62%; word-break: break-all; overflow-wrap: anywhere;">
+                  ${txnId}
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 38%; vertical-align: top;">
+                  Amount:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 700; font-size: 14px; width: 62%;">
+                  ${formatINR(amount)}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 38%; vertical-align: top;">
+                  Payment Method:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; text-transform: uppercase; width: 62%;">
+                  ${order.payment_method || 'Online'}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 38%; vertical-align: top;">
+                  Timestamp:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; width: 62%;">
+                  ${paymentDate}
+                </td>
+              </tr>
+            </table>
           </div>
 
           <!-- Action Button -->
@@ -663,11 +765,52 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
       };
     }
 
+    // Policy Check: The official tax invoice is automatically attached and delivered within sendDeliveryConfirmationWorkflow ('Successful delivered').
+    // Standalone invoice email is suppressed for customers to adhere to the strict 5-email notification policy (unless forceResend by admin).
+    if (!forceResend) {
+      console.log(`[InvoiceWorkflow] Standalone invoice email skipped for Order #${order.order_number}. Official invoice is delivered with Successful Delivery confirmation.`);
+      return {
+        success: true,
+        skipped: true,
+        reason: `Standalone invoice email suppressed per notification policy. Tax invoice is attached to Successful Delivery confirmation email.`
+      };
+    }
+
     const { email: recipientEmail, name: recipientName } = await resolveAuthoritativeRecipient(order);
     const orderCreatedAt = new Date(order.created_at || Date.now());
     const invYr = orderCreatedAt.getFullYear();
-    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
-    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
+    const invMoNum = orderCreatedAt.getMonth() + 1;
+    const invSYr = invMoNum >= 4 ? invYr : invYr - 1;
+    const invEYr = invMoNum >= 4 ? invYr + 1 : invYr;
+    const invSYr2 = String(invSYr % 100).padStart(2, '0');
+    const invEYr2 = String(invEYr % 100).padStart(2, '0');
+    const invFY = `${invSYr2}${invEYr2}`;
+    const invMo = String(invMoNum).padStart(2, '0');
+    let invoiceNumber = order.invoice_number;
+    if (invoiceNumber) {
+      const stripped = invoiceNumber.replace(/^HOU-/, '');
+      const fyMatch = stripped.match(/^(\d{2})?(\d{2})-(\d{2})(\d{2})(\d+)$/);
+      if (fyMatch) {
+        invoiceNumber = `${fyMatch[2]}${fyMatch[3]}${fyMatch[4]}${fyMatch[5].length === 1 ? '0' + fyMatch[5] : fyMatch[5]}`;
+      } else {
+        const match = stripped.match(/^(\d{4})(\d{2})(\d+)$/);
+        if (match) {
+          const rawYr = parseInt(match[1], 10);
+          const rawMo = parseInt(match[2], 10);
+          const rawSeq = parseInt(match[3], 10);
+          const rawSYr = rawMo >= 4 ? rawYr : rawYr - 1;
+          const rawEYr = rawMo >= 4 ? rawYr + 1 : rawYr;
+          const s2 = String(rawSYr % 100).padStart(2, '0');
+          const e2 = String(rawEYr % 100).padStart(2, '0');
+          invoiceNumber = `${s2}${e2}${String(rawMo).padStart(2, '0')}${String(rawSeq).padStart(2, '0')}`;
+        } else if (/^\d{8,}$/.test(stripped)) {
+          invoiceNumber = stripped;
+        }
+      }
+    }
+    if (!invoiceNumber || !/^\d{8,}$/.test(invoiceNumber)) {
+      invoiceNumber = `${invFY}${invMo}01`;
+    }
     const idempotencyKey = `invoice:${order.id}:${invoiceNumber}`;
 
     // 1. Check idempotency record
@@ -758,9 +901,17 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${subject}</title>
+        <style>
+          @media only screen and (max-width: 600px) {
+            .email-wrapper { padding: 12px 6px !important; }
+            .email-container { padding: 25px 16px !important; width: 100% !important; max-width: 100% !important; }
+            .mobile-btn { display: block !important; width: 100% !important; padding: 14px 10px !important; box-sizing: border-box !important; text-align: center !important; }
+            .mobile-break { word-break: break-all !important; overflow-wrap: anywhere !important; }
+          }
+        </style>
       </head>
-      <body style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
-        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px;">
+      <body class="email-wrapper" style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
+        <div class="email-container" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; box-sizing: border-box;">
           
           <!-- Header -->
           <div style="text-align: center; border-bottom: 1px solid #EAE6DF; padding-bottom: 25px; margin-bottom: 30px;">
@@ -791,37 +942,59 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
           </div>
 
           <!-- Invoice Details Card -->
-          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 22px; margin-bottom: 30px; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 13px; line-height: 2;">
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Invoice Number:</span>
-              <strong style="color: #111111;">${invoiceNumber}</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Order Number:</span>
-              <span style="color: #111111;">#${order.order_number}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Issue Date:</span>
-              <span style="color: #111111;">${invoiceDate}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Total Amount:</span>
-              <strong style="color: #111111; font-size: 15px;">${formatINR(order.total)}</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px;">Payment Status:</span>
-              <strong style="color: #2E7D32; text-transform: uppercase;">${isPaid ? 'PAID IN FULL' : 'COD (PAYABLE ON DELIVERY)'}</strong>
-            </div>
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px 16px; margin-bottom: 30px; box-sizing: border-box;">
+            <table style="width: 100%; border-collapse: collapse; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; line-height: 1.6;">
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 40%; vertical-align: top;">
+                  Invoice Number:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 700; width: 60%; word-break: break-all; overflow-wrap: anywhere;">
+                  ${invoiceNumber}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 40%; vertical-align: top;">
+                  Order Number:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; width: 60%;">
+                  #${order.order_number}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 40%; vertical-align: top;">
+                  Issue Date:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; width: 60%;">
+                  ${invoiceDate}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 40%; vertical-align: top;">
+                  Total Amount:
+                </td>
+                <td style="padding: 6px 0; color: #111111; text-align: right; vertical-align: top; font-weight: 700; font-size: 14px; width: 60%;">
+                  ${formatINR(order.total)}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #777777; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; width: 40%; vertical-align: top;">
+                  Payment Status:
+                </td>
+                <td style="padding: 6px 0; color: #2E7D32; text-align: right; vertical-align: top; font-weight: 700; text-transform: uppercase; width: 60%;">
+                  ${isPaid ? 'PAID IN FULL' : 'COD (PAYABLE ON DELIVERY)'}
+                </td>
+              </tr>
+            </table>
           </div>
 
           <!-- Attachment Notice -->
-          <div style="border: 1px dashed #D6D0C5; padding: 15px; margin-bottom: 30px; text-align: center; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #555555;">
+          <div style="border: 1px dashed #D6D0C5; padding: 15px; margin-bottom: 30px; text-align: center; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #555555; word-break: break-all; overflow-wrap: anywhere;">
             📄 <strong>${attachmentFilename}</strong> has been attached to this email for your accounting records.
           </div>
 
           <!-- Action Button -->
           <div style="text-align: center; margin: 30px 0 20px 0;">
-            <a href="${downloadLink}" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+            <a href="${downloadLink}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
               ACCESS INVOICE IN ATELIER ACCOUNT
             </a>
           </div>
@@ -917,8 +1090,38 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
 
     const orderCreatedAt = new Date(order.created_at || Date.now());
     const invYr = orderCreatedAt.getFullYear();
-    const invMo = String(orderCreatedAt.getMonth() + 1).padStart(2, '0');
-    const invoiceNumber = order.invoice_number || `HOU-${invYr}${invMo}01`;
+    const invMoNum = orderCreatedAt.getMonth() + 1;
+    const invSYr = invMoNum >= 4 ? invYr : invYr - 1;
+    const invEYr = invMoNum >= 4 ? invYr + 1 : invYr;
+    const invSYr2 = String(invSYr % 100).padStart(2, '0');
+    const invEYr2 = String(invEYr % 100).padStart(2, '0');
+    const invFY = `${invSYr2}${invEYr2}`;
+    const invMo = String(invMoNum).padStart(2, '0');
+    let invoiceNumber = order.invoice_number;
+    if (invoiceNumber) {
+      const stripped = invoiceNumber.replace(/^HOU-/, '');
+      const fyMatch = stripped.match(/^(\d{2})?(\d{2})-(\d{2})(\d{2})(\d+)$/);
+      if (fyMatch) {
+        invoiceNumber = `${fyMatch[2]}${fyMatch[3]}${fyMatch[4]}${fyMatch[5].length === 1 ? '0' + fyMatch[5] : fyMatch[5]}`;
+      } else {
+        const match = stripped.match(/^(\d{4})(\d{2})(\d+)$/);
+        if (match) {
+          const rawYr = parseInt(match[1], 10);
+          const rawMo = parseInt(match[2], 10);
+          const rawSeq = parseInt(match[3], 10);
+          const rawSYr = rawMo >= 4 ? rawYr : rawYr - 1;
+          const rawEYr = rawMo >= 4 ? rawYr + 1 : rawYr;
+          const s2 = String(rawSYr % 100).padStart(2, '0');
+          const e2 = String(rawEYr % 100).padStart(2, '0');
+          invoiceNumber = `${s2}${e2}${String(rawMo).padStart(2, '0')}${String(rawSeq).padStart(2, '0')}`;
+        } else if (/^\d{8,}$/.test(stripped)) {
+          invoiceNumber = stripped;
+        }
+      }
+    }
+    if (!invoiceNumber || !/^\d{8,}$/.test(invoiceNumber)) {
+      invoiceNumber = `${invFY}${invMo}01`;
+    }
     const attachmentFilename = `HOUSE_OF_URVAAH_INVOICE_${invoiceNumber}.pdf`;
     const subject = `Delivered: Your House of Urvaah Order #${order.order_number} has arrived`;
 
@@ -970,33 +1173,36 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
 
     // 4. Compile Product Feedback Cards and Links
     const items = order.items || [];
+    const publicUrl = getPublicFrontendUrl();
     const itemsHtml = items.map((item) => {
-      const prodId = item.product_id || item.productId || item.id;
-      const feedbackUrl = `${FRONTEND_URL}/product/${prodId}?openReview=true#customer-reviews`;
+      const prodId = item.product_id || item.productId || (item.product && (item.product.id || item.product.product_id)) || item.id;
+      const feedbackUrl = `${publicUrl}/product/${prodId}?openReview=true#customer-reviews`;
       const itemPrice = parseFloat(item.price || 0);
       const itemQty = parseInt(item.quantity || 1, 10);
       const variantText = item.size ? `Size: ${item.size}` : '';
 
       return `
-        <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px; margin-bottom: 14px; font-family: 'Helvetica Neue', Arial, sans-serif;">
-          <table style="width: 100%; border-collapse: collapse;">
+        <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 18px 16px; margin-bottom: 14px; font-family: 'Helvetica Neue', Arial, sans-serif; box-sizing: border-box;">
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
             <tr>
-              <td style="vertical-align: middle;">
+              <td style="vertical-align: top;">
                 <div style="font-weight: 600; color: #111111; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1.4;">
                   ${item.name || item.title || 'Atelier Creation'}
                 </div>
-                ${variantText ? `<div style="font-size: 11px; color: #777777; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.1em;">${variantText} &bull; Qty: ${itemQty}</div>` : `<div style="font-size: 11px; color: #777777; margin-top: 3px;">Qty: ${itemQty}</div>`}
-                <div style="font-size: 12px; font-weight: 600; color: #111111; margin-top: 4px;">
+                ${variantText ? `<div style="font-size: 11px; color: #777777; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.08em;">${variantText} &bull; Qty: ${itemQty}</div>` : `<div style="font-size: 11px; color: #777777; margin-top: 4px;">Qty: ${itemQty}</div>`}
+              </td>
+              <td style="vertical-align: top; text-align: right; white-space: nowrap; padding-left: 12px;">
+                <div style="font-size: 13px; font-weight: 700; color: #111111;">
                   ${formatINR(itemPrice * itemQty)}
                 </div>
               </td>
-              <td style="text-align: right; vertical-align: middle; padding-left: 15px;">
-                <a href="${feedbackUrl}" style="background-color: #111111; color: #ffffff !important; padding: 10px 18px; text-decoration: none; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; display: inline-block; white-space: nowrap;">
-                  ★ GIVE FEEDBACK
-                </a>
-              </td>
             </tr>
           </table>
+          <div style="border-top: 1px dashed #EAE6DF; padding-top: 12px; text-align: center;">
+            <a href="${feedbackUrl}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 11px 18px; text-decoration: none; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; display: block; text-align: center; box-sizing: border-box; width: 100%;">
+              ★ RATE &amp; SHARE FEEDBACK
+            </a>
+          </div>
         </div>
       `;
     }).join('');
@@ -1007,7 +1213,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
       year: 'numeric'
     });
 
-    const accountUrl = `${FRONTEND_URL}/account`;
+    const accountUrl = `${publicUrl}/account`;
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -1016,9 +1222,17 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${subject}</title>
+        <style>
+          @media only screen and (max-width: 600px) {
+            .email-wrapper { padding: 12px 6px !important; }
+            .email-container { padding: 25px 16px !important; width: 100% !important; max-width: 100% !important; }
+            .mobile-btn { display: block !important; width: 100% !important; padding: 13px 10px !important; box-sizing: border-box !important; text-align: center !important; }
+            .mobile-break { word-break: break-all !important; overflow-wrap: anywhere !important; }
+          }
+        </style>
       </head>
-      <body style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
-        <div style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px;">
+      <body class="email-wrapper" style="margin: 0; padding: 30px 15px; background-color: #FAF8F5; font-family: 'Georgia', serif; color: #111111;">
+        <div class="email-container" style="max-width: 620px; width: 100%; margin: 0 auto; background-color: #ffffff; border: 1px solid #EAE6DF; padding: 45px 35px; box-sizing: border-box;">
           
           <!-- Header -->
           <div style="text-align: center; border-bottom: 1px solid #EAE6DF; padding-bottom: 25px; margin-bottom: 30px;">
@@ -1062,12 +1276,12 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
           </div>
 
           <!-- Invoice Attachment Notice Card -->
-          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin: 25px 0; font-family: 'Helvetica Neue', Arial, sans-serif;">
+          <div style="background-color: #FAF8F5; border: 1px solid #EAE6DF; padding: 20px; margin: 25px 0; font-family: 'Helvetica Neue', Arial, sans-serif; box-sizing: border-box;">
             <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #111111; margin-bottom: 8px;">
               OFFICIAL TAX INVOICE ATTACHED
             </div>
             <p style="font-size: 12px; color: #555555; line-height: 1.6; margin: 0 0 12px 0;">
-              Your official Tax Invoice <strong>#${invoiceNumber}</strong> is attached to this email as a PDF document (<code>${attachmentFilename}</code>) for your records.
+              Your official Tax Invoice <strong>#${invoiceNumber}</strong> is attached to this email as a PDF document (<code class="mobile-break" style="word-break: break-all; overflow-wrap: anywhere; font-family: monospace; font-size: 11px; background-color: #F0EDE8; padding: 2px 4px;">${attachmentFilename}</code>) for your records.
             </p>
             <div style="font-size: 11px; color: #777777;">
               Order Total: <strong style="color: #111111;">${formatINR(order.total)}</strong> &bull; Date: ${deliveryDate}
@@ -1076,7 +1290,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
 
           <!-- Account Access CTA -->
           <div style="text-align: center; margin: 30px 0 15px 0;">
-            <a href="${accountUrl}" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block;">
+            <a href="${accountUrl}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
               MANAGE ORDER IN ATELIER ACCOUNT
             </a>
           </div>
@@ -1298,6 +1512,7 @@ const downloadInvoiceByToken = async (token) => {
 };
 
 module.exports = {
+  getPublicFrontendUrl,
   resolveAuthoritativeRecipient,
   sendOrderConfirmationWorkflow,
   sendPaymentStatusWorkflow,

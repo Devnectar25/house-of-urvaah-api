@@ -40,11 +40,19 @@ exports.getAllCategories = async (page, limit) => {
 
 exports.getActiveCategories = async () => {
     const result = await pool.query(`
-        SELECT c.*, COUNT(p.product_id)::int as product_count
+        SELECT c.*, (
+            SELECT COUNT(*)::int 
+            FROM products p 
+            WHERE p.is_active = true 
+              AND (
+                  p.category_id = c.id 
+                  OR c.slug = ANY(p.categories)
+                  OR c.name = ANY(p.categories)
+                  OR (c.slug = 'new-arrivals')
+              )
+        ) as product_count
         FROM categories c
-        LEFT JOIN products p ON (c.id = p.category_id) AND (p.is_active = true)
         WHERE (c.active = true OR c.is_active = true)
-        GROUP BY c.id
         ORDER BY c.id ASC
     `);
     return result.rows.map(mapCategory);

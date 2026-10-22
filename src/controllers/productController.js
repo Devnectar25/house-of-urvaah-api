@@ -3,8 +3,9 @@ const chatbotService = require('../services/chatbotService');
 
 exports.getProducts = async (req, res) => {
     try {
-        const { page, limit, active, search, category, brand } = req.query;
-        const data = await productService.getAllProducts(page, limit, active, search, category, brand);
+        const { page, limit, active, search, category, brand, occasion, tag, fabric, fabric_slug, fabricSlug } = req.query;
+        const targetFabricSlug = fabric_slug || fabricSlug;
+        const data = await productService.getAllProducts(page, limit, active, search, category, brand, occasion, tag, fabric, targetFabricSlug);
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getProducts:", error);

@@ -2,11 +2,13 @@ const crypto = require('crypto');
 const pool = require('../config/db');
 const storageService = require('./storageService');
 const {
-    sendStockAlertEmail,
-    sendStockSubscriptionConfirmationEmail
+    sendStockAlertEmail
 } = require('./brevoEmailService');
 
-const CLIENT_URL = process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+const CLIENT_URL = 
+    (process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost') ? process.env.FRONTEND_URL : null) || 
+    (process.env.CLIENT_URL && !process.env.CLIENT_URL.includes('localhost') ? process.env.CLIENT_URL : null) || 
+    'https://house-of-urvaah-fe.vercel.app';
 
 function parseCandidateProductId(rawId) {
     if (!rawId) return null;
@@ -101,8 +103,9 @@ class StockNotificationService {
 
         if (existingRes.rows.length > 0) {
             return {
+                success: true,
                 alreadySubscribed: true,
-                message: "You're already subscribed to this item.",
+                message: "You're already on the list! We will notify you when this item is back in stock.",
                 subscription: existingRes.rows[0]
             };
         }
@@ -146,15 +149,12 @@ class StockNotificationService {
 
         const subscription = insertRes.rows[0];
 
-        // Subscription registered successfully.
-        // Do NOT send email upon filling the form.
-        // Email will trigger ONLY when stock becomes available for this product and requested size.
-        console.log(`[StockNotification] Subscription registered for Product ${numericId} (size: ${cleanSize || 'any'}, email: ${cleanEmail || 'none'}). Waiting for restock.`);
+        console.log(`[StockNotification] Subscription registered for Product ${numericId} (size: ${cleanSize || 'any'}, email: ${cleanEmail || 'none'}). Waiting for restock event.`);
 
         return {
             success: true,
             alreadySubscribed: false,
-            message: "You're on the list! We'll notify you when this item is back in stock.",
+            message: "You're on the list! We will notify you when this item is back in stock.",
             subscription
         };
     }

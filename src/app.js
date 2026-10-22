@@ -27,7 +27,9 @@ app.use((req, res, next) => {
 const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:5173',
-    'https://house-of-urvaah-fe.vercel.app'
+    'https://house-of-urvaah-fe.vercel.app',
+    'https://houseofurvaah.com',
+    'https://www.houseofurvaah.com'
 ];
 
 app.use(cors({

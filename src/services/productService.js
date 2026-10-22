@@ -69,6 +69,13 @@ const mapProduct = (p) => {
         }
     }
 
+    if (p.product_id == 108 || (p.title && (p.title.toLowerCase().includes('gharara') || p.title.toLowerCase().includes('cashmere')))) {
+        p.title = 'Gharara Set';
+        if (!p.description || p.description.includes('cashmere') || p.description.includes('Mongolian')) {
+            p.description = 'A versatile festive ensemble featuring an intricately embroidered short kurti with a hook-on peplum and flared gharara trousers. Wear it with the peplum for full celebratory volume, or detach for a sleek, contemporary silhouette.\nWear it two ways for wedding soirees and festive celebrations.';
+        }
+    }
+
     const rawImage = p.image_url || p.image || '';
     const mainImageUrl = rawImage ? storageService.getPublicMediaUrl(rawImage) : 'https://via.placeholder.com/300';
 
@@ -188,6 +195,11 @@ const mapProduct = (p) => {
         sizes: Array.isArray(p.sizes) ? p.sizes : (typeof p.sizes === 'string' ? [p.sizes] : ['XS', 'S', 'M', 'L']),
         colors: Array.isArray(p.colors) ? p.colors : (typeof p.colors === 'string' ? [p.colors] : ['Default']),
         fabric: p.fabric || '',
+        fabric_slug: p.fabric_slug || '',
+        fabricSlug: p.fabric_slug || '',
+        categories: Array.isArray(p.categories) ? p.categories : [p.category_name].filter(Boolean),
+        occasion: p.occasion || '',
+        tags: Array.isArray(p.tags) ? p.tags : [],
         fitType: p.fit_type || '',
         careInstructions: p.care_instructions || '',
         care_instructions: p.care_instructions || '',
@@ -222,7 +234,7 @@ const BASE_PRODUCT_QUERY = `
     LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
 `;
 
-exports.getAllProducts = async (page, limit, active, search, category_id, brand_id) => {
+exports.getAllProducts = async (page, limit, active, search, category_id, brand_id, occasion, tag, fabric, fabric_slug) => {
     let whereClauses = [];
     let params = [];
     let paramIdx = 1;
@@ -254,13 +266,26 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         }
     }
 
-    if (category_id) {
+    if (category_id && category_id !== 'all') {
         if (!isNaN(category_id)) {
-            whereClauses.push(`p.category_id = $${paramIdx}`);
+            whereClauses.push(`(p.category_id = $${paramIdx} OR EXISTS (SELECT 1 FROM categories cat WHERE cat.id = $${paramIdx} AND (cat.slug = ANY(p.categories) OR cat.name = ANY(p.categories))))`);
             params.push(parseInt(category_id));
         } else {
-            whereClauses.push(`(c.name ILIKE $${paramIdx} OR p.category_id::text = $${paramIdx})`);
-            params.push(category_id);
+            const catNorm = category_id.toLowerCase().trim();
+            if (catNorm === 'new-arrivals' || catNorm === 'new arrivals') {
+                whereClauses.push(`('new-arrivals' = ANY(p.categories) OR 'New Arrivals' = ANY(p.categories) OR COALESCE(p.is_active, true) = true)`);
+            } else {
+                whereClauses.push(`(
+                    c.name ILIKE $${paramIdx} 
+                    OR $${paramIdx} = ANY(p.categories)
+                    OR EXISTS (
+                        SELECT 1 FROM unnest(p.categories) cat_elem 
+                        WHERE LOWER(cat_elem) = LOWER($${paramIdx}) 
+                           OR LOWER(cat_elem) = LOWER(REPLACE($${paramIdx}, '-', ' '))
+                    )
+                )`);
+                params.push(category_id);
+            }
         }
         paramIdx++;
     }
@@ -273,6 +298,30 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
             whereClauses.push(`(b.name ILIKE $${paramIdx} OR p.brand ILIKE $${paramIdx})`);
             params.push(brand_id);
         }
+        paramIdx++;
+    }
+
+    if (occasion) {
+        whereClauses.push(`p.occasion ILIKE $${paramIdx}`);
+        params.push(`%${occasion}%`);
+        paramIdx++;
+    }
+
+    if (tag) {
+        whereClauses.push(`$${paramIdx} = ANY(p.tags)`);
+        params.push(tag);
+        paramIdx++;
+    }
+
+    if (fabric_slug || fabric) {
+        const queryTerm = (fabric_slug || fabric).trim();
+        whereClauses.push(`(
+            p.fabric_slug ILIKE $${paramIdx}
+            OR p.fabric ILIKE $${paramIdx}
+            OR LOWER(REPLACE(p.fabric, ' ', '-')) ILIKE $${paramIdx}
+            OR $${paramIdx} = ANY(p.tags)
+        )`);
+        params.push(`%${queryTerm}%`);
         paramIdx++;
     }
 
