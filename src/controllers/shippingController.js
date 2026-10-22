@@ -444,132 +444,147 @@ exports.trackReturnParcel = async (req, res) => {
 
 // 15. Dispatch Replacement Item
 exports.dispatchReplacement = async (req, res) => {
+    const client = await pool.connect();
     try {
-        const { original_order, replacement_items } = req.body;
+        const { original_order, replacement_items, replacement_size } = req.body;
         if (!original_order) {
             return res.status(400).json({ success: false, message: 'original_order object is required.' });
         }
 
-        const result = await shiprocketService.dispatchReplacement(original_order, replacement_items);
+        const origId = original_order.id || original_order.order_number;
+        const origRes = await client.query(
+            `SELECT * FROM orders WHERE id::text = $1 OR order_number = $1`,
+            [String(origId)]
+        );
+        if (origRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Original order not found in database.' });
+        }
+        const dbOrigOrder = origRes.rows[0];
 
-        // Record replacement order in database if not already present
-        if (result && result.order_number) {
-            try {
-                const repNumber = result.order_number;
-                const checkRep = await pool.query(
-                    'SELECT id FROM orders WHERE order_number = $1',
-                    [repNumber]
+        // Fetch original items
+        const origItemsRes = await client.query(
+            `SELECT * FROM order_items WHERE order_id = $1::uuid`,
+            [dbOrigOrder.id]
+        );
+        const dbOrigItems = origItemsRes.rows;
+
+        const chosenItems = (replacement_items && replacement_items.length > 0)
+            ? replacement_items
+            : dbOrigItems;
+
+        const targetSize = replacement_size || original_order.replacement_size || dbOrigOrder.replacement_size || 'M';
+
+        // Call shiprocket service for tracking/shipment
+        const shiprocketResult = await shiprocketService.dispatchReplacement(
+            { ...dbOrigOrder, ...original_order },
+            chosenItems
+        );
+
+        const repOrderNumber = shiprocketResult.order_number || `${dbOrigOrder.order_number}-REP`;
+        const repTracking = shiprocketResult.awb_code || `URV-REP-${Date.now().toString().slice(-8)}IN`;
+
+        await client.query('BEGIN');
+
+        // Check if replacement order already exists
+        const existingRepRes = await client.query(
+            `SELECT id, order_number FROM orders WHERE order_number = $1`,
+            [repOrderNumber]
+        );
+
+        let repOrderId;
+        if (existingRepRes.rows.length > 0) {
+            repOrderId = existingRepRes.rows[0].id;
+            await client.query(
+                `UPDATE orders 
+                 SET status = 'Confirmed',
+                     tracking_number = COALESCE(tracking_number, $1),
+                     updated_at = NOW()
+                 WHERE id = $2::uuid`,
+                [repTracking, repOrderId]
+            );
+        } else {
+            // INSERT replacement forward order into `orders`
+            const insertRepRes = await client.query(
+                `INSERT INTO orders (
+                    user_id, order_number, invoice_number, address_id,
+                    payment_method, payment_status, payment_type,
+                    subtotal, original_total, shipping, tax, discount_amount, total,
+                    status, tracking_number, return_type,
+                    original_order_number, original_order_id,
+                    created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4,
+                    'Exchange', 'Paid', 'Prepaid (Exchange)',
+                    0, 0, 0, 0, 0, 0,
+                    'Confirmed', $5, 'exchange',
+                    $6, $7,
+                    NOW(), NOW()
+                ) RETURNING id`,
+                [
+                    dbOrigOrder.user_id,
+                    repOrderNumber,
+                    `INV-${repOrderNumber}`,
+                    dbOrigOrder.address_id,
+                    repTracking,
+                    dbOrigOrder.order_number,
+                    dbOrigOrder.id
+                ]
+            );
+            repOrderId = insertRepRes.rows[0].id;
+
+            // INSERT items into `order_items` for replacement forward order
+            for (const it of chosenItems) {
+                const prodId = it.product_id || it.id || 1;
+                await client.query(
+                    `INSERT INTO order_items (
+                        order_id, product_id, name, price, quantity, image, size, status, created_at
+                    ) VALUES (
+                        $1::uuid, $2, $3, 0, $4, $5, $6, 'Confirmed', NOW()
+                    )`,
+                    [
+                        repOrderId,
+                        prodId,
+                        it.name || 'Replacement Piece',
+                        it.quantity || 1,
+                        it.image || null,
+                        targetSize
+                    ]
                 );
-
-                if (checkRep.rows.length === 0) {
-                    const origId = original_order.id || original_order.order_id;
-                    const origRes = await pool.query(
-                        'SELECT * FROM orders WHERE id::text = $1 OR order_number = $1 LIMIT 1',
-                        [String(origId)]
-                    );
-                    const origRow = origRes.rows[0];
-
-                    if (origRow) {
-                        // Determine requested replacement size from request, original order, or text notes
-                        let targetSize = req.body.replacement_size || req.body.replacementSize || original_order.replacement_size || origRow.replacement_size;
-                        if (!targetSize) {
-                            const combinedReason = `${origRow.cancel_reason || ''} ${origRow.return_reason || ''}`;
-                            const sizeMatch = combinedReason.match(/Preferred Size:\s*([A-Za-z0-9]+)/i) || 
-                                              combinedReason.match(/Size:\s*([A-Za-z0-9]+)/i);
-                            if (sizeMatch && sizeMatch[1]) {
-                                targetSize = sizeMatch[1].trim();
-                            }
-                        }
-                        if (!targetSize) targetSize = 'M';
-
-                        const origTotal = Number(origRow.total || 0);
-                        const origSubtotal = Number(origRow.subtotal || origTotal || 0);
-                        const repItems = (replacement_items && replacement_items.length > 0) 
-                            ? replacement_items 
-                            : (original_order.items || []);
-                        const repSubtotal = repItems.reduce((acc, it) => acc + (Number(it.price || 0) * (it.quantity || 1)), 0) || origSubtotal;
-
-                        const insertRes = await pool.query(
-                            `INSERT INTO orders (
-                                user_id, order_number, invoice_number, address_id, shipping_address,
-                                payment_method, payment_status, payment_type,
-                                subtotal, total, original_total, shipping, tax, discount_amount,
-                                status, logistics_status, shipment_status, tracking_number, awb_code, 
-                                courier_name, shipment_id, return_type, original_order_id, original_order_number, replacement_size, created_at, updated_at
-                            ) VALUES (
-                                $1, $2, $3, $4, $5,
-                                'Replacement Exchange', 'Paid', 'Exchange',
-                                $6, $6, $6, 0, 0, 0,
-                                'Confirmed', 'Order Placed & Confirmed', 'Processing', $7, $7,
-                                $8, $9, 'exchange', $10, $11, $12, NOW(), NOW()
-                            ) RETURNING id`,
-                            [
-                                origRow.user_id,
-                                repNumber,
-                                `HOU-REP-${Date.now().toString().slice(-6)}`,
-                                origRow.address_id,
-                                origRow.shipping_address,
-                                repSubtotal,
-                                result.awb_code,
-                                result.courier_name,
-                                result.shipment_id,
-                                origRow.id,
-                                origRow.order_number,
-                                targetSize
-                            ]
-                        );
-
-                        const newRepId = insertRes.rows[0]?.id;
-                        for (const itemToCopy of repItems) {
-                            const itemTargetSize = itemToCopy.replacement_size || itemToCopy.size || targetSize;
-                            const itemPrice = Number(itemToCopy.price || (repSubtotal / repItems.length) || 0);
-                            await pool.query(
-                                `INSERT INTO order_items (order_id, product_id, name, image, price, quantity, size, status, created_at)
-                                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'Confirmed', NOW())`,
-                                [
-                                    newRepId,
-                                    itemToCopy.product_id || itemToCopy.id || 1,
-                                    itemToCopy.name || itemToCopy.title || 'Replacement Garment',
-                                    itemToCopy.image || itemToCopy.image_url || origRow.image || '/assets/Images/Brown01.png',
-                                    itemPrice,
-                                    itemToCopy.quantity || 1,
-                                    itemTargetSize
-                                ]
-                            );
-                        }
-                        console.log(`[ShippingController] Created database replacement order #${repNumber} (ID: ${newRepId}, Items: ${repItems.length}, Size: ${targetSize})`);
-
-                        // Also update original parent order with replacement links
-                        await pool.query(
-                            `UPDATE orders SET 
-                                status = 'Replaced', 
-                                logistics_status = 'Replacement Order Dispatched',
-                                shipment_status = 'In Transit',
-                                replacement_order_id = $2,
-                                replacement_order_number = $3,
-                                replacement_size = $4,
-                                tracking_number = COALESCE($5, tracking_number),
-                                awb_code = COALESCE($5, awb_code),
-                                courier_name = COALESCE($6, courier_name),
-                                payment_status = 'Paid',
-                                updated_at = NOW()
-                             WHERE id = $1`,
-                            [origRow.id, newRepId, repNumber, targetSize, result.awb_code, result.courier_name]
-                        );
-
-                        result.replacement_order_id = newRepId;
-                        result.replacement_order_number = repNumber;
-                        result.replacement_size = targetSize;
-                    }
-                }
-            } catch (dbErr) {
-                console.warn('[ShippingController Replacement DB Sync Warning]:', dbErr.message);
             }
         }
 
-        return res.json(result);
+        // Link on original order and update status to Replaced
+        await client.query(
+            `UPDATE orders 
+             SET status = 'Replaced',
+                 replacement_order_number = $1,
+                 replacement_order_id = $2::uuid,
+                 replacement_size = $3,
+                 updated_at = NOW()
+             WHERE id = $4::uuid`,
+            [repOrderNumber, repOrderId, targetSize, dbOrigOrder.id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            order_number: repOrderNumber,
+            replacement_order_number: repOrderNumber,
+            replacement_order_id: repOrderId,
+            original_order_id: dbOrigOrder.id,
+            shipment_id: shiprocketResult.shipment_id,
+            awb_code: repTracking,
+            courier_name: shiprocketResult.courier_name || 'Delhivery Express',
+            status: 'Replacement Processing',
+            message: `Replacement order #${repOrderNumber} generated and dispatched in size ${targetSize}.`
+        });
     } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[ShippingController] dispatchReplacement error:', err);
         return res.status(500).json({ success: false, message: err.message });
+    } finally {
+        client.release();
     }
 };
 

@@ -64,25 +64,27 @@ exports.getCategoryById = async (id) => {
 };
 
 exports.createCategory = async (data) => {
-    const { name, description, active, is_active, category_image, image_url } = data;
+    const { name, description, active, is_active, category_image, image_url, slug } = data;
     const activeVal = active !== undefined ? Boolean(active) : (is_active !== undefined ? Boolean(is_active) : true);
     const imgVal = category_image || image_url || null;
+    const generatedSlug = (slug || name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     const result = await pool.query(
-        "INSERT INTO categories (name, description, active, is_active, category_image, image_url, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *",
-        [name, description, activeVal, activeVal, imgVal, imgVal]
+        "INSERT INTO categories (name, description, active, is_active, category_image, image_url, slug, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING *",
+        [name, description, activeVal, activeVal, imgVal, imgVal, generatedSlug]
     );
     return mapCategory(result.rows[0]);
 };
 
 exports.updateCategory = async (id, data) => {
-    const { name, description, active, is_active, category_image, image_url } = data;
+    const { name, description, active, is_active, category_image, image_url, slug } = data;
     const activeVal = active !== undefined ? Boolean(active) : (is_active !== undefined ? Boolean(is_active) : null);
     const imgVal = category_image !== undefined ? category_image : (image_url !== undefined ? image_url : null);
+    const generatedSlug = slug ? slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : (name ? name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null);
 
     const result = await pool.query(
-        "UPDATE categories SET name = COALESCE($1, name), description = COALESCE($2, description), active = COALESCE($3, active), is_active = COALESCE($3, is_active), category_image = COALESCE($4, category_image), image_url = COALESCE($4, image_url) WHERE id = $5 RETURNING *",
-        [name, description, activeVal, imgVal, id]
+        "UPDATE categories SET name = COALESCE($1, name), description = COALESCE($2, description), active = COALESCE($3, active), is_active = COALESCE($3, is_active), category_image = COALESCE($4, category_image), image_url = COALESCE($4, image_url), slug = COALESCE($5, slug) WHERE id = $6 RETURNING *",
+        [name, description, activeVal, imgVal, generatedSlug, id]
     );
     return mapCategory(result.rows[0]);
 };

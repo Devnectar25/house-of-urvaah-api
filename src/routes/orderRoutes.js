@@ -35,7 +35,7 @@ router.post('/:id/return', (req, res, next) => {
         req.body.status = 'Return Requested';
         req.body.type = 'Return';
     } else {
-        req.body.status = req.body.status || 'Return Approved';
+        req.body.status = req.body.status || 'Returned';
     }
     return orderController.updateOrderStatus(req, res, next);
 });
