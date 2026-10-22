@@ -1,5 +1,6 @@
 const orderService = require('../services/orderService');
 const invoiceService = require('../services/invoiceService');
+const { validateBankDetails } = require('../utils/bankValidator');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -131,7 +132,16 @@ exports.getOrderById = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, cancelReason, bankDetails, paymentStatus, itemIds } = req.body;
+        const { status, cancelReason, bankDetails, paymentStatus, itemIds, return_qc_status, return_rejection_reason, is_product_received } = req.body;
+
+        let sanitizedBankDetails = bankDetails;
+        if (bankDetails) {
+            const bankCheck = validateBankDetails(bankDetails);
+            if (!bankCheck.isValid) {
+                return res.status(400).json({ success: false, message: bankCheck.error });
+            }
+            sanitizedBankDetails = bankCheck.sanitized;
+        }
 
         const order = await orderService.getOrderById(id);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
@@ -164,14 +174,20 @@ exports.updateOrderStatus = async (req, res) => {
             if (currentStatusLower === 'received at house of urvaah' || currentStatusLower === 'returned' || currentStatusLower === 'replaced') {
                 return res.status(400).json({ success: false, message: 'This order cycle has already been completed.' });
             }
+            if (currentStatusLower === 'shipped' || currentStatusLower === 'dispatched' || currentStatusLower === 'out for delivery') {
+                return res.status(400).json({
+                    success: false,
+                    message: `This order has already been ${order.status.toLowerCase()} and cannot be cancelled. Once delivered, you can initiate a return or replacement.`
+                });
+            }
             if (currentStatusLower === 'delivered') {
-                // Post-delivery: check if replacement or cancel
+                // Post-delivery: check if replacement or return
                 const isReplacement = (status || '').toLowerCase().includes('replace') || req.body.type === 'Replacement';
-                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Cancellation Requested';
+                targetStatus = isReplacement ? 'Replacement Request Processing' : 'Return Requested';
             } else if (currentStatusLower === 'cancellation requested' || currentStatusLower === 'cancel_requested') {
                 return res.status(400).json({ success: false, message: 'A cancellation request for this order is already pending admin approval.' });
             } else {
-                // User cancellations before delivery must go for admin approval
+                // User cancellations before delivery and before shipping must go for admin approval
                 targetStatus = 'Cancellation Requested';
             }
         }
@@ -185,9 +201,21 @@ exports.updateOrderStatus = async (req, res) => {
         if ((targetStatus === 'Delivered' || (order.status || '').toLowerCase() === 'delivered') && isCod) {
             targetPaymentStatus = 'Paid';
         }
+        if (!isCod) {
+            const hasOnlineProof = Boolean(order.razorpay_payment_id) || 
+                                   (order.payment_status || '').toLowerCase() === 'paid' || 
+                                   (order.payment_type || '').toLowerCase() === 'upi' || 
+                                   (order.payment_method || '').toLowerCase() === 'upi' ||
+                                   (order.original_status || '').toLowerCase() === 'confirmed' ||
+                                   (order.status || '').toLowerCase() === 'confirmed';
+            if (hasOnlineProof && (!targetPaymentStatus || targetPaymentStatus.toLowerCase() === 'pending')) {
+                targetPaymentStatus = 'Paid';
+            }
+        }
 
-        // Pass order.id (validated UUID) to ensure clean DB queries
-        const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, bankDetails, targetPaymentStatus, itemIds);
+        // Pass order.id (validated UUID) and extraData to ensure clean DB queries
+        const extraData = { return_qc_status, return_rejection_reason, is_product_received };
+        const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, sanitizedBankDetails, targetPaymentStatus, itemIds, extraData);
 
         // Synchronize with Shiprocket logistics if order is cancelled
         if (targetStatus === 'Cancelled' || targetStatus === 'Cancellation Requested' || status === 'Cancelled' || status === 'Cancellation Requested') {
@@ -311,6 +339,14 @@ exports.updateRefundStatus = async (req, res) => {
         const { id } = req.params;
         const refundData = req.body;
 
+        if (refundData?.bankDetails) {
+            const bankCheck = validateBankDetails(refundData.bankDetails);
+            if (!bankCheck.isValid) {
+                return res.status(400).json({ success: false, message: bankCheck.error });
+            }
+            refundData.bankDetails = bankCheck.sanitized;
+        }
+
         const updatedOrder = await orderService.updateRefundStatus(id, refundData);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
@@ -329,8 +365,20 @@ exports.restockOrder = async (req, res) => {
 exports.requestReturnReplace = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = req.user.id;
-        const result = await orderService.requestReturnReplace(id, userId, req.body);
+        const { type, items, bankDetails } = req.body;
+
+        const hasReturn = type === 'Return' || (items && items.some(it => it.action === 'Return' || it.type === 'Return'));
+        if (hasReturn || bankDetails) {
+            const bankCheck = validateBankDetails(bankDetails, { required: Boolean(hasReturn && type !== 'Replacement' && type !== 'Exchange') });
+            if (!bankCheck.isValid) {
+                return res.status(400).json({ success: false, message: bankCheck.error });
+            }
+            if (bankCheck.sanitized) {
+                req.body.bankDetails = bankCheck.sanitized;
+            }
+        }
+
+        const result = await orderService.requestReturnReplace(id, req.user, req.body);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -340,10 +388,20 @@ exports.requestReturnReplace = async (req, res) => {
 exports.requestItemCancellation = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = req.user.id;
-        const isAdmin = req.user.role === 'admin';
-        console.log(`[OrderController] requestItemCancellation: ID=${id}, User=${userId}, isAdmin=${isAdmin}`);
-        const result = await orderService.requestItemCancellation(id, userId, req.body, isAdmin);
+        const isAdmin = req.user?.role === 'admin';
+        console.log(`[OrderController] requestItemCancellation: ID=${id}, User=${req.user?.id || req.user?.emailid}, isAdmin=${isAdmin}`);
+
+        if (req.body.bankDetails) {
+            const bankCheck = validateBankDetails(req.body.bankDetails);
+            if (!bankCheck.isValid) {
+                return res.status(400).json({ success: false, message: bankCheck.error });
+            }
+            if (bankCheck.sanitized) {
+                req.body.bankDetails = bankCheck.sanitized;
+            }
+        }
+
+        const result = await orderService.requestItemCancellation(id, req.user, req.body, isAdmin);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('[OrderController] requestItemCancellation error:', error);

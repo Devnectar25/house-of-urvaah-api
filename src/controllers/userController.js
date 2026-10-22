@@ -171,7 +171,7 @@ exports.updateProfile = async (req, res) => {
         if (req.user?.role === 'admin') {
             return res.status(403).json({ success: false, message: 'Admin accounts cannot update customer profile' });
         }
-        const { fullName, phone, avatar } = req.body;
+        const { fullName, phone, avatar, bankDetails, refund_bank_account, refund_ifsc_code, refund_holder_name } = req.body;
         const username = req.user.id;
 
         if (!username) {
@@ -206,14 +206,39 @@ exports.updateProfile = async (req, res) => {
             }
         }
 
+        // Process refund bank details if provided
+        let targetBankAccount = refund_bank_account !== undefined ? refund_bank_account : (bankDetails?.accountNumber);
+        let targetIfsc = refund_ifsc_code !== undefined ? refund_ifsc_code : (bankDetails?.ifscCode);
+        let targetHolderName = refund_holder_name !== undefined ? refund_holder_name : (bankDetails?.holderName);
+
+        let cleanBankAcc = null;
+        let cleanIfscCode = null;
+        let cleanBankHolder = null;
+
+        if (targetBankAccount !== undefined || targetIfsc !== undefined || targetHolderName !== undefined) {
+            cleanBankAcc = targetBankAccount ? String(targetBankAccount).trim() : null;
+            cleanIfscCode = targetIfsc ? String(targetIfsc).trim().toUpperCase() : null;
+            cleanBankHolder = targetHolderName ? String(targetHolderName).trim() : null;
+
+            if (cleanBankAcc && !/^\d{9,18}$/.test(cleanBankAcc)) {
+                return res.status(400).json({ success: false, message: 'Bank account number must be between 9 and 18 digits' });
+            }
+            if (cleanIfscCode && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfscCode)) {
+                return res.status(400).json({ success: false, message: 'Invalid IFSC code format (must be 11 characters with 0 at 5th position)' });
+            }
+        }
+
         const result = await pool.query(`
             UPDATE public.users
             SET fullname = COALESCE($1, fullname),
                 contactno = COALESCE($2, contactno),
-                avatar_url = COALESCE($3, avatar_url)
-            WHERE username = $4
-            RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [cleanName, cleanPhone, avatar || null, username]);
+                avatar_url = COALESCE($3, avatar_url),
+                refund_bank_account = CASE WHEN $4::text IS NOT NULL THEN $4::text ELSE refund_bank_account END,
+                refund_ifsc_code = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE refund_ifsc_code END,
+                refund_holder_name = CASE WHEN $6::text IS NOT NULL THEN $6::text ELSE refund_holder_name END
+            WHERE username = $7
+            RETURNING username, emailid, fullname, contactno, avatar_url, member_since, refund_bank_account, refund_ifsc_code, refund_holder_name
+        `, [cleanName, cleanPhone, avatar || null, cleanBankAcc, cleanIfscCode, cleanBankHolder, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -227,7 +252,12 @@ exports.updateProfile = async (req, res) => {
             phone: row.contactno,
             avatar: row.avatar_url,
             memberSince: row.member_since,
-            twoFactorEnabled: true
+            twoFactorEnabled: true,
+            bankDetails: {
+                accountNumber: row.refund_bank_account || '',
+                ifscCode: row.refund_ifsc_code || '',
+                holderName: row.refund_holder_name || ''
+            }
         };
 
         res.json({ success: true, user: updatedUser });
@@ -254,7 +284,7 @@ exports.getProfile = async (req, res) => {
         const cleanUsername = String(username).trim();
 
         const userResult = await pool.query(`
-            SELECT username, emailid, fullname, contactno, avatar_url, member_since
+            SELECT username, emailid, fullname, contactno, avatar_url, member_since, refund_bank_account, refund_ifsc_code, refund_holder_name
             FROM public.users
             WHERE LOWER(username) = LOWER($1) OR LOWER(emailid) = LOWER($1)
         `, [cleanUsername]);
@@ -286,7 +316,12 @@ exports.getProfile = async (req, res) => {
                         phone: '',
                         avatar: '',
                         role: 'admin',
-                        memberSince: new Date().toISOString()
+                        memberSince: new Date().toISOString(),
+                        bankDetails: {
+                            accountNumber: '',
+                            ifscCode: '',
+                            holderName: ''
+                        }
                     },
                     addresses: [],
                     ordersSummary: []
@@ -303,7 +338,12 @@ exports.getProfile = async (req, res) => {
                         fullName: firstAddr.recipient_name || cleanUsername,
                         phone: firstAddr.phone || '',
                         avatar: '',
-                        memberSince: firstAddr.created_at
+                        memberSince: firstAddr.created_at,
+                        bankDetails: {
+                            accountNumber: '',
+                            ifscCode: '',
+                            holderName: ''
+                        }
                     },
                     addresses,
                     ordersSummary: []
@@ -318,7 +358,12 @@ exports.getProfile = async (req, res) => {
                     fullName: cleanUsername.includes('@') ? cleanUsername.split('@')[0] : cleanUsername,
                     phone: '',
                     avatar: '',
-                    memberSince: new Date().toISOString()
+                    memberSince: new Date().toISOString(),
+                    bankDetails: {
+                        accountNumber: '',
+                        ifscCode: '',
+                        holderName: ''
+                    }
                 },
                 addresses: [],
                 ordersSummary: []
@@ -332,7 +377,12 @@ exports.getProfile = async (req, res) => {
             fullName: userRow.fullname || userRow.username,
             phone: userRow.contactno || (addresses.length > 0 ? addresses[0].phone : '') || '',
             avatar: userRow.avatar_url || '',
-            memberSince: userRow.member_since
+            memberSince: userRow.member_since,
+            bankDetails: {
+                accountNumber: userRow.refund_bank_account || '',
+                ifscCode: userRow.refund_ifsc_code || '',
+                holderName: userRow.refund_holder_name || ''
+            }
         };
 
         let ordersSummary = [];

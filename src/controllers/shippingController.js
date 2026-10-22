@@ -299,16 +299,147 @@ exports.trackReturnParcel = async (req, res) => {
 
 // 15. Dispatch Replacement Item
 exports.dispatchReplacement = async (req, res) => {
+    const client = await pool.connect();
     try {
-        const { original_order, replacement_items } = req.body;
+        const { original_order, replacement_items, replacement_size } = req.body;
         if (!original_order) {
             return res.status(400).json({ success: false, message: 'original_order object is required.' });
         }
 
-        const result = await shiprocketService.dispatchReplacement(original_order, replacement_items);
-        return res.json(result);
+        const origId = original_order.id || original_order.order_number;
+        const origRes = await client.query(
+            `SELECT * FROM orders WHERE id::text = $1 OR order_number = $1`,
+            [String(origId)]
+        );
+        if (origRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Original order not found in database.' });
+        }
+        const dbOrigOrder = origRes.rows[0];
+
+        // Fetch original items
+        const origItemsRes = await client.query(
+            `SELECT * FROM order_items WHERE order_id = $1::uuid`,
+            [dbOrigOrder.id]
+        );
+        const dbOrigItems = origItemsRes.rows;
+
+        const chosenItems = (replacement_items && replacement_items.length > 0)
+            ? replacement_items
+            : dbOrigItems;
+
+        const targetSize = replacement_size || original_order.replacement_size || dbOrigOrder.replacement_size || 'M';
+
+        // Call shiprocket service for tracking/shipment
+        const shiprocketResult = await shiprocketService.dispatchReplacement(
+            { ...dbOrigOrder, ...original_order },
+            chosenItems
+        );
+
+        const repOrderNumber = shiprocketResult.order_number || `${dbOrigOrder.order_number}-REP`;
+        const repTracking = shiprocketResult.awb_code || `URV-REP-${Date.now().toString().slice(-8)}IN`;
+
+        await client.query('BEGIN');
+
+        // Check if replacement order already exists
+        const existingRepRes = await client.query(
+            `SELECT id, order_number FROM orders WHERE order_number = $1`,
+            [repOrderNumber]
+        );
+
+        let repOrderId;
+        if (existingRepRes.rows.length > 0) {
+            repOrderId = existingRepRes.rows[0].id;
+            await client.query(
+                `UPDATE orders 
+                 SET status = 'Confirmed',
+                     tracking_number = COALESCE(tracking_number, $1),
+                     updated_at = NOW()
+                 WHERE id = $2::uuid`,
+                [repTracking, repOrderId]
+            );
+        } else {
+            // INSERT replacement forward order into `orders`
+            const insertRepRes = await client.query(
+                `INSERT INTO orders (
+                    user_id, order_number, invoice_number, address_id,
+                    payment_method, payment_status, payment_type,
+                    subtotal, original_total, shipping, tax, discount_amount, total,
+                    status, tracking_number, return_type,
+                    original_order_number, original_order_id,
+                    created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4,
+                    'Exchange', 'Paid', 'Prepaid (Exchange)',
+                    0, 0, 0, 0, 0, 0,
+                    'Confirmed', $5, 'exchange',
+                    $6, $7,
+                    NOW(), NOW()
+                ) RETURNING id`,
+                [
+                    dbOrigOrder.user_id,
+                    repOrderNumber,
+                    `INV-${repOrderNumber}`,
+                    dbOrigOrder.address_id,
+                    repTracking,
+                    dbOrigOrder.order_number,
+                    dbOrigOrder.id
+                ]
+            );
+            repOrderId = insertRepRes.rows[0].id;
+
+            // INSERT items into `order_items` for replacement forward order
+            for (const it of chosenItems) {
+                const prodId = it.product_id || it.id || 1;
+                await client.query(
+                    `INSERT INTO order_items (
+                        order_id, product_id, name, price, quantity, image, size, status, created_at
+                    ) VALUES (
+                        $1::uuid, $2, $3, 0, $4, $5, $6, 'Confirmed', NOW()
+                    )`,
+                    [
+                        repOrderId,
+                        prodId,
+                        it.name || 'Replacement Piece',
+                        it.quantity || 1,
+                        it.image || null,
+                        targetSize
+                    ]
+                );
+            }
+        }
+
+        // Link on original order and update status to Replaced
+        await client.query(
+            `UPDATE orders 
+             SET status = 'Replaced',
+                 replacement_order_number = $1,
+                 replacement_order_id = $2::uuid,
+                 replacement_size = $3,
+                 updated_at = NOW()
+             WHERE id = $4::uuid`,
+            [repOrderNumber, repOrderId, targetSize, dbOrigOrder.id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            order_number: repOrderNumber,
+            replacement_order_number: repOrderNumber,
+            replacement_order_id: repOrderId,
+            original_order_id: dbOrigOrder.id,
+            shipment_id: shiprocketResult.shipment_id,
+            awb_code: repTracking,
+            courier_name: shiprocketResult.courier_name || 'Delhivery Express',
+            status: 'Replacement Processing',
+            message: `Replacement order #${repOrderNumber} generated and dispatched in size ${targetSize}.`
+        });
     } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[ShippingController] dispatchReplacement error:', err);
         return res.status(500).json({ success: false, message: err.message });
+    } finally {
+        client.release();
     }
 };
 

@@ -234,9 +234,24 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
     }
 
     if (search) {
-        whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx} OR sc.name ILIKE $${paramIdx} OR p.style_code ILIKE $${paramIdx} OR b.name ILIKE $${paramIdx} OR p.brand ILIKE $${paramIdx})`);
-        params.push(`%${search}%`);
-        paramIdx++;
+        const clean = search.toLowerCase().replace(/&/g, 'and').trim();
+        const rawTokens = clean.split(/\s+/).filter(Boolean);
+        const tokens = rawTokens.map(t => (t.endsWith('s') && t.length > 3 ? t.slice(0, -1) : t));
+
+        if (tokens.length > 1) {
+            const tokenClauses = tokens.map((_, i) => {
+                const idx = paramIdx + i;
+                return `(p.title ILIKE $${idx} OR p.description ILIKE $${idx} OR c.name ILIKE $${idx} OR sc.name ILIKE $${idx} OR p.style_code ILIKE $${idx} OR b.name ILIKE $${idx} OR p.brand ILIKE $${idx})`;
+            });
+            whereClauses.push(`(${tokenClauses.join(' AND ')} OR p.title ILIKE $${paramIdx + tokens.length} OR c.name ILIKE $${paramIdx + tokens.length})`);
+            tokens.forEach(t => params.push(`%${t}%`));
+            params.push(`%${search.trim()}%`);
+            paramIdx += tokens.length + 1;
+        } else {
+            whereClauses.push(`(p.title ILIKE $${paramIdx} OR p.description ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx} OR sc.name ILIKE $${paramIdx} OR p.style_code ILIKE $${paramIdx} OR b.name ILIKE $${paramIdx} OR p.brand ILIKE $${paramIdx})`);
+            params.push(`%${tokens[0] || search.trim()}%`);
+            paramIdx++;
+        }
     }
 
     if (category_id) {
