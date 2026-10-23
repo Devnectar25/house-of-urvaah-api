@@ -34,6 +34,41 @@ const normalizeOrderRow = (row) => {
             row.payment_status = 'Paid';
         }
     }
+
+    // Auto-normalize tax and total if tax is unrecorded or total does not reflect tax (matching UI checkout)
+    const sub = parseFloat(row.subtotal || row.original_total || 0);
+    const disc = parseFloat(row.discount_amount || 0);
+    const net = Math.max(0, sub - disc);
+    const ship = parseFloat(row.shipping || row.shipping_cost || 0);
+    let tax = parseFloat(row.tax || 0);
+    let taxRate = parseFloat(row.tax_rate) || 0;
+
+    if (tax <= 0 && net > 0) {
+        const rawTot = parseFloat(row.total || 0);
+        if (rawTot > net + ship) {
+            tax = Math.max(0, Math.round(rawTot - net - ship));
+            taxRate = taxRate || Math.round((tax / net) * 100);
+        } else {
+            taxRate = taxRate || (net > 2500 ? 18 : 5);
+            tax = Math.round(net * (taxRate / 100));
+        }
+        row.tax = tax;
+    }
+
+    if (!row.tax_rate) {
+        if (tax > 0 && net > 0) {
+            taxRate = Math.round((tax / net) * 100);
+        } else {
+            taxRate = net > 2500 ? 18 : 5;
+        }
+        row.tax_rate = taxRate;
+    }
+
+    const effectiveTot = net + tax + ship;
+    if (!row.total || parseFloat(row.total) <= net) {
+        row.total = effectiveTot;
+    }
+
     return row;
 };
 
@@ -64,6 +99,21 @@ pool.query(`
     }
 }).catch(err => {
     console.warn('[OrderService] Non-blocking online payment sync note:', err.message);
+});
+
+// Self-healing startup sync: Ensure all orders have proper GST tax and total matching UI checkout calculations
+pool.query(`
+    UPDATE orders 
+    SET tax = ROUND((COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) * (CASE WHEN (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) > 2500 THEN 0.18 ELSE 0.05 END)),
+        total = (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) + ROUND((COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) * (CASE WHEN (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) > 2500 THEN 0.18 ELSE 0.05 END)) + COALESCE(shipping, 0),
+        original_total = COALESCE(original_total, (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) + ROUND((COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) * (CASE WHEN (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) > 2500 THEN 0.18 ELSE 0.05 END)) + COALESCE(shipping, 0))
+    WHERE (tax = 0 OR tax IS NULL) AND (total <= subtotal OR total IS NULL) AND subtotal > 0
+`).then(res => {
+    if (res && res.rowCount > 0) {
+        console.log(`[OrderService] Synced ${res.rowCount} order(s) with missing GST tax & total calculation`);
+    }
+}).catch(err => {
+    console.warn('[OrderService] Non-blocking GST tax sync note:', err.message);
 });
 
 // Self-healing startup sync: Ensure all orders have an invoice_number formatted as HOU-YYYYMM<count>
