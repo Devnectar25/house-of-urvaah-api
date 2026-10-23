@@ -168,11 +168,8 @@ exports.toggleUserStatus = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
     try {
-        if (req.user?.role === 'admin') {
-            return res.status(403).json({ success: false, message: 'Admin accounts cannot update customer profile' });
-        }
         const { fullName, phone, avatar, bankDetails, refund_bank_account, refund_ifsc_code, refund_holder_name } = req.body;
-        const username = req.user.id;
+        const username = req.user?.id || req.user?.username || req.user?.emailid || req.user?.email;
 
         if (!username) {
             return res.status(401).json({ success: false, message: 'User not identified' });
@@ -228,6 +225,8 @@ exports.updateProfile = async (req, res) => {
             }
         }
 
+        const userEmail = String(req.user?.email || req.user?.emailid || '').trim();
+
         const result = await pool.query(`
             UPDATE public.users
             SET fullname = COALESCE($1, fullname),
@@ -236,9 +235,11 @@ exports.updateProfile = async (req, res) => {
                 refund_bank_account = CASE WHEN $4::text IS NOT NULL THEN $4::text ELSE refund_bank_account END,
                 refund_ifsc_code = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE refund_ifsc_code END,
                 refund_holder_name = CASE WHEN $6::text IS NOT NULL THEN $6::text ELSE refund_holder_name END
-            WHERE username = $7
+            WHERE LOWER(username) = LOWER($7) 
+               OR LOWER(emailid) = LOWER($7)
+               OR (LOWER($8) != '' AND (LOWER(username) = LOWER($8) OR LOWER(emailid) = LOWER($8)))
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since, refund_bank_account, refund_ifsc_code, refund_holder_name
-        `, [cleanName, cleanPhone, avatar || null, cleanBankAcc, cleanIfscCode, cleanBankHolder, username]);
+        `, [cleanName, cleanPhone, avatar || null, cleanBankAcc, cleanIfscCode, cleanBankHolder, username, userEmail]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -272,7 +273,7 @@ exports.getProfile = async (req, res) => {
         let username;
         // If caller is an admin, look for username / email / userId in query parameters
         if (req.user?.role === 'admin') {
-            username = req.query.username || req.query.userId || req.query.email || req.user?.username || req.user?.email || 'admin';
+            username = req.query.username || req.query.userId || req.query.email || req.user?.email || req.user?.username || req.user?.id || 'admin';
         } else {
             username = req.user?.id || req.user?.username || req.user?.email;
         }
@@ -282,12 +283,15 @@ exports.getProfile = async (req, res) => {
         }
 
         const cleanUsername = String(username).trim();
+        const altEmail = String(req.user?.email || req.user?.emailid || '').trim();
 
         const userResult = await pool.query(`
             SELECT username, emailid, fullname, contactno, avatar_url, member_since, refund_bank_account, refund_ifsc_code, refund_holder_name
             FROM public.users
-            WHERE LOWER(username) = LOWER($1) OR LOWER(emailid) = LOWER($1)
-        `, [cleanUsername]);
+            WHERE LOWER(username) = LOWER($1) 
+               OR LOWER(emailid) = LOWER($1)
+               OR (LOWER($2) != '' AND (LOWER(username) = LOWER($2) OR LOWER(emailid) = LOWER($2)))
+        `, [cleanUsername, altEmail]);
 
         let userRow = userResult.rows[0];
 

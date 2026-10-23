@@ -29,6 +29,7 @@ exports.getCart = async (userId) => {
             c.id,
             c.product_id,
             c.quantity,
+            COALESCE(c.size, 'M') AS size,
             COALESCE(p.title, '') AS name,
             p.price,
             COALESCE(p.image_url, '') AS image,
@@ -48,26 +49,31 @@ exports.getCart = async (userId) => {
          WHERE c.user_id = $1`,
         [userId]
     );
-    return result.rows.map(item => ({
-        ...item,
-        id: item.product_id.toString(),
-        productId: item.product_id.toString(),
-        cartItemId: item.id,
-        name: item.name,
-        brand: item.brand_name || 'House of Urvaah',
-        category: item.category_name || 'Uncategorized',
-        price: parseFloat(item.price || 0),
-        originalPrice: parseFloat(item.originalprice || item.price || 0),
-        discount: 0,
-        category_id: item.category_id ?? null,
-        brand_id: item.brand_id ?? null,
-        stockQuantity: item.stock_quantity !== null && item.stock_quantity !== undefined ? parseInt(item.stock_quantity, 10) : null,
-        sizeStock: item.size_stock || {},
-        inStock: item.instock ?? true
-    }));
+    return result.rows.map(item => {
+        const itemSize = (item.size || 'M').trim().toUpperCase();
+        return {
+            ...item,
+            id: item.product_id.toString(),
+            productId: item.product_id.toString(),
+            cartItemId: item.id,
+            selectedSize: itemSize,
+            size: itemSize,
+            name: item.name,
+            brand: item.brand_name || 'House of Urvaah',
+            category: item.category_name || 'Uncategorized',
+            price: parseFloat(item.price || 0),
+            originalPrice: parseFloat(item.originalprice || item.price || 0),
+            discount: 0,
+            category_id: item.category_id ?? null,
+            brand_id: item.brand_id ?? null,
+            stockQuantity: item.stock_quantity !== null && item.stock_quantity !== undefined ? parseInt(item.stock_quantity, 10) : null,
+            sizeStock: item.size_stock || {},
+            inStock: item.instock ?? true
+        };
+    });
 };
 
-exports.addToCart = async (userId, productId, quantity = 1, setMode = false) => {
+exports.addToCart = async (userId, productId, quantity = 1, setMode = false, size = 'M') => {
     const numProductId = cleanId(productId);
     if (!userId || !numProductId) return null;
 
@@ -77,47 +83,89 @@ exports.addToCart = async (userId, productId, quantity = 1, setMode = false) => 
         return null;
     }
 
+    const cleanSize = (size ? String(size).trim().toUpperCase() : 'M');
+
+    // Strict validation: check product existence and size stock
+    const prodRes = await pool.query(
+        `SELECT product_id, title, is_active, stock_quantity, size_stock FROM products WHERE product_id = $1 LIMIT 1`,
+        [numProductId]
+    );
+    if (prodRes.rows.length === 0) return null;
+    const prod = prodRes.rows[0];
+
+    if (prod.is_active === false) {
+        throw new Error(`Product "${prod.title || 'Product'}" is currently unavailable.`);
+    }
+
+    const sizeStock = prod.size_stock || {};
+    let sizeLimit = null;
+    if (sizeStock && typeof sizeStock === 'object' && Object.keys(sizeStock).length > 0) {
+        const matchK = Object.keys(sizeStock).find(k => k.trim().toUpperCase() === cleanSize);
+        if (matchK !== undefined) {
+            sizeLimit = Math.max(0, parseInt(sizeStock[matchK], 10) || 0);
+            if (sizeLimit <= 0) {
+                throw new Error(`Size "${cleanSize}" for "${prod.title || 'Product'}" is out of stock.`);
+            }
+        }
+    }
+
+    const maxStock = sizeLimit !== null ? sizeLimit : (prod.stock_quantity !== null && prod.stock_quantity !== undefined ? parseInt(prod.stock_quantity, 10) : 99);
+    if (maxStock <= 0) {
+        throw new Error(`"${prod.title || 'Product'}" is out of stock.`);
+    }
+
     const result = await pool.query(
-        `INSERT INTO cart (user_id, product_id, quantity, created_at)
-         SELECT $1, $2, $3, NOW()
-         FROM products p WHERE p.product_id = $2
-         ON CONFLICT (user_id, product_id)
+        `INSERT INTO cart (user_id, product_id, size, quantity, created_at)
+         VALUES ($1, $2, $3, LEAST($4, $5), NOW())
+         ON CONFLICT (user_id, product_id, size)
          DO UPDATE SET 
-            quantity = CASE WHEN $4 THEN EXCLUDED.quantity ELSE LEAST(cart.quantity + EXCLUDED.quantity, COALESCE((SELECT p2.stock_quantity FROM products p2 WHERE p2.product_id = cart.product_id), 99)) END
+            quantity = CASE WHEN $6 THEN EXCLUDED.quantity ELSE LEAST(cart.quantity + EXCLUDED.quantity, $5) END
          RETURNING *`,
-        [userId, numProductId, quantity || 1, setMode]
+        [userId, numProductId, cleanSize, quantity || 1, maxStock, setMode]
     );
     return result.rows[0];
 };
 
-exports.updateQuantity = async (userId, productId, quantity) => {
+exports.updateQuantity = async (userId, productId, quantity, size = null) => {
     const numProductId = cleanId(productId);
     if (!userId || !numProductId) return null;
 
     if (quantity <= 0) {
-        return exports.removeFromCart(userId, productId);
+        return exports.removeFromCart(userId, productId, size);
     }
 
-    const result = await pool.query(
-        `UPDATE cart
+    const cleanSize = size ? String(size).trim().toUpperCase() : null;
+
+    let query = `UPDATE cart
          SET quantity = LEAST($3, COALESCE((SELECT stock_quantity FROM products WHERE product_id = $2), $3))
-         WHERE user_id = $1 AND product_id = $2
-         RETURNING *`,
-        [userId, numProductId, quantity]
-    );
+         WHERE user_id = $1 AND product_id = $2`;
+    const params = [userId, numProductId, quantity];
+    if (cleanSize) {
+        query += ` AND UPPER(TRIM(size)) = $4 RETURNING *`;
+        params.push(cleanSize);
+    } else {
+        query += ` RETURNING *`;
+    }
+
+    const result = await pool.query(query, params);
     return result.rows[0];
 };
 
-exports.removeFromCart = async (userId, productId) => {
+exports.removeFromCart = async (userId, productId, size = null) => {
     const numProductId = cleanId(productId);
     if (!userId || !numProductId) return null;
 
-    const result = await pool.query(
-        `DELETE FROM cart
-         WHERE user_id = $1 AND product_id = $2
-         RETURNING *`,
-        [userId, numProductId]
-    );
+    const cleanSize = size ? String(size).trim().toUpperCase() : null;
+    let query = `DELETE FROM cart WHERE user_id = $1 AND product_id = $2`;
+    const params = [userId, numProductId];
+    if (cleanSize) {
+        query += ` AND UPPER(TRIM(size)) = $3 RETURNING *`;
+        params.push(cleanSize);
+    } else {
+        query += ` RETURNING *`;
+    }
+
+    const result = await pool.query(query, params);
     return result.rows[0];
 };
 
@@ -141,17 +189,36 @@ exports.syncCart = async (userId, localItems) => {
     for (const item of localItems) {
         const pId = cleanId(item.id || item.productId || item.product?.id);
         if (!pId) continue;
+        const cleanSize = (item.selectedSize || item.size || 'M').trim().toUpperCase();
         const qty = item.quantity || 1;
 
+        const pRes = await pool.query(
+            `SELECT stock_quantity, size_stock, is_active FROM products WHERE product_id = $1`,
+            [pId]
+        );
+        if (pRes.rows.length === 0 || pRes.rows[0].is_active === false) continue;
+        const prod = pRes.rows[0];
+        const sStock = prod.size_stock || {};
+        let sLimit = null;
+        if (sStock && typeof sStock === 'object' && Object.keys(sStock).length > 0) {
+            const mK = Object.keys(sStock).find(k => k.trim().toUpperCase() === cleanSize);
+            if (mK !== undefined) {
+                sLimit = Math.max(0, parseInt(sStock[mK], 10) || 0);
+                if (sLimit <= 0) continue; // Skip out of stock size
+            }
+        }
+        const maxStock = sLimit !== null ? sLimit : (prod.stock_quantity ?? 99);
+        if (maxStock <= 0) continue;
+
         await pool.query(
-            `INSERT INTO cart (user_id, product_id, quantity, created_at)
-             SELECT $1, $2, LEAST($3, COALESCE(p.stock_quantity, $3)), NOW()
-             FROM products p WHERE p.product_id = $2
-             ON CONFLICT (user_id, product_id)
+            `INSERT INTO cart (user_id, product_id, size, quantity, created_at)
+             VALUES ($1, $2, $3, LEAST($4, $5), NOW())
+             ON CONFLICT (user_id, product_id, size)
              DO UPDATE SET 
-                quantity = LEAST(EXCLUDED.quantity, COALESCE((SELECT stock_quantity FROM products WHERE product_id = cart.product_id), EXCLUDED.quantity))`,
-            [userId, pId, qty]
+                quantity = LEAST(EXCLUDED.quantity, $5)`,
+            [userId, pId, cleanSize, qty, maxStock]
         );
     }
 };
+
 
