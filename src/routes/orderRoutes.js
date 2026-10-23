@@ -15,6 +15,8 @@ router.get('/:id', orderController.getOrderById);
 router.get('/:id/invoice', orderController.downloadInvoice);
 router.put('/:id/address', orderController.updateOrderShippingAddress);
 router.patch('/:id/address', orderController.updateOrderShippingAddress);
+router.put('/:id/bank-details', orderController.updateOrderBankDetails);
+router.patch('/:id/bank-details', orderController.updateOrderBankDetails);
 router.post('/:id/reorder', orderController.reorderOrder);
 router.patch('/:id/status', orderController.updateOrderStatus);
 router.patch('/:id/items/:itemId/status', authorize('admin'), checkPermission('orders'), orderController.updateOrderItemStatus);

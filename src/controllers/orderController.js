@@ -148,12 +148,72 @@ exports.updateOrderStatus = async (req, res) => {
         const order = await orderService.getOrderById(id);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
-        // Security check
+        // Security check: ONLY admins can approve returns, approve replacements, or advance post-delivery lifecycles!
         const isAdmin = req.user?.role === 'admin';
         const isOwner = order.user_id == req.user?.id || order.user_id == req.user?.username || order.user_id == req.user?.emailid || order.customer_email == req.user?.emailid;
 
+        const targetStatusLower = String(status || '').trim().toLowerCase();
+        const adminOnlyStatuses = [
+            'return approved',
+            'replace approved',
+            'return & replacement approved',
+            'in transit to house of urvaah',
+            'return collected',
+            'received at house of urvaah',
+            'received at homved',
+            'return qc rejected',
+            'return rejected',
+            'replace rejected',
+            'returned',
+            'replaced',
+            'returned & replaced',
+            'shipped',
+            'dispatched',
+            'out for delivery',
+            'delivered',
+            'refunded',
+            'restored',
+            'cancellation rejected'
+        ];
+
         let targetStatus = status;
+
+        // Post-Delivery Cancellation Guard: Neither admin nor customer can cancel after delivery
+        const currentStatusLower = (order.status || '').toLowerCase().trim();
+        const origStatusLower = (order.original_status || '').toLowerCase().trim();
+        const isPostDeliveryOrder = (
+            currentStatusLower === 'delivered' ||
+            currentStatusLower === 'replacement delivered' ||
+            origStatusLower === 'delivered' ||
+            origStatusLower === 'replacement delivered' ||
+            Boolean(order.delivered_at) ||
+            Boolean(order.is_product_received) ||
+            currentStatusLower.includes('return') ||
+            currentStatusLower.includes('replace') ||
+            currentStatusLower.includes('exchange')
+        );
+
+        const isCancelAction = (
+            targetStatusLower === 'cancelled' ||
+            targetStatusLower === 'cancellation requested' ||
+            targetStatusLower === 'cancel_requested' ||
+            targetStatusLower === 'cancellation rejected'
+        );
+
+        if (isPostDeliveryOrder && isCancelAction) {
+            return res.status(400).json({
+                success: false,
+                message: 'Delivered orders cannot be cancelled. Once delivered, only return or replacement can be processed.'
+            });
+        }
+
         if (!isAdmin) {
+            if (adminOnlyStatuses.includes(targetStatusLower)) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only administrators have permission to approve return requests or advance logistics statuses.'
+                });
+            }
             if (!isOwner) {
                 return res.status(403).json({ success: false, message: 'Not authorized' });
             }
@@ -484,6 +544,28 @@ exports.updateOrderShippingAddress = async (req, res) => {
         res.status(error.status || 400).json({
             success: false,
             message: error.message || 'Failed to update shipping address'
+        });
+    }
+};
+
+exports.updateOrderBankDetails = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const bankData = req.body;
+        const isAdmin = req.user?.role === 'admin';
+        const userOrId = req.user;
+
+        const updatedOrder = await orderService.updateOrderBankDetails(id, userOrId, bankData, isAdmin);
+        res.status(200).json({
+            success: true,
+            message: 'Bank details updated successfully',
+            data: updatedOrder
+        });
+    } catch (error) {
+        console.error('[updateOrderBankDetails] Error:', error);
+        res.status(error.status || 400).json({
+            success: false,
+            message: error.message || 'Failed to update bank details'
         });
     }
 };

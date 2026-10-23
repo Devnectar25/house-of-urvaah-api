@@ -290,10 +290,12 @@ exports.cancelShipment = async (req, res) => {
                      shipment_status = 'Cancelled',
                      cancelled_at = COALESCE(cancelled_at, NOW()),
                      updated_at = NOW()
-                 WHERE shipment_id = ANY($1::text[]) 
+                 WHERE (shipment_id = ANY($1::text[]) 
                     OR tracking_number = ANY($1::text[]) 
                     OR order_number = ANY($1::text[]) 
-                    OR id::text = ANY($1::text[])`,
+                    OR id::text = ANY($1::text[]))
+                   AND LOWER(COALESCE(status, '')) NOT IN ('delivered', 'replacement delivered')
+                   AND delivered_at IS NULL`,
                 [idList.map(String)]
             );
             console.log(`[ShippingController] Synced cancellation in DB for:`, idList);
@@ -461,6 +463,14 @@ exports.dispatchReplacement = async (req, res) => {
         }
         const dbOrigOrder = origRes.rows[0];
 
+        // Guard: Prevent recursive replacement from an already-generated replacement forward order
+        if (dbOrigOrder.original_order_number || String(dbOrigOrder.order_number).includes('-REP')) {
+            return res.status(400).json({
+                success: false,
+                message: `Order #${dbOrigOrder.order_number} is already a forward replacement shipment. It cannot generate another replacement order.`
+            });
+        }
+
         // Fetch original items
         const origItemsRes = await client.query(
             `SELECT * FROM order_items WHERE order_id = $1::uuid`,
@@ -497,13 +507,14 @@ exports.dispatchReplacement = async (req, res) => {
             await client.query(
                 `UPDATE orders 
                  SET status = 'Confirmed',
+                     return_type = NULL,
                      tracking_number = COALESCE(tracking_number, $1),
                      updated_at = NOW()
                  WHERE id = $2::uuid`,
                 [repTracking, repOrderId]
             );
         } else {
-            // INSERT replacement forward order into `orders`
+            // INSERT replacement forward order into `orders` with return_type = NULL
             const insertRepRes = await client.query(
                 `INSERT INTO orders (
                     user_id, order_number, invoice_number, address_id,
@@ -516,7 +527,7 @@ exports.dispatchReplacement = async (req, res) => {
                     $1, $2, $3, $4,
                     'Exchange', 'Paid', 'Prepaid (Exchange)',
                     0, 0, 0, 0, 0, 0,
-                    'Confirmed', $5, 'exchange',
+                    'Confirmed', $5, NULL,
                     $6, $7,
                     NOW(), NOW()
                 ) RETURNING id`,

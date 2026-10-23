@@ -28,7 +28,15 @@ const formatUserResponse = (row) => {
         phone: row.phone || row.contactno || '',
         memberSince: row.member_since || row.createdate,
         isVerified: row.is_verified ?? true,
-        avatar: row.avatar_url || ''
+        avatar: row.avatar_url || '',
+        bankDetails: {
+            accountNumber: row.refund_bank_account || '',
+            ifscCode: row.refund_ifsc_code || '',
+            holderName: row.refund_holder_name || ''
+        },
+        refund_bank_account: row.refund_bank_account || '',
+        refund_ifsc_code: row.refund_ifsc_code || '',
+        refund_holder_name: row.refund_holder_name || ''
     };
 };
 
