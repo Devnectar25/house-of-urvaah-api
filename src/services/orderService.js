@@ -1652,9 +1652,35 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         validBank?.accountNumber || null,
                         validBank?.ifscCode || null,
                         validBank?.holderName || null,
-                        paymentStatus || null
+                        paymentStatus || null,
+                        isEligibleForRefund
                     ]
                 );
+
+                // Permanently persist bank details to user profile
+                if (validBank?.accountNumber) {
+                    try {
+                        const targetUid = oldOrder.user_id || '';
+                        if (targetUid) {
+                            await client.query(`
+                                UPDATE public.users
+                                SET refund_bank_account = COALESCE($1, refund_bank_account),
+                                    refund_ifsc_code = COALESCE($2, refund_ifsc_code),
+                                    refund_holder_name = COALESCE($3, refund_holder_name)
+                                WHERE LOWER(username) = LOWER($4) 
+                                   OR LOWER(emailid) = LOWER($4)
+                            `, [
+                                validBank.accountNumber,
+                                validBank.ifscCode,
+                                validBank.holderName,
+                                String(targetUid).trim()
+                            ]);
+                        }
+                    } catch (err) {
+                        console.warn('Could not auto-save bank details to users profile on cancellation:', err.message);
+                    }
+                }
+
                 await client.query('COMMIT');
                 return await exports.getOrderById(orderId);
             } else {
@@ -1744,6 +1770,30 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         isEligibleForRefund                                                         // $11
                     ]
                 );
+
+                // Permanently persist bank details to user profile
+                if (validBank?.accountNumber) {
+                    try {
+                        const targetUid = oldOrder.user_id || '';
+                        if (targetUid) {
+                            await client.query(`
+                                UPDATE public.users
+                                SET refund_bank_account = COALESCE($1, refund_bank_account),
+                                    refund_ifsc_code = COALESCE($2, refund_ifsc_code),
+                                    refund_holder_name = COALESCE($3, refund_holder_name)
+                                WHERE LOWER(username) = LOWER($4) 
+                                   OR LOWER(emailid) = LOWER($4)
+                            `, [
+                                validBank.accountNumber,
+                                validBank.ifscCode,
+                                validBank.holderName,
+                                String(targetUid).trim()
+                            ]);
+                        }
+                    } catch (err) {
+                        console.warn('Could not auto-save bank details to users profile on partial cancellation:', err.message);
+                    }
+                }
 
                 await client.query('COMMIT');
                 return await exports.getOrderById(orderId);
@@ -1938,12 +1988,58 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 console.warn('[OrderService] Could not sync items to Replacement Request Processing:', itemReplaceErr.message);
             }
         } else if (status === 'Return Rejected' || status === 'Return & Replacement Rejected' || status === 'Replace Rejected') {
+            // Replacement Cancellation Guard: admin can ONLY cancel / reject the request UNTIL it is shipped
+            const isReplacementFlow = (
+                (oldOrder.return_type || '').toLowerCase().includes('replace') ||
+                (oldOrder.return_type || '').toLowerCase().includes('exchange') ||
+                Boolean(oldOrder.replacement_size) ||
+                Boolean(oldOrder.replacement_order_number) ||
+                Boolean(oldOrder.original_order_number) ||
+                (oldOrder.order_number || '').includes('-REP') ||
+                oldStatusLower.includes('replace') ||
+                oldStatusLower.includes('exchange')
+            );
+
+            let isReplacementShipped = (
+                oldStatusLower === 'replacement shipped' ||
+                oldStatusLower === 'replacement out for delivery' ||
+                oldStatusLower === 'replacement delivered' ||
+                (oldStatusLower === 'replaced' && Boolean(oldOrder.tracking_number || oldOrder.replacement_order_number))
+            );
+
+            if (!isReplacementShipped && oldOrder.replacement_order_number) {
+                try {
+                    const repCheck = await client.query(
+                        `SELECT status, tracking_number FROM orders WHERE order_number = $1 OR id::text = $2 LIMIT 1`,
+                        [oldOrder.replacement_order_number, oldOrder.replacement_order_id ? String(oldOrder.replacement_order_id) : '']
+                    );
+                    if (repCheck.rows.length > 0) {
+                        const repStatus = (repCheck.rows[0].status || '').toLowerCase();
+                        const hasRepAwb = Boolean(repCheck.rows[0].tracking_number);
+                        if (['shipped', 'in transit', 'out for delivery', 'delivered', 'replacement shipped'].includes(repStatus) || hasRepAwb) {
+                            isReplacementShipped = true;
+                        }
+                    }
+                } catch (repErr) {
+                    console.warn('[OrderService] Could not check replacement status in DB:', repErr.message);
+                }
+            }
+
+            if (isReplacementFlow && isReplacementShipped) {
+                throw new Error('Replacement piece has already been shipped. The replacement request cannot be cancelled or rejected after dispatch.');
+            }
+
             console.log(`[OrderService] Return/Replacement rejected for order ${orderId}. Restoring to Delivered.`);
             updateQuery = `UPDATE orders SET 
                            status = 'Delivered', 
                            rejection_reason = $2::text,
                            return_rejection_reason = $2::text,
+                           cancel_reason = $2::text,
                            logistics_status = 'Delivered',
+                           is_returned_order = FALSE,
+                           refund_status = 'Cancelled',
+                           refund_eligible_amount = 0,
+                           return_qc_status = 'Rejected',
                            updated_at = NOW() 
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [orderId, cancelReason || 'Request rejected by Admin'];
@@ -2011,6 +2107,14 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     await client.query(`UPDATE order_items SET status = 'In Transit to House of Urvaah' WHERE order_id = $1::uuid AND (return_action IN ('Return', 'Replace') OR status ILIKE '%Approved%')`, [orderId]);
                 } else if (status === 'Received at House of Urvaah') {
                     await client.query(`UPDATE order_items SET status = 'Received at House of Urvaah' WHERE order_id = $1::uuid AND (return_action IN ('Return', 'Replace') OR status ILIKE '%Transit%' OR status ILIKE '%Approved%')`, [orderId]);
+                } else if (isQCRejected || effectiveQcStatus === 'Rejected') {
+                    await client.query(
+                        `UPDATE order_items 
+                         SET status = 'Return QC Rejected',
+                             cancel_reason = $2::text
+                         WHERE order_id = $1::uuid AND (return_action IN ('Return', 'Replace') OR status ILIKE '%Return%' OR status ILIKE '%Transit%' OR status ILIKE '%Received%')`,
+                        [orderId, cancelReason || 'Return QC Rejected by Atelier QC']
+                    );
                 }
             } catch (syncItemErr) {
                 console.warn('[OrderService] Could not sync items during status update:', syncItemErr.message);
@@ -2194,7 +2298,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
                         [orderId]
                     );
-                } else if (status === 'Return QC Rejected' || status === 'Return Rejected') {
+                } else if (status === 'Return QC Rejected') {
                     await client.query(
                         `UPDATE order_items 
                          SET status = 'Return QC Rejected',
@@ -2613,17 +2717,33 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         let finalTxnId = txnId;
 
+        if (transitioningToFinal) {
+            const effectiveBank = validBank?.accountNumber || oldOrder.refund_bank_account;
+            const hasExplicitTxn = Boolean(txnId && txnId.trim() && !txnId.startsWith('RFND-MANUAL') && !txnId.startsWith('rfnd_mock_'));
+            if (!effectiveBank && !hasExplicitTxn) {
+                throw new Error('Cannot mark refund as Completed: Customer bank details are missing. Please enter customer bank account details or enter a valid bank transfer UTR number.');
+            }
+        }
+
         if (isOnline && transitioningToFinal) {
             const isManualRequested = refundData.refundMethod === 'manual' || refundData.forceManual === true || refundData.isManual === true;
             const hasRazorpay = !!oldOrder.razorpay_payment_id;
             const wantsAutoRefund = !isManualRequested && (!txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay');
+            const effectiveBank = validBank?.accountNumber || oldOrder.refund_bank_account;
+            const hasExplicitTxn = Boolean(txnId && txnId.trim() && !txnId.startsWith('RFND-MANUAL') && !txnId.startsWith('rfnd_mock_'));
 
             if (isManualRequested) {
+                if (!effectiveBank && !hasExplicitTxn) {
+                    throw new Error('Cannot mark refund as Completed: Customer bank details are missing. Please enter customer bank account details or enter a valid bank transfer UTR number.');
+                }
                 finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                 console.log(`[RefundDesk] Manual refund recorded for order ${orderId}: ${finalTxnId}`);
             } else if (wantsAutoRefund && !hasRazorpay) {
+                if (!effectiveBank && !hasExplicitTxn) {
+                    throw new Error('Cannot mark refund as Completed: No Razorpay payment ID and customer bank details are missing. Please enter customer bank account details or enter a valid bank transfer UTR number.');
+                }
                 // Fallback to manual transaction ID if no Razorpay payment ID is associated
-                finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                 console.log(`[RefundDesk] No Razorpay payment ID associated with online order. Defaulting to manual transaction ID: ${finalTxnId}`);
             } else if (wantsAutoRefund) {
                 if (refundAmount > 0) {
@@ -2635,6 +2755,9 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                             console.log(`[RefundDesk] Razorpay refund initiated: ${finalTxnId}`);
                         } else {
                             // Razorpay not configured — treat as manual (admin will enter txn ID)
+                            if (!effectiveBank && !hasExplicitTxn) {
+                                throw new Error('Razorpay automated refund is not configured, and customer bank details are missing. Please enter customer bank account details or enter the UTR reference.');
+                            }
                             finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                             console.warn('[RefundDesk] Razorpay not configured, proceeding as manual refund.');
                         }
@@ -2644,6 +2767,9 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
                         // If admin permitted manual fallback OR non-production / credential error, fallback gracefully
                         if (refundData.allowManualFallback !== false || errMsg.includes('Authentication failed') || process.env.NODE_ENV !== 'production') {
+                            if (!effectiveBank && !hasExplicitTxn) {
+                                throw new Error(`Razorpay refund failed (${errMsg}), and customer bank details are missing. Please enter customer bank details or enter a transfer UTR number.`);
+                            }
                             finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                             console.warn(`[RefundDesk] Automated Razorpay refund failed (${errMsg}). Gracefully defaulting to manual reference: ${finalTxnId}`);
                         } else {
@@ -2652,11 +2778,21 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                         }
                     }
                 } else {
-                    finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                    finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
                 }
             } else if (!txnId) {
+                if (!effectiveBank && !hasExplicitTxn) {
+                    throw new Error('Cannot mark refund as Completed: Customer bank details are missing. Please enter customer bank account details or enter a valid bank transfer UTR number.');
+                }
                 finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             }
+        } else if (isCodOrder && transitioningToFinal) {
+            const effectiveBank = validBank?.accountNumber || oldOrder.refund_bank_account;
+            const hasExplicitTxn = Boolean(txnId && txnId.trim() && !txnId.startsWith('RFND-MANUAL') && !txnId.startsWith('rfnd_mock_'));
+            if (!effectiveBank && !hasExplicitTxn) {
+                throw new Error('Cannot mark COD refund as Completed: Customer bank details are missing. Please enter customer bank account details or enter a valid bank transfer UTR number.');
+            }
+            finalTxnId = txnId || 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
         }
 
         // Whitelist valid refund statuses
@@ -2827,6 +2963,30 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             }).catch(emailErr => {
                 console.error(`[OrderService] Refund notification email trigger failed for ${orderId}:`, emailErr.message);
             });
+        }
+
+        // Permanently persist bank details to user profile so the customer never has to re-enter them
+        if (validBank?.accountNumber) {
+            try {
+                const targetUid = oldOrder.user_id || '';
+                if (targetUid) {
+                    await client.query(`
+                        UPDATE public.users
+                        SET refund_bank_account = COALESCE($1, refund_bank_account),
+                            refund_ifsc_code = COALESCE($2, refund_ifsc_code),
+                            refund_holder_name = COALESCE($3, refund_holder_name)
+                        WHERE LOWER(username) = LOWER($4) 
+                           OR LOWER(emailid) = LOWER($4)
+                    `, [
+                        validBank.accountNumber,
+                        validBank.ifscCode,
+                        validBank.holderName,
+                        String(targetUid).trim()
+                    ]);
+                }
+            } catch (err) {
+                console.warn('Could not auto-save bank details to users profile on refund update:', err.message);
+            }
         }
 
         await client.query('COMMIT');
@@ -3107,9 +3267,9 @@ exports.getRefundPaymentDetails = async (orderId) => {
         refund_admin_note: ord.refund_admin_note || null,
         payout_bank_account: ord.refund_bank_account
             ? (String(ord.refund_bank_account).startsWith('*') ? String(ord.refund_bank_account) : `******${String(ord.refund_bank_account).slice(-4)}`)
-            : (method.includes('card') ? cardMasked : null),
-        raw_payout_bank_account: ord.refund_bank_account || (method.includes('card') ? cardFormatted : null),
-        payout_ifsc_code: ord.refund_ifsc_code ? String(ord.refund_ifsc_code).toUpperCase() : (method.includes('card') ? 'CARD-ONLINE' : null),
+            : null,
+        raw_payout_bank_account: ord.refund_bank_account || null,
+        payout_ifsc_code: ord.refund_ifsc_code ? String(ord.refund_ifsc_code).toUpperCase() : null,
         payout_holder_name: ord.refund_holder_name || ord.customer_name || null,
         payout_phone_number: ord.refund_phone_number ? (String(ord.refund_phone_number).startsWith('*') ? String(ord.refund_phone_number) : `****${String(ord.refund_phone_number).slice(-4)}`) : null,
         raw_payout_phone: ord.refund_phone_number || null,

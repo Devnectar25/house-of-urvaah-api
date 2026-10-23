@@ -41,12 +41,15 @@ exports.uploadVideoMiddleware = multer({
     storage: diskStorage,
     limits: { fileSize: 250 * 1024 * 1024 }, // Increased to 250MB to be safe
     fileFilter: (req, file, cb) => {
-        // Now that bucket is fixed, we can be lenient but specific
-        if (file.mimetype.startsWith('video/') || 
-            ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'].includes(file.mimetype)) {
+        const isVideoMime = file.mimetype && (
+            file.mimetype.startsWith('video/') || 
+            ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'application/octet-stream'].includes(file.mimetype)
+        );
+        const isVideoExt = file.originalname && Boolean(file.originalname.match(/\.(mp4|webm|mov|m4v|ogg|mkv|avi)$/i));
+        if (isVideoMime || isVideoExt) {
             cb(null, true);
         } else {
-            cb(new Error('Invalid file type. Please upload a supported video format.'));
+            cb(new Error('Invalid file type. Please upload a supported video format (MP4, WebM, QuickTime, MOV, M4V).'));
         }
     }
 }).single('video');

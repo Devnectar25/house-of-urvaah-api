@@ -58,13 +58,23 @@ exports.uploadFromFile = async (filePath, destinationPath, contentType) => {
 
 exports.uploadBuffer = async (buffer, filePath, contentType = 'application/pdf') => {
     try {
-        const fileExt = filePath.split('.').pop();
-        const finalPath = filePath.includes('.') ? filePath : `${filePath}.${contentType.split('/')[1] || 'bin'}`;
+        const fileExt = filePath.split('.').pop()?.toLowerCase();
+        let finalContentType = contentType;
+        if (!finalContentType || finalContentType === 'application/octet-stream' || finalContentType === 'application/pdf') {
+            if (fileExt === 'mp4' || fileExt === 'm4v') finalContentType = 'video/mp4';
+            else if (fileExt === 'webm') finalContentType = 'video/webm';
+            else if (fileExt === 'mov') finalContentType = 'video/quicktime';
+            else if (fileExt === 'ogg') finalContentType = 'video/ogg';
+            else if (fileExt === 'jpg' || fileExt === 'jpeg') finalContentType = 'image/jpeg';
+            else if (fileExt === 'png') finalContentType = 'image/png';
+            else if (fileExt === 'webp') finalContentType = 'image/webp';
+        }
+        const finalPath = filePath.includes('.') ? filePath : `${filePath}.${finalContentType.split('/')[1] || 'bin'}`;
 
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(finalPath, buffer, {
-                contentType,
+                contentType: finalContentType,
                 upsert: true
             });
 
