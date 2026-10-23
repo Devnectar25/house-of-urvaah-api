@@ -7,13 +7,13 @@ const { filterValidSizes } = require("../utils/sizeValidator");
 const resolveDbProductId = (id) => {
     if (!id && id !== 0) return id;
     const s = String(id).trim();
-    if (s === '101' || s === 'bs-101' || s === 'prod-101') return 105;
-    if (s === '103' || s === 'bs-103' || s === 'prod-102') return 106;
+    if (s === '101' || s === 'bs-101' || s === 'prod-101' || s === 'mocha-brown-embroidered-co-ord-set') return 105;
+    if (s === '103' || s === 'bs-103' || s === 'prod-102' || s === 'sage-bloom-embroidered-corset') return 106;
     if (s === '108' || s === 'prod-105') return 108;
-    if (s === '109' || s === 'bs-105' || s === 'prod-109') return 109;
+    if (s === '109' || s === 'bs-105' || s === 'prod-109' || s === 'ivory-heart-corset-kurti') return 109;
     if (s === '107' || s === 'prod-103') return 107;
-    if (s === '104' || s === 'bs-104') return 104;
-    if (s === '102' || s === 'bs-102') return 102;
+    if (s === '104' || s === 'bs-104' || s === 'blush-pink-embroidered-floral-co-ord-set') return 104;
+    if (s === '102' || s === 'bs-102' || s === 'teal-embroidered-floral-co-ord-set') return 102;
     if (s === '105') return 105;
     if (s === '106') return 106;
     const digits = s.replace(/\D/g, '');
