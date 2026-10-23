@@ -1,6 +1,7 @@
 const orderService = require('../services/orderService');
 const invoiceService = require('../services/invoiceService');
 const { validateBankDetails } = require('../utils/bankValidator');
+const pool = require('../config/db');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -207,6 +208,60 @@ exports.updateOrderStatus = async (req, res) => {
             });
         }
 
+        // Replacement Cancellation Guard:
+        // When a user requests to replace a product, admin can ONLY cancel / reject the request UNTIL it is shipped.
+        // Once the replacement is shipped, it CANNOT be cancelled or rejected by anyone.
+        const isReplacementFlow = (
+            (order.return_type || '').toLowerCase().includes('replace') ||
+            (order.return_type || '').toLowerCase().includes('exchange') ||
+            Boolean(order.replacement_size) ||
+            Boolean(order.replacement_order_number) ||
+            Boolean(order.original_order_number) ||
+            (order.order_number || '').includes('-REP') ||
+            currentStatusLower.includes('replace') ||
+            currentStatusLower.includes('exchange')
+        );
+
+        let isReplacementShipped = (
+            currentStatusLower === 'replacement shipped' ||
+            currentStatusLower === 'replacement out for delivery' ||
+            currentStatusLower === 'replacement delivered' ||
+            (currentStatusLower === 'replaced' && Boolean(order.tracking_number || order.replacement_order_number))
+        );
+
+        if (!isReplacementShipped && order.replacement_order_number) {
+            try {
+                const repCheck = await pool.query(
+                    `SELECT status, tracking_number FROM orders WHERE order_number = $1 OR id::text = $2 LIMIT 1`,
+                    [order.replacement_order_number, order.replacement_order_id ? String(order.replacement_order_id) : '']
+                );
+                if (repCheck.rows.length > 0) {
+                    const repStatus = (repCheck.rows[0].status || '').toLowerCase();
+                    const hasRepAwb = Boolean(repCheck.rows[0].tracking_number);
+                    if (['shipped', 'in transit', 'out for delivery', 'delivered', 'replacement shipped'].includes(repStatus) || hasRepAwb) {
+                        isReplacementShipped = true;
+                    }
+                }
+            } catch (err) {
+                console.warn('[OrderController] Error checking replacement order shipment status:', err.message);
+            }
+        }
+
+        const isRejectOrCancelAction = (
+            targetStatusLower === 'replace rejected' ||
+            targetStatusLower === 'return rejected' ||
+            targetStatusLower === 'return & replacement rejected' ||
+            targetStatusLower === 'cancelled' ||
+            targetStatusLower === 'cancellation requested'
+        );
+
+        if (isReplacementFlow && isReplacementShipped && isRejectOrCancelAction) {
+            return res.status(400).json({
+                success: false,
+                message: 'Replacement piece has already been shipped. The replacement request cannot be cancelled or rejected after dispatch.'
+            });
+        }
+
         if (!isAdmin) {
             if (adminOnlyStatuses.includes(targetStatusLower)) {
                 return res.status(403).json({
@@ -279,6 +334,45 @@ exports.updateOrderStatus = async (req, res) => {
                                    (order.status || '').toLowerCase() === 'confirmed';
             if (hasOnlineProof && (!targetPaymentStatus || targetPaymentStatus.toLowerCase() === 'pending')) {
                 targetPaymentStatus = 'Paid';
+            }
+        }
+
+        const isCancelActionNow = (
+            targetStatus === 'Cancellation Requested' ||
+            targetStatus === 'Cancelled' ||
+            status === 'Cancellation Requested' ||
+            status === 'Cancelled'
+        );
+
+        if (isCancelActionNow && !isCod) {
+            // Prepaid order cancellation requires bank details for refund
+            if (!sanitizedBankDetails && order.user_id) {
+                try {
+                    const userBankRes = await pool.query(
+                        `SELECT refund_bank_account, refund_ifsc_code, refund_holder_name FROM users WHERE emailid = $1 OR username = $1 LIMIT 1`,
+                        [order.user_id]
+                    );
+                    if (userBankRes.rows.length > 0 && userBankRes.rows[0].refund_bank_account) {
+                        const uBank = userBankRes.rows[0];
+                        const bankCheck = validateBankDetails({
+                            accountNumber: uBank.refund_bank_account,
+                            ifscCode: uBank.refund_ifsc_code,
+                            holderName: uBank.refund_holder_name
+                        });
+                        if (bankCheck.isValid) {
+                            sanitizedBankDetails = bankCheck.sanitized;
+                        }
+                    }
+                } catch (uErr) {
+                    console.warn('[OrderController] User bank profile lookup warning:', uErr.message);
+                }
+            }
+
+            if (!isAdmin && !sanitizedBankDetails && !order.refund_bank_account) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Bank account details (Account Holder Name, IFSC Code, Account Number) are required to process a refund for prepaid order cancellations.'
+                });
             }
         }
 
