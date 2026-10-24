@@ -4,7 +4,7 @@ const passport = require('passport');
 const crypto = require('crypto');
 const authController = require('../controllers/authController');
 const subAdminController = require('../controllers/subAdminController');
-const { protect, authorize } = require('../middlewares/authMiddleware');
+const { protect, authorize, requireSuperAdmin } = require('../middlewares/authMiddleware');
 const { getClientUrl } = require('../utils/urlHelper');
 
 // --- OTP AUTHENTICATION FLOW (SINGLE LOGIN/SIGNUP FLOW) ---
@@ -17,11 +17,11 @@ router.post('/logout', authController.logout);
 router.post('/admin/login', authController.adminLogin);
 
 // Sub-admin management routes
-router.get('/admin/subadmins', protect, authorize('admin'), subAdminController.getSubAdmins);
-router.post('/admin/subadmins', protect, authorize('admin'), subAdminController.createSubAdmin);
-router.put('/admin/subadmins/:id', protect, authorize('admin'), subAdminController.updateSubAdmin);
-router.delete('/admin/subadmins/:id', protect, authorize('admin'), subAdminController.deleteSubAdmin);
-router.get('/admin/audit-logs', protect, authorize('admin'), subAdminController.getAuditLogs);
+router.get('/admin/subadmins', protect, authorize('admin'), requireSuperAdmin, subAdminController.getSubAdmins);
+router.post('/admin/subadmins', protect, authorize('admin'), requireSuperAdmin, subAdminController.createSubAdmin);
+router.put('/admin/subadmins/:id', protect, authorize('admin'), requireSuperAdmin, subAdminController.updateSubAdmin);
+router.delete('/admin/subadmins/:id', protect, authorize('admin'), requireSuperAdmin, subAdminController.deleteSubAdmin);
+router.get('/admin/audit-logs', protect, authorize('admin'), requireSuperAdmin, subAdminController.getAuditLogs);
 
 // --- GOOGLE OAUTH ---
 router.get('/google', (req, res, next) => {

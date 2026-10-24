@@ -110,3 +110,23 @@ exports.optionalUser = (req, res, next) => {
     next();
 };
 
+
+// Super-admin only (the 'Admin' account). Every admin login carries role 'admin' in the JWT,
+// so sub-admins must be excluded by looking up the account itself.
+exports.requireSuperAdmin = async (req, res, next) => {
+    try {
+        const pool = require('../config/db');
+        const result = await pool.query(
+            'SELECT userid, active FROM public.admins WHERE adminid::text = $1 LIMIT 1',
+            [String(req.user?.id || '')]
+        );
+        const adminRow = result.rows[0];
+        if (!adminRow || adminRow.userid !== 'Admin') {
+            return res.status(403).json({ success: false, message: 'Only the super admin can manage sub-admins' });
+        }
+        next();
+    } catch (error) {
+        console.error('[requireSuperAdmin] Error:', error);
+        res.status(500).json({ success: false, message: 'Server error checking admin access' });
+    }
+};

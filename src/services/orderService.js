@@ -583,9 +583,9 @@ exports.getAllOrders = async (options = {}) => {
     const { type = 'all' } = options;
 
     if (type === 'successful') {
-        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
+        baseQuery += ` AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))`;
     } else if (type === 'potential') {
-        baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
+        baseQuery += ` AND (NOT (COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') AND o.payment_status = 'Pending')`;
     }
     // 'all' includes both successful and potential (DRAFTs/ABANDONED/Online Pending)
 
@@ -1237,7 +1237,14 @@ exports.requestReturnReplace = async (orderId, userOrId, data) => {
                 refund_holder_name = $8::text,
                 is_returned_order = $9::boolean,
                 replacement_size = CASE WHEN $11::boolean = true THEN COALESCE($10::text, replacement_size) ELSE NULL END,
-                refund_eligible_amount = CASE WHEN $12::numeric > 0 THEN $12::numeric ELSE COALESCE(NULLIF(refund_eligible_amount, 0), total) END
+                refund_eligible_amount = CASE WHEN $12::numeric > 0 THEN $12::numeric ELSE COALESCE(NULLIF(refund_eligible_amount, 0), total) END,
+                -- A new request starts clean: drop leftovers from an earlier admin rejection, which
+                -- otherwise make the storefront show "QC Verification Failed" / rejected states.
+                return_qc_status = NULL,
+                return_qc_notes = NULL,
+                rejection_reason = NULL,
+                return_rejection_reason = NULL,
+                cancel_reason = $4::text
             WHERE id = $1::uuid`,
             [
                 orderId,
@@ -1518,7 +1525,76 @@ exports.getOrderStats = async () => {
     };
 };
 
+// orders.replacement_stock_deducted marks that the replacement size was taken out of stock on
+// approval, so it is never deducted twice and is only given back if it was actually deducted.
+let replacementStockColumnReady = false;
+const ensureReplacementStockColumn = async () => {
+    if (replacementStockColumnReady) return;
+    await pool.query('ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_stock_deducted BOOLEAN DEFAULT FALSE');
+    replacementStockColumnReady = true;
+};
+
+// Adjust one size of a product's stock inside the caller's transaction. delta < 0 deducts.
+// When deducting, throws if the size does not have enough units (nothing is changed).
+const adjustSizeStock = async (client, productId, size, delta, productName = 'Product') => {
+    const prodRes = await client.query(
+        `SELECT size_stock, stock_quantity, title FROM products WHERE product_id = $1::integer LIMIT 1 FOR UPDATE`,
+        [productId]
+    );
+    if (prodRes.rows.length === 0) return;
+    const prod = prodRes.rows[0];
+    const sizeStock = { ...(prod.size_stock || {}) };
+    const cleanSize = String(size || '').trim().toUpperCase();
+    const matchedKey = Object.keys(sizeStock).find(k => k.trim().toUpperCase() === cleanSize);
+    const current = matchedKey !== undefined ? (parseInt(sizeStock[matchedKey], 10) || 0) : null;
+
+    if (delta < 0 && matchedKey !== undefined && current < Math.abs(delta)) {
+        throw new Error(`Replacement size ${cleanSize} for "${prod.title || productName}" is out of stock (only ${current} left). Restock this size before approving the replacement.`);
+    }
+    if (matchedKey !== undefined) {
+        sizeStock[matchedKey] = Math.max(0, current + delta);
+    } else if (delta > 0 && cleanSize) {
+        sizeStock[cleanSize] = delta;
+    }
+
+    await client.query(
+        `UPDATE products
+         SET stock_quantity = GREATEST(0, COALESCE(stock_quantity, 0) + $2),
+             quantity       = GREATEST(0, COALESCE(quantity, 0) + $2),
+             size_stock     = $3::jsonb,
+             instock        = (GREATEST(0, COALESCE(stock_quantity, 0) + $2) > 0),
+             updated_at     = NOW()
+         WHERE product_id = $1::integer`,
+        [productId, delta, JSON.stringify(sizeStock)]
+    );
+    console.log(`[INVENTORY] ${delta < 0 ? 'Reserved' : 'Released'} ${Math.abs(delta)} unit(s) of size ${cleanSize || 'General'} for Product #${productId} (replacement)`);
+};
+
+// Items being exchanged on this order, with the size the customer will receive
+const getReplacementLines = async (client, orderId, order, itemIds = null) => {
+    const res = await client.query(
+        `SELECT id, product_id, name, quantity, size, replacement_size, return_action, status
+         FROM order_items
+         WHERE order_id = $1::uuid AND (return_action = 'Replace' OR status ILIKE '%Replace%')`,
+        [orderId]
+    );
+    let lines = res.rows;
+    if (itemIds && itemIds.length > 0) {
+        const ids = itemIds.map(i => String(typeof i === 'string' ? i : i.id));
+        lines = lines.filter(l => ids.includes(String(l.id)) || ids.includes(String(l.product_id)));
+    }
+    return lines
+        .filter(l => l.product_id)
+        .map(l => ({
+            productId: l.product_id,
+            name: l.name,
+            quantity: parseInt(l.quantity, 10) || 1,
+            size: l.replacement_size || order.replacement_size || l.size
+        }));
+};
+
 exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, extraData = {}) => {
+    await ensureReplacementStockColumn().catch(err => console.warn('[OrderService] Could not ensure replacement_stock_deducted column:', err.message));
     let validBank = bankDetails;
     if (bankDetails) {
         const bankCheck = validateBankDetails(bankDetails);
@@ -1946,11 +2022,17 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                                ELSE COALESCE(return_reason, cancel_reason, 'Customer requested return after delivery') 
                            END,
-                           original_status = 'Delivered', 
+                           original_status = 'Delivered',
                            delivered_at = COALESCE(delivered_at, NOW()),
                            logistics_status = 'Return Requested',
                            is_product_received = FALSE,
                            is_returned_order = TRUE,
+                           return_type = 'Return',
+                           -- fresh request: clear any earlier return/replacement rejection
+                           return_qc_status = NULL,
+                           return_qc_notes = NULL,
+                           rejection_reason = NULL,
+                           return_rejection_reason = NULL,
                            refund_bank_account = COALESCE($5::text, refund_bank_account),
                            refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
                            refund_holder_name = COALESCE($7::text, refund_holder_name),
@@ -2001,10 +2083,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                                ELSE COALESCE(return_reason, cancel_reason, 'Customer requested replacement after delivery') 
                            END,
-                           original_status = 'Delivered', 
+                           original_status = 'Delivered',
                            delivered_at = COALESCE(delivered_at, NOW()),
                            logistics_status = 'Replacement Requested',
                            is_product_received = FALSE,
+                           -- fresh request: clear any earlier return/replacement rejection
+                           return_qc_status = NULL,
+                           return_qc_notes = NULL,
+                           rejection_reason = NULL,
+                           return_rejection_reason = NULL,
                            payment_status = $4::text,
                            updated_at = NOW()
                            WHERE id = $1::uuid RETURNING *`;
@@ -2121,10 +2208,74 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             const isQCRejected = status === 'Return QC Rejected' || status === 'Return Rejected';
             const isArrivalAtUrvaah = (status === 'Received at House of Urvaah' || status === 'Received at Homved' || status === 'Returned');
 
+            // Re-open & Approve: admin approves a request that was previously rejected.
+            // Rejection left return_qc_status='Rejected', refund cancelled, items reset to 'Delivered' —
+            // all of that must be cleared or the order stays stuck in the rejected state.
+            const isReopeningRejected = isApproved && (
+                (oldOrder.return_qc_status || '').toLowerCase() === 'rejected' ||
+                Boolean(oldOrder.return_rejection_reason)
+            );
+            // Only a reopened RETURN becomes a refundable returned order; a reopened replacement
+            // continues the exchange cycle (reverse pickup -> QC -> replacement dispatch) with no refund.
+            const isReopeningReturn = isReopeningRejected && !status.includes('Replace');
+            const isReopeningReplacement = isReopeningRejected && status.includes('Replace');
+
+            // Re-open & Approve Replacement == a fresh replacement request that the admin approves.
+            // First restore exactly the state a new customer replacement request creates, then let the
+            // standard approval below run unchanged (items -> Replace Approved, reverse pickup, QC, dispatch).
+            if (isReopeningReplacement) {
+                await client.query(
+                    `UPDATE orders SET
+                        return_type = 'Replacement',
+                        return_reason = COALESCE(NULLIF(return_reason, ''), 'Customer exchange request'),
+                        cancel_reason = COALESCE(NULLIF(return_reason, ''), 'Customer exchange request'),
+                        logistics_status = 'Replacement Requested',
+                        is_product_received = FALSE,
+                        is_returned_order = FALSE,
+                        refund_status = NULL,
+                        return_qc_status = NULL,
+                        return_qc_notes = NULL,
+                        rejection_reason = NULL,
+                        return_rejection_reason = NULL,
+                        return_request_at = COALESCE(return_request_at, NOW()),
+                        updated_at = NOW()
+                     WHERE id = $1::uuid`,
+                    [orderId]
+                );
+                // Items the rejection marked 'Replace Rejected' / reset to 'Delivered' go back to a pending request
+                const reopened = await client.query(
+                    `UPDATE order_items SET status = 'Replacement Request Processing',
+                            cancel_reason = 'Customer requested replacement'
+                     WHERE order_id = $1::uuid AND (return_action = 'Replace' OR status = 'Replace Rejected')`,
+                    [orderId]
+                );
+                if (reopened.rowCount === 0) {
+                    await client.query(
+                        `UPDATE order_items SET status = 'Replacement Request Processing', return_action = 'Replace'
+                         WHERE order_id = $1::uuid AND status = 'Delivered'`,
+                        [orderId]
+                    );
+                }
+                Object.assign(oldOrder, {
+                    return_type: 'Replacement',
+                    logistics_status: 'Replacement Requested',
+                    is_product_received: false,
+                    is_returned_order: false,
+                    refund_status: null,
+                    return_qc_status: null,
+                    rejection_reason: null,
+                    return_rejection_reason: null
+                });
+            }
+
             // Pre-calculate values to avoid complex CASE statements in SQL
-            const effectiveQcStatus = returnQcStatus || oldOrder.return_qc_status;
+            const effectiveQcStatus = isReopeningRejected ? returnQcStatus : (returnQcStatus || oldOrder.return_qc_status);
             let refundStatusVal = oldOrder.refund_status;
-            if (isQCRejected || effectiveQcStatus === 'Rejected') {
+            if (isReopeningReturn) {
+                refundStatusVal = 'Pending';
+            } else if (isReopeningRejected) {
+                refundStatusVal = null;
+            } else if (isQCRejected || effectiveQcStatus === 'Rejected') {
                 refundStatusVal = 'Cancelled';
             } else if (oldOrder.payment_status === 'Refunded' || status === 'Refunded') {
                 refundStatusVal = 'Refunded';
@@ -2138,7 +2289,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 refundStatusVal = oldOrder.refund_status || 'Pending';
             }
 
-            const productReceivedVal = isQCRejected ? false : (isArrivalAtUrvaah ? true : oldIsProductReceived);
+            const productReceivedVal = isQCRejected ? false : (isArrivalAtUrvaah ? true : (isReopeningReplacement ? false : oldIsProductReceived));
             let logisticsStatusVal = oldOrder.logistics_status;
             if (isQCRejected) {
                 logisticsStatusVal = 'QC Rejected - Wrong / Damaged Product';
@@ -2150,7 +2301,21 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
             // Sync item-level statuses for mixed / bulk orders
             try {
-                if (status === 'Return & Replacement Approved') {
+                if (isReopeningReturn && (!itemIds || itemIds.length === 0)) {
+                    // Rejection reset the requested items to 'Delivered'; move them back into the approved flow
+                    const flagged = await client.query(
+                        `UPDATE order_items SET status = 'Return Approved'
+                         WHERE order_id = $1::uuid AND return_action = 'Return'`,
+                        [orderId]
+                    );
+                    if (flagged.rowCount === 0) {
+                        await client.query(
+                            `UPDATE order_items SET status = 'Return Approved'
+                             WHERE order_id = $1::uuid AND status = 'Delivered'`,
+                            [orderId]
+                        );
+                    }
+                } else if (status === 'Return & Replacement Approved') {
                     await client.query(`UPDATE order_items SET status = 'Replace Approved' WHERE order_id = $1::uuid AND (return_action = 'Replace' OR status ILIKE '%Replace%')`, [orderId]);
                     await client.query(`UPDATE order_items SET status = 'Return Approved' WHERE order_id = $1::uuid AND (return_action = 'Return' OR status ILIKE '%Return%')`, [orderId]);
                 } else if (status === 'In Transit to House of Urvaah') {
@@ -2201,40 +2366,45 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            refund_status = $3::text,
                            is_product_received = $4::boolean,
                            logistics_status = $5::text,
-                           refund_eligible_amount = CASE 
+                           refund_eligible_amount = CASE
                                WHEN $2::text IN ('Return QC Rejected', 'Return Rejected') THEN 0
-                               WHEN $4::boolean = TRUE THEN COALESCE(NULLIF(refund_eligible_amount, 0), total)
+                               WHEN $4::boolean = TRUE OR $10::boolean = TRUE THEN COALESCE(NULLIF(refund_eligible_amount, 0), total)
                                ELSE refund_eligible_amount
                            END,
-                           payment_status = CASE 
+                           is_returned_order = CASE WHEN $10::boolean = TRUE THEN TRUE WHEN $9::boolean = TRUE THEN FALSE ELSE is_returned_order END,
+                           payment_status = CASE
                                               WHEN $2::text = 'Refunded' THEN 'Refunded'
                                               WHEN $6::text IS NOT NULL THEN $6::text
-                                              ELSE payment_status 
+                                              ELSE payment_status
                                             END,
-                           rejection_reason = CASE 
-                                                WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text 
-                                                ELSE rejection_reason 
+                           rejection_reason = CASE
+                                                WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text
+                                                WHEN $9::boolean = TRUE THEN NULL
+                                                ELSE rejection_reason
                                               END,
-                           cancel_reason = CASE 
-                                                WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text 
-                                                ELSE cancel_reason 
+                           cancel_reason = CASE
+                                                WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text
+                                                WHEN $9::boolean = TRUE THEN COALESCE(return_reason, cancel_reason)
+                                                ELSE cancel_reason
                                            END,
-                           return_qc_status = CASE 
+                           return_qc_status = CASE
                                                 WHEN $8::text IS NOT NULL AND $8::text <> '' THEN $8::text
+                                                WHEN $9::boolean = TRUE THEN NULL
                                                 WHEN $2::text IN ('Return QC Rejected', 'Return Rejected') THEN 'Rejected'
                                                 WHEN $2::text = 'Returned' THEN 'Accepted'
                                                 WHEN $2::text IN ('Received at House of Urvaah', 'Received at Homved') THEN COALESCE(NULLIF(return_qc_status, ''), 'Pending QC')
                                                 ELSE return_qc_status
                                               END,
-                           return_rejection_reason = CASE 
+                           return_rejection_reason = CASE
                                                       WHEN $2::text IN ('Return QC Rejected', 'Return Rejected') OR $8::text = 'Rejected' THEN COALESCE($7::text, 'Wrong or damaged product received during QC')
-                                                      ELSE return_rejection_reason 
+                                                      WHEN $9::boolean = TRUE THEN NULL
+                                                      ELSE return_rejection_reason
                                                      END,
-                           return_qc_notes = CASE 
-                                               WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text 
-                                               ELSE return_qc_notes 
+                           return_qc_notes = CASE
+                                               WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::text
+                                               ELSE return_qc_notes
                                              END,
-                           updated_at = NOW() 
+                           updated_at = NOW()
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
                 orderId,
@@ -2244,7 +2414,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 logisticsStatusVal,
                 paymentStatus || null,
                 cancelReason || null,
-                returnQcStatus || null
+                returnQcStatus || null,
+                isReopeningRejected,
+                isReopeningReturn
             ];
 
             if (status === 'Replace Approved') {
@@ -2441,6 +2613,30 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     console.warn(`[OrderService] Non-fatal item sync warning for order ${orderId}:`, itemErr.message);
                 }
             }
+        }
+
+        // ── INVENTORY: RESERVE THE REPLACEMENT SIZE WHEN THE ADMIN APPROVES A REPLACEMENT ──────────
+        // The customer's requested size is deducted on approval (not on request). If the size is short,
+        // this throws and the whole approval rolls back, so a replacement can't be approved without stock.
+        const isReplacementApproval = status === 'Replace Approved' || status === 'Return & Replacement Approved';
+        const isReplacementRejection = status === 'Replace Rejected' || status === 'Return & Replacement Rejected' ||
+            (status === 'Return Rejected' && /replace|exchange/i.test(oldOrder.return_type || ''));
+
+        if (isReplacementApproval && !oldOrder.replacement_stock_deducted) {
+            const lines = await getReplacementLines(client, orderId, oldOrder, itemIds);
+            for (const line of lines) {
+                await adjustSizeStock(client, line.productId, line.size, -line.quantity, line.name);
+            }
+            if (lines.length > 0) {
+                await client.query(`UPDATE orders SET replacement_stock_deducted = TRUE WHERE id = $1::uuid`, [orderId]);
+            }
+        } else if (isReplacementRejection && oldOrder.replacement_stock_deducted) {
+            // Rejected after approval (before dispatch): give the reserved units back
+            const lines = await getReplacementLines(client, orderId, oldOrder, itemIds);
+            for (const line of lines) {
+                await adjustSizeStock(client, line.productId, line.size, line.quantity, line.name);
+            }
+            await client.query(`UPDATE orders SET replacement_stock_deducted = FALSE WHERE id = $1::uuid`, [orderId]);
         }
 
         // ── INVENTORY RESTORATION FOR PRE-DELIVERY CANCELLATIONS & RETURN ARRIVALS AT HOUSE OF URVAAH ───────
