@@ -7,10 +7,12 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('CRITICAL STARTUP ERROR - UNHANDLED REJECTION! 💥');
+// Log (don't exit): a single un-awaited background promise (email, Shiprocket, analytics) failing
+// used to take the whole API down for every connected user. Request errors are still handled by
+// their own try/catch + the Express error handler; uncaught synchronous exceptions still exit above.
+process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED PROMISE REJECTION (server kept running):');
     console.error(reason);
-    process.exit(1);
 });
 
 console.log('--- STARTING House of Urvaah API ---');

@@ -872,7 +872,7 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
     let pdfBuffer;
     try {
       console.log(`[InvoiceWorkflow] Generating PDF invoice for Order ID ${order.id}...`);
-      pdfBuffer = await invoiceService.generateInvoicePDF(order.id);
+      pdfBuffer = await invoiceService.generateInvoicePDF(order.id, { customerView: true });
       console.log(`[InvoiceWorkflow] PDF invoice generated successfully (${pdfBuffer.length} bytes).`);
     } catch (pdfErr) {
       console.error(`[InvoiceWorkflow] PDF generation failed:`, pdfErr.message);
@@ -1129,7 +1129,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
     let pdfBuffer = null;
     try {
       console.log(`[DeliveryConfirmationWorkflow] Generating PDF invoice for Order #${order.order_number}...`);
-      pdfBuffer = await invoiceService.generateInvoicePDF(order.id);
+      pdfBuffer = await invoiceService.generateInvoicePDF(order.id, { customerView: true });
       console.log(`[DeliveryConfirmationWorkflow] PDF invoice generated successfully (${pdfBuffer.length} bytes).`);
     } catch (pdfErr) {
       console.warn(`[DeliveryConfirmationWorkflow] PDF generation warning: ${pdfErr.message}. Email dispatch will proceed.`);
@@ -1505,7 +1505,8 @@ const downloadInvoiceByToken = async (token) => {
   }
 
   const notification = res.rows[0];
-  const pdfBuffer = await invoiceService.generateInvoicePDF(notification.order_id);
+  // Emailed links are customer-facing: same delivered-items-only rule as the in-app download
+  const pdfBuffer = await invoiceService.generateInvoicePDF(notification.order_id, { customerView: true });
   const filename = notification.attachment_name || `HOUSE_OF_URVAAH_INV_${notification.order_number}.pdf`;
 
   return { pdfBuffer, filename, notification };

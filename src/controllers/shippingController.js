@@ -576,6 +576,14 @@ exports.dispatchReplacement = async (req, res) => {
             [repOrderNumber, repOrderId, targetSize, dbOrigOrder.id]
         );
 
+        // Item level: the exchanged pieces on the original order are now replaced (returned pieces are untouched)
+        await client.query(
+            `UPDATE order_items SET status = 'Replaced'
+             WHERE order_id = $1::uuid AND return_action = 'Replace'
+               AND status IN ('Replace Approved', 'Return Collected', 'In Transit to House of Urvaah', 'Received at House of Urvaah', 'Received at Homved')`,
+            [dbOrigOrder.id]
+        );
+
         await client.query('COMMIT');
 
         return res.json({
@@ -611,12 +619,28 @@ exports.handleWebhook = async (req, res) => {
             try {
                 const updateRes = await pool.query(
                     `UPDATE orders 
-                     SET status = $1, 
-                         tracking_number = COALESCE(tracking_number, $3), 
+                     SET status = $1::text, 
+                         tracking_number = COALESCE(tracking_number, $3::text), 
+                         -- keep the courier stage in sync with the order status (was left at e.g. 'Pickup Scheduled')
+                         logistics_status = COALESCE($4::text, logistics_status),
+                         shipment_status = COALESCE($4::text, shipment_status),
+                         delivered_at = CASE WHEN $1::text = 'Delivered' THEN COALESCE(delivered_at, NOW()) ELSE delivered_at END,
                          updated_at = NOW() 
-                     WHERE tracking_number = $2 OR order_number = $2 OR id::text = $2
+                     WHERE tracking_number = $2::text OR order_number = $2::text OR id::text = $2::text
                      RETURNING id, order_number, status, payment_method, payment_type`,
-                    [result.mapped_urvaah_status, identifier, result.awb || `URV-${Date.now().toString().slice(-8)}IN`]
+                    [
+                        result.mapped_urvaah_status,
+                        identifier,
+                        result.awb || `URV-${Date.now().toString().slice(-8)}IN`,
+                        ({
+                            'Dispatched': 'Picked Up',
+                            'Shipped': 'In Transit',
+                            'Out for Delivery': 'Out for Delivery',
+                            'Delivered': 'Delivered',
+                            'Received at Homved': 'Delivered to House of Urvaah',
+                            'Cancelled': 'Cancelled'
+                        })[result.mapped_urvaah_status] || null
+                    ]
                 );
                 
                 if (updateRes.rows.length > 0) {

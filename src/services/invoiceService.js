@@ -70,10 +70,39 @@ const getCurrencySymbol = () => {
  * @param {string|number} orderId - Order UUID or order number.
  * @returns {Promise<Object>} - Clean, rich invoice data object.
  */
-exports.getInvoiceData = async (orderId) => {
+exports.getInvoiceData = async (orderId, options = {}) => {
     // 1. Fetch order details with joined address info
-    const order = await orderService.getOrderById(orderId);
+    let order = await orderService.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
+
+    // Customer copy: only delivered, non-cancelled, non-returned line items, with the order amounts
+    // scaled to those lines. The full (statutory) invoice is unchanged for admins.
+    if (options.customerView) {
+        const { getInvoiceEligibility } = require('./invoiceEligibility');
+        const { eligible, eligibleItems, reason } = getInvoiceEligibility(order);
+        if (!eligible) {
+            const err = new Error(reason);
+            err.statusCode = 403;
+            throw err;
+        }
+        const lineTotal = (it) => (Number(it.price) || 0) * (Number(it.quantity) || 1);
+        const eligibleSubtotal = eligibleItems.reduce((acc, it) => acc + lineTotal(it), 0);
+        const orderSubtotal = Number(order.subtotal || 0);
+        if (eligibleItems.length !== (order.items || []).length && orderSubtotal > 0 && eligibleSubtotal < orderSubtotal) {
+            const ratio = eligibleSubtotal / orderSubtotal;
+            const round2 = (n) => Math.round(n * 100) / 100;
+            order = {
+                ...order,
+                items: eligibleItems,
+                subtotal: round2(eligibleSubtotal),
+                discount_amount: round2(Number(order.discount_amount || 0) * ratio),
+                shipping: round2(Number(order.shipping || order.shipping_cost || 0) * ratio),
+                total: round2(Number(order.total || 0) * ratio)
+            };
+        } else {
+            order = { ...order, items: eligibleItems };
+        }
+    }
 
     // 2. Fetch user details for contact info
     let user = {};
@@ -413,8 +442,8 @@ exports.getInvoiceData = async (orderId) => {
  * @param {string|number} orderId - The database ID of the order.
  * @returns {Promise<string>} - Compiled HTML string.
  */
-exports.generateInvoiceHTML = async (orderId) => {
-    const templateData = await exports.getInvoiceData(orderId);
+exports.generateInvoiceHTML = async (orderId, options = {}) => {
+    const templateData = await exports.getInvoiceData(orderId, options);
 
     const templatePath = path.join(__dirname, '../templates/invoiceTemplate.html');
     if (!fs.existsSync(templatePath)) {
@@ -431,8 +460,8 @@ exports.generateInvoiceHTML = async (orderId) => {
  * @param {string|number} orderId - The database ID of the order.
  * @returns {Promise<Buffer>} - PDF binary data.
  */
-exports.generateInvoicePDF = async (orderId) => {
-    const html = await exports.generateInvoiceHTML(orderId);
+exports.generateInvoicePDF = async (orderId, options = {}) => {
+    const html = await exports.generateInvoiceHTML(orderId, options);
 
     let browser;
     try {
