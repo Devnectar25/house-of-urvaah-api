@@ -908,10 +908,11 @@ exports.handleWebhookEvent = async (payload) => {
         mappedStatus = 'Shipped';
     } else if (s.includes('OUT FOR DELIVERY')) {
         mappedStatus = 'Out for Delivery';
+    } else if (s.includes('RTO DELIVERED') || s.includes('RETURN DELIVERED')) {
+        // Checked before plain DELIVERED: an RTO parcel delivered back to us must not mark the order Delivered
+        mappedStatus = 'Received at Homved';
     } else if (s.includes('DELIVERED')) {
         mappedStatus = 'Delivered';
-    } else if (s.includes('RTO DELIVERED') || s.includes('RETURN DELIVERED')) {
-        mappedStatus = 'Received at Homved';
     } else if (s.includes('CANCELLED')) {
         mappedStatus = 'Cancelled';
     }

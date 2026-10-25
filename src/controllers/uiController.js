@@ -625,9 +625,18 @@ exports.updateFabricVideo = async (req, res) => {
 // Public GET: Contact Info (Concierge + Active Boutiques)
 exports.getPublicContactInfo = async (req, res) => {
   try {
-    let conciergeResult = await pool.query(
-      `SELECT section_badge, section_title, email, phone, hours FROM ui_concierge_settings ORDER BY id ASC LIMIT 1`
-    );
+    // Independent reads: run in parallel (one DB round trip of latency instead of two)
+    const [conciergeResult, boutiquesResult] = await Promise.all([
+      pool.query(
+        `SELECT section_badge, section_title, email, phone, hours FROM ui_concierge_settings ORDER BY id ASC LIMIT 1`
+      ),
+      pool.query(
+        `SELECT id, section_badge, section_title, name, address, phone, is_primary, display_order
+         FROM ui_boutique_locations
+         WHERE is_active = true
+         ORDER BY display_order ASC, id ASC`
+      )
+    ]);
 
     let concierge = conciergeResult.rows[0];
     if (!concierge) {
@@ -639,13 +648,6 @@ exports.getPublicContactInfo = async (req, res) => {
         hours: 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
       };
     }
-
-    const boutiquesResult = await pool.query(
-      `SELECT id, section_badge, section_title, name, address, phone, is_primary, display_order 
-       FROM ui_boutique_locations 
-       WHERE is_active = true 
-       ORDER BY display_order ASC, id ASC`
-    );
 
     const locations = boutiquesResult.rows;
     const headerInfo = locations[0] || {

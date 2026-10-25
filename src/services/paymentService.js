@@ -104,22 +104,24 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
         return { success: false, message: 'Invalid signature' };
     }
 
+    // Fetch payment details from Razorpay BEFORE taking a DB connection: holding a pooled client
+    // (inside an open transaction) during an external HTTP call starves the pool under load.
+    let amount = 0;
+    let rzpPaymentMethod = null;
+    try {
+        const rzp = getRazorpay();
+        if (rzp && razorpay_payment_id && !razorpay_payment_id.startsWith('pay_test_')) {
+            const payment = await rzp.payments.fetch(razorpay_payment_id);
+            amount = payment.amount / 100;
+            rzpPaymentMethod = payment.method;
+        }
+    } catch (e) {
+        console.warn('[verifyPayment] Razorpay fetch payment note:', e.message);
+    }
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-
-        let amount = 0;
-        let rzpPaymentMethod = null;
-        try {
-            const rzp = getRazorpay();
-            if (rzp && razorpay_payment_id && !razorpay_payment_id.startsWith('pay_test_')) {
-                const payment = await rzp.payments.fetch(razorpay_payment_id);
-                amount = payment.amount / 100;
-                rzpPaymentMethod = payment.method;
-            }
-        } catch (e) {
-            console.warn('[verifyPayment] Razorpay fetch payment note:', e.message);
-        }
 
         let orderRow = null;
         if (internalOrderId) {
@@ -197,18 +199,30 @@ exports.recordPaymentFailure = async (internalOrderId, errorDetails = {}) => {
         // Restore product stock that was reserved during order creation
         if (order) {
             const itemsRes = await client.query(
-                `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
+                `SELECT product_id, quantity, size FROM order_items WHERE order_id = $1`,
                 [order.id]
             );
             for (const item of itemsRes.rows) {
+                // Restore the reserved size too (size_stock), not only the overall total
+                const prodRes = await client.query(
+                    `SELECT size_stock FROM products WHERE product_id::text = $1::text LIMIT 1 FOR UPDATE`,
+                    [String(item.product_id)]
+                );
+                const sizeStock = { ...(prodRes.rows[0]?.size_stock || {}) };
+                const wanted = String(item.size || '').trim().toUpperCase();
+                const key = Object.keys(sizeStock).find(k => k.trim().toUpperCase() === wanted);
+                if (key !== undefined) {
+                    sizeStock[key] = (parseInt(sizeStock[key], 10) || 0) + (parseInt(item.quantity, 10) || 0);
+                }
                 await client.query(
                     `UPDATE products 
                      SET stock_quantity = COALESCE(stock_quantity, 0) + $2,
                          quantity = COALESCE(quantity, 0) + $2,
+                         size_stock = CASE WHEN $3::jsonb = '{}'::jsonb THEN size_stock ELSE $3::jsonb END,
                          instock = true,
                          updated_at = NOW()
                      WHERE product_id::text = $1::text`,
-                    [String(item.product_id), item.quantity]
+                    [String(item.product_id), item.quantity, JSON.stringify(sizeStock)]
                 );
             }
         }

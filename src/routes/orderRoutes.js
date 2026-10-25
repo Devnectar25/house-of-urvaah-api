@@ -21,6 +21,8 @@ router.post('/:id/reorder', orderController.reorderOrder);
 router.patch('/:id/status', orderController.updateOrderStatus);
 router.patch('/:id/items/:itemId/status', authorize('admin'), checkPermission('orders'), orderController.updateOrderItemStatus);
 router.patch('/:id/refund-status', authorize('admin'), checkPermission('orders'), orderController.updateRefundStatus);
+// Admin: approve / reject each requested return or replacement item individually
+router.post('/:id/request-decision', authorize('admin'), checkPermission('orders'), orderController.decideReturnReplaceRequest);
 
 router.post('/:id/return-request', orderController.requestReturnReplace);
 router.post('/:id/replace', (req, res, next) => {
