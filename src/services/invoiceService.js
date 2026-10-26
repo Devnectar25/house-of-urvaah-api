@@ -417,7 +417,7 @@ exports.getInvoiceData = async (orderId, options = {}) => {
         couponCode: order.coupon_code || '',
         discountAmount: discountAmount.toFixed(2),
         discountLabel: (order.coupon_code && (order.coupon_code.toUpperCase().includes('BOGO') || order.coupon_code.toUpperCase().includes('FREE')))
-            ? 'Atelier Privilege / BOGO Offer'
+            ? 'Store Privilege / BOGO Offer'
             : (order.coupon_code ? `Promotional Privilege (${order.coupon_code})` : 'Privilege Savings'),
         taxRate: taxRate,
         isInterState,

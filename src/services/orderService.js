@@ -2461,7 +2461,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // When package arrives at House of Urvaah and is QC passed, refund desk begins!
                 refundStatusVal = 'Pending';
             } else if (isArrivalAtUrvaah) {
-                // Arrived at atelier but awaiting physical QC inspection
+                // Arrived at House of Urvaah but awaiting physical QC inspection
                 refundStatusVal = 'Awaiting QC';
             } else if (isReturnApproved || isReverseTransit) {
                 refundStatusVal = oldOrder.refund_status || 'Pending';
@@ -2506,7 +2506,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          SET status = 'Return QC Rejected',
                              cancel_reason = $2::text
                          WHERE order_id = $1::uuid AND (return_action IN ('Return', 'Replace') OR status ILIKE '%Return%' OR status ILIKE '%Transit%' OR status ILIKE '%Received%')${returnScopeSql}`,
-                        [orderId, cancelReason || 'Return QC Rejected by Atelier QC']
+                        [orderId, cancelReason || 'Return QC Rejected by Quality Check']
                     );
                 }
             } catch (syncItemErr) {
@@ -3365,7 +3365,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         if (reachedReceived) {
             const itemsResult = await client.query(`SELECT product_id, quantity, size FROM order_items WHERE order_id = $1${refundScopeSql}`, [order.id]);
-            console.log(`[LOGISTICS INVENTORY] Product reached Atelier. Restoring stock for order ${orderId}.`);
+            console.log(`[LOGISTICS INVENTORY] Product reached Store. Restoring stock for order ${orderId}.`);
 
             for (const item of itemsResult.rows) {
                 if (!item.product_id) continue;

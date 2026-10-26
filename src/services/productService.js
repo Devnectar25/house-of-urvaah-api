@@ -70,7 +70,8 @@ const mapProduct = (p) => {
     }
 
     if (p.product_id == 108 || (p.title && (p.title.toLowerCase().includes('gharara') || p.title.toLowerCase().includes('cashmere')))) {
-        p.title = 'Gharara Set';
+        // Fallback only: never overwrite a title the admin has set (e.g. "Firoza ... Gharara Set")
+        p.title = p.title || 'Gharara Set';
         if (!p.description || p.description.includes('cashmere') || p.description.includes('Mongolian')) {
             p.description = 'A versatile festive ensemble featuring an intricately embroidered short kurti with a hook-on peplum and flared gharara trousers. Wear it with the peplum for full celebratory volume, or detach for a sleek, contemporary silhouette.\nWear it two ways for wedding soirees and festive celebrations.';
         }

@@ -14,7 +14,7 @@ const generateToken = (id, role) => {
 
 const formatUserResponse = (row) => {
     if (!row) return null;
-    const fullName = row.fullname || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.username || 'Atelier Member';
+    const fullName = row.fullname || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.username || 'Store Member';
     const firstName = row.first_name || fullName.split(' ')[0] || fullName;
     const lastName = row.last_name || fullName.split(' ').slice(1).join(' ') || '';
 
