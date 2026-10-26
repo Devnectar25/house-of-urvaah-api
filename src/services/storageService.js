@@ -143,3 +143,16 @@ exports.deleteFolder = async (folderPath) => {
         throw error;
     }
 };
+
+/**
+ * One-time signed upload link so the browser can send a large file (product videos) straight to
+ * storage. Serverless hosts cap API request bodies (~4.5 MB on Vercel), so videos cannot pass
+ * through the API itself.
+ */
+exports.createSignedUpload = async (folder, originalName) => {
+    const cleanName = String(originalName || 'media').replace(/[^a-zA-Z0-9.]/g, '_');
+    const filePath = `${folder}/${Date.now()}-${cleanName}`;
+    const { data, error } = await supabase.storage.from(BUCKET_NAME).createSignedUploadUrl(filePath);
+    if (error) throw error;
+    return { path: data.path || filePath, token: data.token, signedUrl: data.signedUrl, bucket: BUCKET_NAME, publicUrl: exports.getPublicMediaUrl(filePath) };
+};

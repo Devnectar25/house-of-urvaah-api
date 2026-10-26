@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const uploadController = require('../controllers/uploadController');
+const { protect, authorize } = require('../middlewares/authMiddleware');
 
 router.post('/upload-image', uploadController.uploadMiddleware, uploadController.uploadImage);
+
+// Large videos: the browser uploads straight to storage with this admin-issued signed link
+router.post('/video-upload-url', express.json(), protect, authorize('admin'), uploadController.createVideoUploadUrl);
 
 router.post('/upload-video', (req, res, next) => {
     uploadController.uploadVideoMiddleware(req, res, (err) => {
