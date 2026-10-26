@@ -157,3 +157,21 @@ exports.deleteFolder = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+// Admin: signed link for a direct browser-to-storage video upload (bypasses the API body size cap)
+exports.createVideoUploadUrl = async (req, res) => {
+    try {
+        const { fileName, contentType } = req.body || {};
+        const isVideo = (contentType && String(contentType).startsWith('video/')) ||
+            /\.(mp4|webm|mov|m4v|ogg)$/i.test(String(fileName || ''));
+        if (!fileName || !isVideo) {
+            return res.status(400).json({ success: false, message: 'Please choose a video file (MP4, WebM or MOV).' });
+        }
+        const folder = String(req.body.folderName || 'products/videos').replace(/[^a-zA-Z0-9/_-]/g, '');
+        const data = await storageService.createSignedUpload(folder, fileName);
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error creating video upload URL:', error);
+        res.status(500).json({ success: false, message: error.message || 'Could not prepare the video upload.' });
+    }
+};
