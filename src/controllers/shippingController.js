@@ -766,7 +766,7 @@ exports.viewLabelHtml = async (req, res) => {
     <div class="header">
       <div>
         <div class="logo">HOUSE OF URVAAH</div>
-        <div style="font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Haute Couture & Atelier Express</div>
+        <div style="font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Haute Couture & Store Express</div>
       </div>
       <div style="text-align: right;">
         <span class="courier-badge">${courier}</span>
@@ -801,7 +801,7 @@ exports.viewLabelHtml = async (req, res) => {
     </div>
     <div class="shipper-block">
       <div style="font-size: 8.5px; text-transform: uppercase; font-weight: bold;">IF UNDELIVERED, RETURN TO:</div>
-      <strong>HOUSE OF URVAAH ATELIER CENTRAL WAREHOUSE</strong><br>
+      <strong>HOUSE OF URVAAH CENTRAL WAREHOUSE</strong><br>
       Plot 402, Signature Industrial Estate, Kurla East, Mumbai, MH - 400024<br>
       <span style="font-family: monospace; font-size: 9px;">GSTIN: 27AABCH8821F1ZX • concierge@urvaah.com</span>
     </div>
@@ -887,7 +887,7 @@ exports.viewManifestHtml = async (req, res) => {
       <div>
         <div class="title">HOUSE OF URVAAH</div>
         <div style="font-size: 11px; color: #555; text-transform: uppercase; font-weight: bold;">Courier Dispatch Handover Manifest</div>
-        <div style="font-size: 10px; color: #666; margin-top: 2px;">Atelier Warehouse: Kurla East Hub, Mumbai 400024</div>
+        <div style="font-size: 10px; color: #666; margin-top: 2px;">Store Warehouse: Kurla East Hub, Mumbai 400024</div>
       </div>
       <div style="text-align: right;">
         <div style="font-family: monospace; font-size: 14px; font-weight: bold;">${manifestToken}</div>

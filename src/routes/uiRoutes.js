@@ -40,7 +40,7 @@ router.delete('/admin/trending-gram/:id', ...adminGuard, uiController.deleteTren
 router.get('/admin/fabric-video', ...adminGuard, uiController.getAdminFabricVideo);
 router.put('/admin/fabric-video', ...adminGuard, uiController.updateFabricVideo);
 
-// 5. Boutiques & Concierge
+// 5. Boutiques & Customer Care
 router.get('/admin/contact-info', ...adminGuard, uiController.getAdminContactInfo);
 router.put('/admin/contact-info/concierge', ...adminGuard, uiController.updateConciergeSettings);
 router.put('/admin/contact-info/boutiques-header', ...adminGuard, uiController.updateBoutiquesHeader);

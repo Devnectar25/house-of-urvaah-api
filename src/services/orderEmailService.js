@@ -226,7 +226,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
         <tr>
           <td style="padding: 14px 0; border-bottom: 1px solid #ECE7E1; font-family: 'Helvetica Neue', Arial, sans-serif;">
             <div style="font-weight: 600; color: #111111; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">
-              ${item.name || item.title || 'Atelier Garment'}
+              ${item.name || item.title || 'Store Garment'}
             </div>
             ${variantText ? `<div style="font-size: 11px; color: #777777; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.1em;">${variantText}</div>` : ''}
           </td>
@@ -271,7 +271,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
               HOUSE OF URVAAH
             </div>
             <div style="font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #777777; margin-top: 8px;">
-              OFFICIAL ATELIER ORDER CONFIRMATION
+              OFFICIAL STORE ORDER CONFIRMATION
             </div>
           </div>
 
@@ -281,7 +281,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
               Dear ${recipientName},
             </div>
             <p style="font-size: 13px; line-height: 1.8; color: #4A4A4A; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0;">
-              Thank you for choosing House of Urvaah. Your bespoke atelier order has been received and registered with Order Number 
+              Thank you for choosing House of Urvaah. Your bespoke store order has been received and registered with Order Number 
               <strong style="color: #111111; letter-spacing: 0.05em;">#${order.order_number}</strong>.
             </p>
           </div>
@@ -379,7 +379,7 @@ const sendOrderConfirmationWorkflow = async (orderId, options = {}) => {
 
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
-            HOUSE OF URVAAH ATELIER CONCIERGE<br/>
+            HOUSE OF URVAAH CUSTOMER CARE<br/>
             EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
             For inquiries, reply to this email or contact <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
@@ -499,7 +499,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
           <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
-            VIEW ATELIER ACCOUNT
+            VIEW STORE ACCOUNT
           </a>
         </div>
       `;
@@ -508,7 +508,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
       eventType = 'PAYMENT_SUCCESS';
       statusBadgeText = 'PAYMENT VERIFIED &bull; SUCCESSFUL';
       statusHeadline = 'PAYMENT CONFIRMATION';
-      statusMessage = `We have successfully received your payment of <strong>${formatINR(amount)}</strong> for Order #${order.order_number}. Your piece has moved directly into our tailoring and atelier preparation workflow.`;
+      statusMessage = `We have successfully received your payment of <strong>${formatINR(amount)}</strong> for Order #${order.order_number}. Your piece has moved directly into our tailoring and store preparation workflow.`;
       statusActionBtn = `
         <div style="text-align: center; margin: 30px 0;">
           <a href="${FRONTEND_URL}/account" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
@@ -615,7 +615,7 @@ const sendPaymentStatusWorkflow = async (orderId, paymentStatus, paymentDetails 
               HOUSE OF URVAAH
             </div>
             <div style="font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #777777; margin-top: 8px;">
-              FINANCIAL SERVICES & ATELIER ACCOUNTS
+              FINANCIAL SERVICES & STORE ACCOUNTS
             </div>
           </div>
 
@@ -919,7 +919,7 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
               HOUSE OF URVAAH
             </div>
             <div style="font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #777777; margin-top: 8px;">
-              OFFICIAL ATELIER TAX INVOICE
+              OFFICIAL STORE TAX INVOICE
             </div>
           </div>
 
@@ -995,14 +995,14 @@ const sendInvoiceWorkflow = async (orderId, options = {}) => {
           <!-- Action Button -->
           <div style="text-align: center; margin: 30px 0 20px 0;">
             <a href="${downloadLink}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
-              ACCESS INVOICE IN ATELIER ACCOUNT
+              ACCESS INVOICE IN HOUSE OF URVAAH ACCOUNT
             </a>
           </div>
 
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
             HOUSE OF URVAAH &bull; OFFICIAL TAX INVOICE<br/>
-            GSTIN &bull; REGISTERED LUXURY ATELIER<br/>
+            GSTIN &bull; REGISTERED LUXURY HOUSE<br/>
             For questions regarding this invoice, email <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
 
@@ -1187,7 +1187,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
             <tr>
               <td style="vertical-align: top;">
                 <div style="font-weight: 600; color: #111111; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1.4;">
-                  ${item.name || item.title || 'Atelier Creation'}
+                  ${item.name || item.title || 'Store Creation'}
                 </div>
                 ${variantText ? `<div style="font-size: 11px; color: #777777; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.08em;">${variantText} &bull; Qty: ${itemQty}</div>` : `<div style="font-size: 11px; color: #777777; margin-top: 4px;">Qty: ${itemQty}</div>`}
               </td>
@@ -1240,7 +1240,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
               HOUSE OF URVAAH
             </div>
             <div style="font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #777777; margin-top: 8px;">
-              DELIVERY CONFIRMATION &bull; CONCIERGE DESK
+              DELIVERY CONFIRMATION &bull; CUSTOMER CARE DESK
             </div>
           </div>
 
@@ -1260,7 +1260,7 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
               We are delighted to confirm that your House of Urvaah order <strong>#${order.order_number}</strong> has been successfully delivered on <strong>${deliveryDate}</strong>.
             </p>
             <p style="font-size: 13px; line-height: 1.8; color: #4A4A4A; font-family: 'Helvetica Neue', Arial, sans-serif; margin-top: 10px;">
-              We hope your atelier creation brings you timeless confidence and elegance.
+              We hope your store creation brings you timeless confidence and elegance.
             </p>
           </div>
 
@@ -1291,15 +1291,15 @@ const sendDeliveryConfirmationWorkflow = async (orderId, options = {}) => {
           <!-- Account Access CTA -->
           <div style="text-align: center; margin: 30px 0 15px 0;">
             <a href="${accountUrl}" class="mobile-btn" style="background-color: #111111; color: #ffffff !important; padding: 14px 34px; text-decoration: none; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; display: inline-block; box-sizing: border-box; max-width: 100%;">
-              MANAGE ORDER IN ATELIER ACCOUNT
+              MANAGE ORDER IN HOUSE OF URVAAH ACCOUNT
             </a>
           </div>
 
           <!-- Footer -->
           <div style="border-top: 1px solid #EAE6DF; padding-top: 25px; margin-top: 35px; text-align: center; font-size: 10px; color: #888888; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; letter-spacing: 0.1em; text-transform: uppercase;">
-            HOUSE OF URVAAH &bull; BESPOKE LUXURY ATELIER<br/>
+            HOUSE OF URVAAH &bull; BESPOKE LUXURY HOUSE<br/>
             EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
-            For concierge assistance, reach us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
+            For customer care assistance, reach us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #111111; text-decoration: underline;">${SUPPORT_EMAIL}</a>
           </div>
 
         </div>

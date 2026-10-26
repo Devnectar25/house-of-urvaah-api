@@ -619,10 +619,10 @@ exports.updateFabricVideo = async (req, res) => {
 };
 
 // ==========================================
-// 5. ATELIER CONCIERGE & BOUTIQUE LOCATIONS
+// 5. CUSTOMER CARE & BOUTIQUE LOCATIONS
 // ==========================================
 
-// Public GET: Contact Info (Concierge + Active Boutiques)
+// Public GET: Contact Info (Customer Care + Active Boutiques)
 exports.getPublicContactInfo = async (req, res) => {
   try {
     // Independent reads: run in parallel (one DB round trip of latency instead of two)
@@ -642,7 +642,7 @@ exports.getPublicContactInfo = async (req, res) => {
     if (!concierge) {
       concierge = {
         section_badge: 'CLIENT SERVICES',
-        section_title: 'ATELIER CONCIERGE',
+        section_title: 'CUSTOMER CARE',
         email: 'houseofurvaah@gmail.com',
         phone: '+91 98333 25657',
         hours: 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
@@ -652,7 +652,7 @@ exports.getPublicContactInfo = async (req, res) => {
     const locations = boutiquesResult.rows;
     const headerInfo = locations[0] || {
       section_badge: 'FLAGSHIP BOUTIQUES',
-      section_title: 'ATELIER LOCATIONS'
+      section_title: 'STORE LOCATIONS'
     };
 
     const primaryLocation = locations.find(l => l.is_primary) || locations[0] || null;
@@ -663,7 +663,7 @@ exports.getPublicContactInfo = async (req, res) => {
         concierge,
         boutiques: {
           section_badge: headerInfo.section_badge || 'FLAGSHIP BOUTIQUES',
-          section_title: headerInfo.section_title || 'ATELIER LOCATIONS',
+          section_title: headerInfo.section_title || 'STORE LOCATIONS',
           locations
         },
         primary_location: primaryLocation
@@ -675,7 +675,7 @@ exports.getPublicContactInfo = async (req, res) => {
   }
 };
 
-// Admin GET: Contact Info (Concierge + All Boutiques)
+// Admin GET: Contact Info (Customer Care + All Boutiques)
 exports.getAdminContactInfo = async (req, res) => {
   try {
     let conciergeResult = await pool.query(
@@ -686,7 +686,7 @@ exports.getAdminContactInfo = async (req, res) => {
     if (!concierge) {
       const inserted = await pool.query(
         `INSERT INTO ui_concierge_settings (section_badge, section_title, email, phone, hours)
-         VALUES ('CLIENT SERVICES', 'ATELIER CONCIERGE', 'houseofurvaah@gmail.com', '+91 98333 25657', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
+         VALUES ('CLIENT SERVICES', 'CUSTOMER CARE', 'houseofurvaah@gmail.com', '+91 98333 25657', 'Monday – Saturday: 10:00 AM – 8:00 PM IST')
          RETURNING *`
       );
       concierge = inserted.rows[0];
@@ -699,7 +699,7 @@ exports.getAdminContactInfo = async (req, res) => {
     const locations = boutiquesResult.rows;
     const headerInfo = locations[0] || {
       section_badge: 'FLAGSHIP BOUTIQUES',
-      section_title: 'ATELIER LOCATIONS'
+      section_title: 'STORE LOCATIONS'
     };
 
     res.json({
@@ -708,7 +708,7 @@ exports.getAdminContactInfo = async (req, res) => {
         concierge,
         boutiques: {
           section_badge: headerInfo.section_badge || 'FLAGSHIP BOUTIQUES',
-          section_title: headerInfo.section_title || 'ATELIER LOCATIONS',
+          section_title: headerInfo.section_title || 'STORE LOCATIONS',
           locations
         }
       }
@@ -719,7 +719,7 @@ exports.getAdminContactInfo = async (req, res) => {
   }
 };
 
-// Admin PUT: Update Concierge Settings
+// Admin PUT: Update Customer Care Settings
 exports.updateConciergeSettings = async (req, res) => {
   try {
     const { section_badge, section_title, email, phone, hours } = req.body;
@@ -734,7 +734,7 @@ exports.updateConciergeSettings = async (req, res) => {
          RETURNING *`,
         [
           section_badge || 'CLIENT SERVICES',
-          section_title || 'ATELIER CONCIERGE',
+          section_title || 'CUSTOMER CARE',
           email || 'houseofurvaah@gmail.com',
           phone || '+91 98333 25657',
           hours || 'Monday – Saturday: 10:00 AM – 8:00 PM IST'
@@ -758,12 +758,12 @@ exports.updateConciergeSettings = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Concierge services updated successfully',
+      message: 'Customer Care services updated successfully',
       data: result.rows[0]
     });
   } catch (error) {
-    console.error('[UI] Error updating concierge settings:', error);
-    res.status(500).json({ success: false, message: 'Failed to update concierge settings', error: error.message });
+    console.error('[UI] Error updating customer care settings:', error);
+    res.status(500).json({ success: false, message: 'Failed to update customer care settings', error: error.message });
   }
 };
 
@@ -819,7 +819,7 @@ exports.createBoutiqueLocation = async (req, res) => {
     // Use existing badge & title if not provided
     const existingHeaderRes = await pool.query(`SELECT section_badge, section_title FROM ui_boutique_locations LIMIT 1`);
     const badgeVal = section_badge || (existingHeaderRes.rows[0]?.section_badge) || 'FLAGSHIP BOUTIQUES';
-    const titleVal = section_title || (existingHeaderRes.rows[0]?.section_title) || 'ATELIER LOCATIONS';
+    const titleVal = section_title || (existingHeaderRes.rows[0]?.section_title) || 'STORE LOCATIONS';
 
     const result = await pool.query(
       `INSERT INTO ui_boutique_locations 

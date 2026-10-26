@@ -189,9 +189,9 @@ const sendPasswordResetEmail = async (email, resetUrl) => {
     <body>
       <div class="container">
         <div class="logo">HOUSE OF URVAAH</div>
-        <div class="title">RESET YOUR ATELIER PASSWORD</div>
+        <div class="title">RESET YOUR STORE PASSWORD</div>
         <div class="content">
-          <p>We received a request to reset the password associated with your House of Urvaah Atelier account.</p>
+          <p>We received a request to reset the password associated with your House of Urvaah account.</p>
           <p>Please click the link below to establish a new password. If you did not make this request, you may safely ignore this email.</p>
         </div>
         <a href="${resetUrl}" class="btn">RESET PASSWORD</a>
@@ -247,7 +247,7 @@ const sendOtpEmail = async (email, otp) => {
           This code is valid for <strong>10 minutes</strong>. For your security, do not share this code with anyone.
         </div>
         <div class="footer">
-          HOUSE OF URVAAH CONCIERGE &bull; SECURE LOGIN VERIFICATION
+          HOUSE OF URVAAH CUSTOMER CARE &bull; SECURE LOGIN VERIFICATION
         </div>
       </div>
     </body>
@@ -317,12 +317,12 @@ const sendStockAlertEmail = async ({
     <body>
       <div class="container">
         <div class="brand-header">HOUSE OF URVAAH</div>
-        <div class="status-badge">BACK IN ATELIER</div>
+        <div class="status-badge">BACK IN HOUSE OF URVAAH</div>
         <div class="title">RESTOCKED BY POPULAR DEMAND</div>
         
         <div class="message">
           <p>${customerGreeting}</p>
-          <p>We are delighted to inform you that your coveted silhouette is once again available in our atelier. As requested, you are among the first to receive this priority notification.</p>
+          <p>We are delighted to inform you that your coveted silhouette is once again available in House of Urvaah. As requested, you are among the first to receive this priority notification.</p>
         </div>
 
         <div class="product-card">
@@ -352,7 +352,7 @@ const sendStockAlertEmail = async ({
         </div>
 
         <div class="footer">
-          HOUSE OF URVAAH ATELIER CONCIERGE<br/>
+          HOUSE OF URVAAH CUSTOMER CARE<br/>
           To manage notification preferences or opt-out, <a href="${unsubscribeUrl}" class="unsubscribe-link">click here to unsubscribe</a>.
         </div>
       </div>
@@ -426,7 +426,7 @@ const sendStockSubscriptionConfirmationEmail = async ({
         <div class="message">
           <p>${customerGreeting}</p>
           <p>Thank you for your interest in House of Urvaah. We have recorded your notification request for <strong>${productTitle}</strong>${size ? ` (Size: <strong>${size}</strong>)` : ''}.</p>
-          <p>The moment our atelier restocks this coveted silhouette, you will be the very first to receive an exclusive notification to secure your piece before it sells out.</p>
+          <p>The moment our store restocks this coveted silhouette, you will be the very first to receive an exclusive notification to secure your piece before it sells out.</p>
         </div>
 
         <div class="product-card">
@@ -440,7 +440,7 @@ const sendStockSubscriptionConfirmationEmail = async ({
         </div>
 
         <div class="footer">
-          HOUSE OF URVAAH ATELIER CONCIERGE<br/>
+          HOUSE OF URVAAH CUSTOMER CARE<br/>
           EASTERN WINDS, 1402, E WING &bull; KURLA EAST, MUMBAI 400070<br/>
           ${unsubscribeUrl ? `To manage preferences or opt-out, <a href="${unsubscribeUrl}" class="unsubscribe-link">click here to unsubscribe</a>.` : ''}
         </div>
