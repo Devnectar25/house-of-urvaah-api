@@ -277,7 +277,13 @@ exports.getInvoiceData = async (orderId, options = {}) => {
 
     const paymentMethodRaw = String(order.payment_method || 'Online').toUpperCase();
     const isCod = paymentMethodRaw === 'COD' || paymentMethodRaw.includes('CASH');
-    const isDelivered = String(order.status || '').toLowerCase() === 'delivered';
+    const orderStatusLower = String(order.status || '').toLowerCase();
+    const isDelivered = orderStatusLower === 'delivered' ||
+        orderStatusLower === 'return qc rejected' ||
+        orderStatusLower === 'return rejected' ||
+        orderStatusLower === 'replace rejected' ||
+        String(order.return_qc_status || '').toLowerCase() === 'rejected' ||
+        Boolean(order.delivered_at);
     const paymentStatusRaw = (isCod && isDelivered) ? 'PAID' : String(order.payment_status || 'Paid').toUpperCase();
     const isPaid = paymentStatusRaw === 'PAID';
 

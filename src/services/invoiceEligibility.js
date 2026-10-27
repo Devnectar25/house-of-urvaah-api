@@ -12,7 +12,7 @@ const HIDDEN_ITEM_STATUSES = [
     'cancelled', 'cancellation requested', 'cancel_requested', 'cancel_approved',
     'return requested', 'return request processing', 'return approved', 'return processing',
     'return collected', 'in transit to house of urvaah', 'received at house of urvaah',
-    'received at homved', 'returned', 'refunded', 'restocked', 'return qc rejected'
+    'received at homved', 'returned', 'refunded', 'restocked'
 ];
 
 // Order statuses meaning the forward parcel has not (verifiably) reached the customer
@@ -27,6 +27,9 @@ const lower = (v) => String(v || '').trim().toLowerCase();
 const isOrderDeliveryVerified = (order) => {
     const st = lower(order.status);
     if (UNDELIVERED_ORDER_STATUSES.includes(st)) return false;
+    // An order whose return or replacement was rejected was delivered to the customer
+    if (st === 'return qc rejected' || st === 'return rejected' || st === 'replace rejected' || st === 'replacement rejected') return true;
+    if (lower(order.return_qc_status) === 'rejected') return true;
     return Boolean(order.delivered_at) || st === 'delivered' || lower(order.original_status) === 'delivered';
 };
 
@@ -38,10 +41,21 @@ const isPaymentAcceptable = (order) => {
     return isCod || (pay !== 'pending' && pay !== '');
 };
 
-const isItemInvoiceEligible = (item) => {
-    const st = lower(item.status);
+const isItemInvoiceEligible = (item, order = null) => {
+    const st = lower(item?.status);
+    const orderSt = lower(order?.status);
+    const isOrderQCRejected = orderSt === 'return qc rejected' || orderSt === 'return rejected' || lower(order?.return_qc_status) === 'rejected';
+
+    // An item whose return was QC rejected or return rejected is retained by customer / not refunded,
+    // so it remains invoiceable.
+    if (st === 'return qc rejected' || st === 'return rejected' || st === 'replace rejected' || st === 'replacement rejected') {
+        return true;
+    }
+    if (isOrderQCRejected && (st === 'delivered' || !HIDDEN_ITEM_STATUSES.includes(st))) {
+        return true;
+    }
     if (HIDDEN_ITEM_STATUSES.includes(st)) return false;
-    if (lower(item.return_action) === 'return') return false;
+    if (!isOrderQCRejected && lower(item?.return_action) === 'return') return false;
     return true;
 };
 
@@ -57,7 +71,7 @@ const getInvoiceEligibility = (order) => {
         return { eligible: false, eligibleItems: [], reason: 'Invoice is available once your order has been delivered.' };
     }
     const items = Array.isArray(order.items) ? order.items : [];
-    const eligibleItems = items.filter(isItemInvoiceEligible);
+    const eligibleItems = items.filter(it => isItemInvoiceEligible(it, order));
     if (eligibleItems.length === 0) {
         return { eligible: false, eligibleItems: [], reason: 'No delivered items on this order are eligible for an invoice.' };
     }
