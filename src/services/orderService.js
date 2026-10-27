@@ -617,6 +617,13 @@ exports.createOrder = async (orderData) => {
     }
 };
 
+// Return / replacement requests waiting for the admin are listed first (newest request first)
+const PENDING_REQUEST_STATUSES = ['Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Requested', 'Replacement Request Processing', 'Return & Replacement Requested'];
+const PENDING_REQUEST_SQL_LIST = PENDING_REQUEST_STATUSES.map((st) => `'${st}'`).join(', ');
+const PENDING_REQUEST_ORDER_SQL = `
+            CASE WHEN o.status IN (${PENDING_REQUEST_SQL_LIST}) THEN 0 ELSE 1 END ASC,
+            CASE WHEN o.status IN (${PENDING_REQUEST_SQL_LIST}) THEN COALESCE(o.return_request_at, o.updated_at) END DESC NULLS LAST,`;
+
 exports.getAllOrders = async (options = {}) => {
     const { limit = 10, offset = 0, status, paymentStatus } = options;
 
@@ -731,7 +738,7 @@ exports.getAllOrders = async (options = {}) => {
                     ), '[]'::json
                 ) as items
          ${baseQuery}
-         ORDER BY o.created_at DESC
+         ORDER BY ${PENDING_REQUEST_ORDER_SQL} o.created_at DESC
          LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
         queryParams
     );
@@ -1611,11 +1618,24 @@ exports.getOrderStats = async () => {
 
 // orders.replacement_stock_deducted marks that the replacement size was taken out of stock on
 // approval, so it is never deducted twice and is only given back if it was actually deducted.
+// orders.return_stock_restored does the same for returned items put back into stock: a QC rejection
+// only takes stock back out when it was really added (NULL = order from before this column existed).
 let replacementStockColumnReady = false;
 const ensureReplacementStockColumn = async () => {
     if (replacementStockColumnReady) return;
     await pool.query('ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_stock_deducted BOOLEAN DEFAULT FALSE');
+    await pool.query('ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS return_stock_restored BOOLEAN');
     replacementStockColumnReady = true;
+};
+
+// Whether a return's items were actually put back into stock. Older orders have no flag, so infer it
+// from the states that restock (QC accepted / restocked).
+const wasReturnStockRestored = (order) => {
+    if (order.return_stock_restored === true) return true;
+    if (order.return_stock_restored === false) return false;
+    return order.return_qc_status === 'Accepted' ||
+        order.logistics_status === 'Restocked' ||
+        order.refund_status === 'Restocked';
 };
 
 // Adjust one size of a product's stock inside the caller's transaction. delta < 0 deducts.
@@ -2841,7 +2861,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         if (status === 'Cancelled' || (isReturnArrival && isQcAcceptedNow)) {
             // Only restore if not already restocked
-            const alreadyRestocked = (oldOrder.is_product_received === true && oldOrder.return_qc_status === 'Accepted');
+            const alreadyRestocked = (oldOrder.is_product_received === true && oldOrder.return_qc_status === 'Accepted') ||
+                (status !== 'Cancelled' && oldOrder.return_stock_restored === true);
             if (!alreadyRestocked) {
                 let itemsToRestore = [];
                 if (itemIds && itemIds.length > 0) {
@@ -2909,6 +2930,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     console.log(`[INVENTORY RESTORED] Restored ${restoreQty} units (Size: ${itemSize || 'General'}) for Product #${item.product_id}`);
                 }
 
+                if (status !== 'Cancelled' && itemsToRestore.length > 0) {
+                    await client.query(`UPDATE orders SET return_stock_restored = TRUE WHERE id = $1::uuid`, [orderId]);
+                }
+
                 if (status === 'Cancelled') {
                     await client.query(
                         `UPDATE order_items SET status = 'Cancelled' WHERE order_id = $1 AND (status IS NULL OR (status != 'Cancelled' AND status != 'Returned' AND status != 'Refunded'))`,
@@ -2920,9 +2945,11 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         // ── INVENTORY REVERSION IF RETURN IS QC REJECTED (DAMAGED / WRONG ITEM) ──
         if (status === 'Return QC Rejected' || status === 'Return Rejected') {
-            const hadRestocked = oldOrder.is_product_received === true || 
-                                 oldStatus === 'Received at House of Urvaah' || 
-                                 oldStatus === 'Received at Homved';
+            // Receiving the parcel alone does not restock (that waits for QC), so only reverse a real restock
+            const hadRestocked = wasReturnStockRestored(oldOrder);
+            if (!hadRestocked) {
+                console.log(`[INVENTORY AUTOMATION] QC rejected for order ${orderId}: stock was never restored, leaving inventory unchanged`);
+            }
             if (hadRestocked) {
                 console.log(`[INVENTORY AUTOMATION] Reverting previously restored stock for order ${orderId} because QC was rejected (damaged/wrong item)`);
                 const itemsResult = await client.query(
@@ -2961,6 +2988,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         [item.product_id, deductQty, JSON.stringify(updatedSizeStock)]
                     );
                 }
+                await client.query(`UPDATE orders SET return_stock_restored = FALSE WHERE id = $1::uuid`, [orderId]);
             }
         }
 
@@ -3122,6 +3150,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 };
 
 exports.updateRefundStatus = async (orderId, refundData) => {
+    await ensureReplacementStockColumn().catch(err => console.warn('[OrderService] Could not ensure return_stock_restored column:', err.message));
     const { refundStatus, adminNote, txnId, receiptUrl, notifyCustomer, bankDetails } = refundData;
     let validBank = bankDetails;
     if (bankDetails) {
@@ -3379,7 +3408,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             newLogistics === 'Delivered to House of Urvaah' || 
             newLogistics === 'Restocked' || 
             refundStatus === 'Restocked'
-        ) && !oldIsProductReceived;
+        ) && !oldIsProductReceived && !wasReturnStockRestored(oldOrder);
 
         if (reachedReceived) {
             const itemsResult = await client.query(`SELECT product_id, quantity, size FROM order_items WHERE order_id = $1${refundScopeSql}`, [order.id]);
@@ -3420,6 +3449,9 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                     [item.product_id, restoreQty, JSON.stringify(updatedSizeStock)]
                 );
                 console.log(`[LOGISTICS INVENTORY RESTORED] Restored ${restoreQty} units (Size: ${itemSize || 'General'}) for Product #${item.product_id}`);
+            }
+            if (itemsResult.rows.length > 0) {
+                await client.query(`UPDATE orders SET return_stock_restored = TRUE WHERE id = $1::uuid`, [order.id]);
             }
         }
 
