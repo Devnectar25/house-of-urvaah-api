@@ -17,7 +17,7 @@ const groqService = require('./groqService');
  *  8.   Direct product search (ILIKE) — only for product-likely queries
  *  9.   Keyword-level product search
  *  10.  Fuzzy product search
- *  11.  Groq LLM Fashion Concierge (3-key fallback switch, website-only scope)
+ *  11.  Groq LLM Customer Care (3-key fallback switch, website-only scope)
  */
 
 // ─── In-Memory Session Context ────────────────────────────────────────────────
@@ -592,7 +592,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         return {
             answer: language === 'hi'
                 ? "नमस्ते! मैं हाउस ऑफ उर्वाह कंसिएर्ज हूँ, आपका स्टाइल और फैशन सहायक। 🌿\nआज मैं आपकी कैसे मदद कर सकता हूँ? आप मुझसे इनके बारे में पूछ सकते हैं:\n• उत्पाद (जैसे \"कुर्ती\", \"साड़ी\")\n• आकार, मूल्य निर्धारण, शिपिंग, रिटर्न या कंपनी की जानकारी"
-                : "Hello! I'm House of Urvaah Concierge, your fashion & style assistant. 🌿\nHow can I help you today? You can ask me about:\n• Products (e.g. \"Dresses\", \"Sarees\")\n• Sizes, pricing, shipping, returns, or company info",
+                : "Hello! I'm House of Urvaah Customer Care, your fashion & style assistant. 🌿\nHow can I help you today? You can ask me about:\n• Products (e.g. \"Dresses\", \"Sarees\")\n• Sizes, pricing, shipping, returns, or company info",
             intent: 'greeting',
             confidence: 1.0,
             products: []
@@ -744,13 +744,13 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             pattern: /(who\s+(is|are|was)\s+(the\s+)?(owner|founder|ceo|director|co-founder)(\s+of\s+(this\s+company|urvaah|house\s+of\s+urvaah|your\s+company|the\s+brand))?|who\s+(started|runs|owns|founded)\s+(urvaah|house\s+of\s+urvaah|this\s+company|this\s+brand)|about\s+(urvaah|house\s+of\s+urvaah|your\s+company|your\s+brand)|who\s+created\s+(urvaah|house\s+of\s+urvaah)|कौन\s+है\s+(मालिक|संस्थापक)\s*(उर्वाह|कंपनी)?)/i,
             answer: language === 'hi'
                 ? "हाउस ऑफ उर्वाह (House of Urvaah) एक विशेष लक्जरी फैशन लेबल है जिसे एक समर्पित टीम द्वारा सुरुचिपूर्ण, कालातीत परिधान लाने के लिए बनाया गया है।\n\nविशिष्ट नेतृत्व या पूछताछ के लिए, कृपया houseofurvaah@gmail.com पर संपर्क करें।"
-                : "House of Urvaah is a luxury fashion label founded and curated by a dedicated design team committed to bringing timeless, architectural couture and contemporary silhouettes to life.\n\nFor specific leadership, press, or atelier inquiries, please visit our About page or contact us at houseofurvaah@gmail.com."
+                : "House of Urvaah is a luxury fashion label founded and curated by a dedicated design team committed to bringing timeless, architectural couture and contemporary silhouettes to life.\n\nFor specific leadership, press, or store inquiries, please visit our About page or contact us at houseofurvaah@gmail.com."
         },
         {
             pattern: /(\b(owner|founder|ceo|director|co-founder)\b.*\b(urvaah|house\s+of\s+urvaah|company|brand)\b|(मालिक|संस्थापक|प्रमुख).*(उर्वाह|कंपनी))/i,
             answer: language === 'hi'
                 ? "हाउस ऑफ उर्वाह की स्थापना और प्रबंधन एक समर्पित डिजाइन टीम द्वारा किया जाता है।\n\nनेतृत्व के विवरण के लिए, कृपया हमारे 'हमारे बारे में' (About) पृष्ठ पर जाएं या houseofurvaah@gmail.com पर हमसे संपर्क करें।"
-                : "House of Urvaah is founded and designed by a passionate creative atelier team.\n\nFor brand stories and leadership details, please visit our About page or contact us at houseofurvaah@gmail.com."
+                : "House of Urvaah is founded and designed by a passionate creative store team.\n\nFor brand stories and leadership details, please visit our About page or contact us at houseofurvaah@gmail.com."
         },
         {
             pattern: /(about\s+(urvaah|house\s+of\s+urvaah|the\s+company|your\s+brand|your\s+company)|(उर्वाह|कंपनी|हमारे)\s+बारे\s+में)/i,
@@ -777,7 +777,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             return {
                 answer: language === 'hi'
                     ? `हाउस ऑफ उर्वाह संग्रह में वर्तमान में ${total} विशेष लक्जरी परिधान उपलब्ध हैं। आप कोर्सेट, ब्लूम सेट, या कुर्तियों के बारे में पूछ सकते हैं!`
-                    : `We currently have ${total} exclusive luxury designer pieces available in the House of Urvaah atelier collection. You can search for specific silhouettes like corsets, bloom sets, or kurtis!`,
+                    : `We currently have ${total} exclusive luxury designer pieces available in the House of Urvaah collection. You can search for specific silhouettes like corsets, bloom sets, or kurtis!`,
                 intent: 'inventory_info',
                 confidence: 1.0,
                 products: []
@@ -852,7 +852,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             pattern: /\b(contact|support|email|phone|call\s*us|customer\s*care|helpline)\b/i,
             answer: language === 'hi'
                 ? "हमसे संपर्क करें:\n📧 ईमेल: houseofurvaah@gmail.com\n📞 फोन: +91 98333 25657\n⏰ समय: सोमवार से शनिवार, सुबह 9:00 बजे से शाम 6:00 बजे तक\n\nहमारी कंसीयर्ज टीम सहायता के लिए सदैव तत्पर है!"
-                : "House of Urvaah Concierge Support:\n📧 Email: houseofurvaah@gmail.com\n📞 Phone: +91 98333 25657\n⏰ Hours: Monday – Saturday, 9:00 AM – 6:00 PM IST\n\nOur client service team typically responds within 24 business hours!",
+                : "House of Urvaah Customer Care Support:\n📧 Email: houseofurvaah@gmail.com\n📞 Phone: +91 98333 25657\n⏰ Hours: Monday – Saturday, 9:00 AM – 6:00 PM IST\n\nOur client service team typically responds within 24 business hours!",
             intent: 'contact_info'
         },
         {
@@ -873,21 +873,21 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             pattern: /(cancel\s*order|order\s*cancellation|how\s*to\s*cancel|can\s*i\s*cancel)/i,
             answer: language === 'hi'
                 ? "ऑर्डर रद्द करना:\n• आप ऑर्डर देने के 12 घंटों के भीतर houseofurvaah@gmail.com या +91 98333 25657 पर संपर्क करके रद्द कर सकते हैं।\n• डिस्पैच के बाद, आप 7-दिवसीय आसान वापसी नीति का लाभ ले सकते हैं।"
-                : "Order Cancellation:\n• Orders can be cancelled within 12 hours of placement before entering our atelier dispatch process.\n• Email houseofurvaah@gmail.com or call +91 98333 25657 with your Order ID.\n• If already shipped, you can simply utilize our 7-day hassle-free return upon delivery.",
+                : "Order Cancellation:\n• Orders can be cancelled within 12 hours of placement before entering our store dispatch process.\n• Email houseofurvaah@gmail.com or call +91 98333 25657 with your Order ID.\n• If already shipped, you can simply utilize our 7-day hassle-free return upon delivery.",
             intent: 'cancellation_info'
         },
         {
             pattern: /(store\s*location|physical\s*store|offline\s*store|where\s*(is|are)\s*(your\s*store|you\s*located)|address\s*of\s*(urvaah|store))/i,
             answer: language === 'hi'
                 ? "स्टोर की जानकारी:\n• हाउस ऑफ उर्वाह एक विशेष डिजाइनर बुटीक है जो houseofurvaah.com के माध्यम से संचालित होता है और पूरे भारत में सुरक्षित डिलीवरी करता है।\n• निजी कंसीयर्ज पूछताछ के लिए, houseofurvaah@gmail.com पर संपर्क करें।"
-                : "Store & Atelier Information:\n• House of Urvaah operates exclusively via our official online flagship boutique (houseofurvaah.com), delivering nationwide with premium express couriers.\n• For bespoke styling appointments, bridal consultations, or press inquiries, please write to us at houseofurvaah@gmail.com or call +91 98333 25657.",
+                : "Store & Store Information:\n• House of Urvaah operates exclusively via our official online flagship boutique (houseofurvaah.com), delivering nationwide with premium express couriers.\n• For bespoke styling appointments, bridal consultations, or press inquiries, please write to us at houseofurvaah@gmail.com or call +91 98333 25657.",
             intent: 'store_location'
         },
         {
             pattern: /(size\s*chart|sizing|size\s*guide|fit\s*guide|what\s*size|measurements?)/i,
             answer: language === 'hi'
                 ? "आकार और फिटिंग गाइड (Size Guide):\n• हमारे उत्पाद XS, S, M, L, XL आकारों में उपलब्ध हैं।\n• हमारे कई विशेष टॉप्स और कोर्सेट में एडजस्टेबल लेस-अप बैक दिया गया है ताकि आपको सही और आरामदायक फिटिंग मिले।\n• प्रत्येक उत्पाद पृष्ठ पर विस्तृत साइज चार्ट उपलब्ध है।"
-                : "Size & Fit Guide:\n• Standard sizing: XS, S, M, L, XL\n• Many of our signature tops and corsets feature adjustable lace-up backs for a custom, tailored silhouette.\n• Detailed bust, waist, and hip measurements are available on each product page under 'Size Guide'.\n• If you are between sizes, we recommend sizing up for structured pieces or contacting our concierge for bespoke sizing advice!",
+                : "Size & Fit Guide:\n• Standard sizing: XS, S, M, L, XL\n• Many of our signature tops and corsets feature adjustable lace-up backs for a custom, tailored silhouette.\n• Detailed bust, waist, and hip measurements are available on each product page under 'Size Guide'.\n• If you are between sizes, we recommend sizing up for structured pieces or contacting our customer care for bespoke sizing advice!",
             intent: 'size_guide'
         },
         {
@@ -1091,9 +1091,9 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         }
     }
 
-    // ── Stage 11: Groq LLM Fashion Concierge (3-key fallback switch, website-only scope) ─────
+    // ── Stage 11: Groq LLM Customer Care (3-key fallback switch, website-only scope) ─────
     try {
-        console.log(`🤖 Invoking Groq LLM Concierge for query: "${sanitizedQuery}"...`);
+        console.log(`🤖 Invoking Groq LLM Customer Care for query: "${sanitizedQuery}"...`);
         const sessionHistory = session?.history || [];
         const llmResult = await groqService.generateChatResponse(sanitizedQuery, sessionHistory, language);
 

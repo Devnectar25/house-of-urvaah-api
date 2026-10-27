@@ -47,3 +47,18 @@ temp/
 *.patch
 *.diff
 
+
+# Local-only test, debug & one-off maintenance files (kept on disk, not in the repo)
+scratch/
+tests/
+test_all_shiprocket_apis.js
+scripts/backup_oct12_test_orders.json
+scripts/check_hou.js
+scripts/check_qc_cols.js
+scripts/fix_online_payments.js
+scripts/inspect_db_schema.js
+scripts/inspect_order.js
+scripts/test_email_workflows.js
+scripts/test_notify_flow.js
+scripts/test_stock_notifications.js
+src/db_fix_calculations_v2.js

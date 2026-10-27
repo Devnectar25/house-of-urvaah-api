@@ -58,13 +58,23 @@ exports.uploadFromFile = async (filePath, destinationPath, contentType) => {
 
 exports.uploadBuffer = async (buffer, filePath, contentType = 'application/pdf') => {
     try {
-        const fileExt = filePath.split('.').pop();
-        const finalPath = filePath.includes('.') ? filePath : `${filePath}.${contentType.split('/')[1] || 'bin'}`;
+        const fileExt = filePath.split('.').pop()?.toLowerCase();
+        let finalContentType = contentType;
+        if (!finalContentType || finalContentType === 'application/octet-stream' || finalContentType === 'application/pdf') {
+            if (fileExt === 'mp4' || fileExt === 'm4v') finalContentType = 'video/mp4';
+            else if (fileExt === 'webm') finalContentType = 'video/webm';
+            else if (fileExt === 'mov') finalContentType = 'video/quicktime';
+            else if (fileExt === 'ogg') finalContentType = 'video/ogg';
+            else if (fileExt === 'jpg' || fileExt === 'jpeg') finalContentType = 'image/jpeg';
+            else if (fileExt === 'png') finalContentType = 'image/png';
+            else if (fileExt === 'webp') finalContentType = 'image/webp';
+        }
+        const finalPath = filePath.includes('.') ? filePath : `${filePath}.${finalContentType.split('/')[1] || 'bin'}`;
 
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(finalPath, buffer, {
-                contentType,
+                contentType: finalContentType,
                 upsert: true
             });
 
@@ -132,4 +142,17 @@ exports.deleteFolder = async (folderPath) => {
     } catch (error) {
         throw error;
     }
+};
+
+/**
+ * One-time signed upload link so the browser can send a large file (product videos) straight to
+ * storage. Serverless hosts cap API request bodies (~4.5 MB on Vercel), so videos cannot pass
+ * through the API itself.
+ */
+exports.createSignedUpload = async (folder, originalName) => {
+    const cleanName = String(originalName || 'media').replace(/[^a-zA-Z0-9.]/g, '_');
+    const filePath = `${folder}/${Date.now()}-${cleanName}`;
+    const { data, error } = await supabase.storage.from(BUCKET_NAME).createSignedUploadUrl(filePath);
+    if (error) throw error;
+    return { path: data.path || filePath, token: data.token, signedUrl: data.signedUrl, bucket: BUCKET_NAME, publicUrl: exports.getPublicMediaUrl(filePath) };
 };

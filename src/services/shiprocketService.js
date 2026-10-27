@@ -160,7 +160,7 @@ exports.getConfigStatus = async () => {
         active_mode: mock ? 'MOCK / SIMULATED' : 'LIVE PRODUCTION SHIPROCKET',
         credentials_configured: hasCreds,
         email_set: Boolean(process.env.SHIPROCKET_EMAIL),
-        pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Atelier',
+        pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Store',
         pickup_pincode: process.env.SHIPROCKET_PICKUP_PINCODE || '411001',
         token_cached: Boolean(cachedToken),
         auth_verified: authVerified,
@@ -298,7 +298,7 @@ exports.createForwardShipment = async (order) => {
     const payload = {
         order_id: String(order.order_number || order.id),
         order_date: order.created_at || new Date().toISOString().replace('T', ' ').substring(0, 16),
-        pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Atelier',
+        pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION_NAME || 'Primary Store',
         billing_customer_name: rawFirst,
         billing_last_name: rawLast,
         billing_address: rawAddress,
@@ -407,7 +407,7 @@ exports.schedulePickup = async (shipmentIds) => {
             response: {
                 pickup_token_number: tokenNumber,
                 pickup_scheduled_date: pickupDate,
-                message: 'Courier pickup scheduled successfully from House of Urvaah Atelier.'
+                message: 'Courier pickup scheduled successfully from House of Urvaah.'
             }
         };
     }
@@ -443,13 +443,13 @@ exports.trackShipment = async (awbCode) => {
                 current_status: 'IN TRANSIT',
                 awb_code: cleanAwb,
                 etd: new Date(now.getTime() + 48 * 3600000).toISOString().replace('T', ' ').substring(0, 19),
-                origin: 'House of Urvaah Atelier (Mumbai)',
+                origin: 'House of Urvaah (Mumbai)',
                 destination: 'Customer City Hub',
                 scans: [
                     {
                         date: dateStr(24),
                         activity: 'Shipment Created and Manifested',
-                        location: 'Urvaah Atelier'
+                        location: 'Urvaah'
                     },
                     {
                         date: dateStr(18),
@@ -491,7 +491,7 @@ exports.trackShipment = async (awbCode) => {
                 current_status: trackItem.current_status || realData.current_status || 'IN TRANSIT',
                 awb_code: cleanAwb,
                 etd: trackItem.etd || realData.etd || null,
-                origin: trackItem.origin || realData.origin || 'House of Urvaah Atelier',
+                origin: trackItem.origin || realData.origin || 'House of Urvaah',
                 destination: trackItem.destination || realData.destination || 'Customer Location',
                 scans: normalizedScans.length > 0 ? normalizedScans : [
                     {
@@ -799,10 +799,10 @@ exports.trackReturnParcel = async (awbCode) => {
             tracking_data: {
                 track_status: 1,
                 shipment_status: 'RETURN_IN_TRANSIT',
-                current_status: 'In Transit to Atelier',
+                current_status: 'In Transit to House of Urvaah',
                 awb_code: cleanAwb,
                 origin: 'Customer Doorstep',
-                destination: 'House of Urvaah Atelier',
+                destination: 'House of Urvaah',
                 scans: [
                     {
                         date: new Date(Date.now() - 24 * 3600000).toISOString().replace('T', ' ').substring(0, 19),
@@ -836,10 +836,10 @@ exports.trackReturnParcel = async (awbCode) => {
             tracking_data: {
                 track_status: realData.track_status ?? 1,
                 shipment_status: trackItem.current_status || realData.shipment_status || 'RETURN_IN_TRANSIT',
-                current_status: trackItem.current_status || realData.current_status || 'In Transit to Atelier',
+                current_status: trackItem.current_status || realData.current_status || 'In Transit to House of Urvaah',
                 awb_code: cleanAwb,
                 origin: trackItem.origin || realData.origin || 'Customer Doorstep',
-                destination: trackItem.destination || realData.destination || 'House of Urvaah Atelier',
+                destination: trackItem.destination || realData.destination || 'House of Urvaah',
                 scans: normalizedScans
             },
             raw_response: response.data
@@ -908,10 +908,11 @@ exports.handleWebhookEvent = async (payload) => {
         mappedStatus = 'Shipped';
     } else if (s.includes('OUT FOR DELIVERY')) {
         mappedStatus = 'Out for Delivery';
+    } else if (s.includes('RTO DELIVERED') || s.includes('RETURN DELIVERED')) {
+        // Checked before plain DELIVERED: an RTO parcel delivered back to us must not mark the order Delivered
+        mappedStatus = 'Received at Homved';
     } else if (s.includes('DELIVERED')) {
         mappedStatus = 'Delivered';
-    } else if (s.includes('RTO DELIVERED') || s.includes('RETURN DELIVERED')) {
-        mappedStatus = 'Received at Homved';
     } else if (s.includes('CANCELLED')) {
         mappedStatus = 'Cancelled';
     }

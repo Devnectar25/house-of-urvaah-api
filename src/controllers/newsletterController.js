@@ -131,7 +131,7 @@ exports.subscribe = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Thank you for subscribing to House of Urvaah atelier updates!',
+      message: 'Thank you for subscribing to House of Urvaah updates!',
       data: inserted.rows[0]
     });
   } catch (error) {

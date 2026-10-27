@@ -70,7 +70,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
          FROM orders o
          WHERE o.created_at >= $1 AND o.created_at <= $2 
            AND o.status NOT IN ('Cancelled', 'Refunded')
-           AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`,
+           AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))`,
         [start.toISOString(), end.toISOString()]
       );
 
@@ -79,12 +79,16 @@ async function getAdminAnalyticsSummary(period = "7d") {
         `SELECT 
            COUNT(*) as count, 
            COALESCE(SUM(total), 0) as revenue,
-           COUNT(*) FILTER (WHERE payment_method = 'cod') as cod_count,
-           COUNT(*) FILTER (WHERE payment_method != 'cod' AND payment_status != 'Pending') as online_count
+           COUNT(*) FILTER (WHERE (COALESCE(payment_method, '') ILIKE '%cod%' OR COALESCE(payment_method, '') ILIKE '%cash%')) as cod_count,
+           COUNT(*) FILTER (WHERE NOT (COALESCE(payment_method, '') ILIKE '%cod%' OR COALESCE(payment_method, '') ILIKE '%cash%') AND COALESCE(payment_status, '') NOT IN ('Pending', 'Failed')) as online_count
          FROM orders 
          WHERE created_at >= $1 AND created_at <= $2 
          AND status NOT IN ('Cancelled', 'Refunded')
-         AND (payment_method = 'cod' OR payment_status != 'Pending')`,
+         AND ((COALESCE(payment_method, '') ILIKE '%cod%' OR COALESCE(payment_method, '') ILIKE '%cash%') OR COALESCE(payment_status, '') NOT IN ('Pending', 'Failed'))
+         -- free replacement shipments (-REP orders) are not new sales
+         AND COALESCE(payment_method, '') NOT ILIKE '%exchange%'
+         AND COALESCE(payment_method, '') NOT ILIKE 'replacement%'
+         AND COALESCE(order_number, '') NOT LIKE '%-REP%'`,
         [start.toISOString(), end.toISOString()]
       );
 
@@ -102,7 +106,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
         `SELECT COUNT(*) as count 
          FROM orders 
          WHERE status != 'Cancelled'
-         AND (payment_method != 'cod' AND payment_status = 'Pending')
+         AND (NOT (COALESCE(payment_method, '') ILIKE '%cod%' OR COALESCE(payment_method, '') ILIKE '%cash%') AND payment_status = 'Pending')
          AND created_at >= $1 AND created_at <= $2`,
         [start.toISOString(), end.toISOString()]
       );
@@ -283,7 +287,7 @@ async function getTopActiveUsers(period = '7d', limit = 15) {
       LEFT JOIN users u ON o.user_id = u.username OR o.user_id = u.emailid
       WHERE o.created_at >= $1 AND o.created_at <= $2
         AND o.status NOT IN ('Cancelled', 'Refunded')
-        AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')
+        AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))
       GROUP BY u.username, u.fullname, u.emailid, u.contactno, o.user_id
       ORDER BY "totalRevenue" DESC
       LIMIT $3
@@ -352,7 +356,7 @@ async function getTopProducts(period = '7d', limit = 5, sortBy = 'revenue') {
       LEFT JOIN category c ON p.category_id = c.category_id OR p.category_id = c.id
       WHERE o.created_at >= $1 AND o.created_at <= $2
         AND o.status NOT IN ('Cancelled', 'Refunded')
-        AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')
+        AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))
       GROUP BY oi.product_id, oi.name, p.title, c.name, p.stock_quantity, p.stock, p.image_url
       ORDER BY ${sortBy === 'revenue' ? '"totalRevenue"' : '"totalOrders"'} DESC
       LIMIT $3
@@ -393,7 +397,7 @@ async function getTopCategories(period = '7d', limit = 5, sortBy = 'revenue') {
       LEFT JOIN category c ON p.category_id = c.category_id OR p.category_id = c.id
       WHERE o.created_at >= $1 AND o.created_at <= $2
         AND o.status NOT IN ('Cancelled', 'Refunded')
-        AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')
+        AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))
       GROUP BY c.category_id, c.name
       ORDER BY ${sortBy === 'revenue' ? '"totalRevenue"' : '"totalOrders"'} DESC
       LIMIT $3
@@ -452,7 +456,7 @@ async function getAnalyticsDrilldown(type, period = '7d', limit = 100) {
           LEFT JOIN users u ON o.user_id = u.username OR o.user_id = u.emailid
           WHERE o.created_at >= $1 AND o.created_at <= $2
             AND o.status NOT IN ('Cancelled', 'Refunded')
-            AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')
+            AND ((COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') OR COALESCE(o.payment_status, '') NOT IN ('Pending', 'Failed'))
           ORDER BY o.created_at DESC
           LIMIT $3
         `;
@@ -477,7 +481,7 @@ async function getAnalyticsDrilldown(type, period = '7d', limit = 100) {
           FROM orders o
           LEFT JOIN users u ON o.user_id = u.username OR o.user_id = u.emailid
           WHERE o.created_at >= $1 AND o.created_at <= $2
-            AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')
+            AND (NOT (COALESCE(o.payment_method, '') ILIKE '%cod%' OR COALESCE(o.payment_method, '') ILIKE '%cash%') AND o.payment_status = 'Pending')
             AND o.status != 'Cancelled'
           ORDER BY o.created_at DESC
           LIMIT $3
@@ -544,7 +548,7 @@ async function getRevenueBreakdown(period = '7d') {
       FROM orders
       WHERE created_at >= $1 AND created_at <= $2
         AND status NOT IN ('Cancelled', 'Refunded')
-        AND (payment_method = 'cod' OR payment_status != 'Pending')
+        AND ((COALESCE(payment_method, '') ILIKE '%cod%' OR COALESCE(payment_method, '') ILIKE '%cash%') OR COALESCE(payment_status, '') NOT IN ('Pending', 'Failed'))
     `;
     const grandTotalRes = await pool.query(grandTotalQuery, [currStart.toISOString(), currEnd.toISOString()]);
     const grandTotal = parseFloat(grandTotalRes.rows[0]?.grandTotal) || 0;
@@ -569,7 +573,7 @@ async function getRevenueBreakdown(period = '7d') {
 
     const mappedOrders = ordersRes.rows.map(row => {
       const isCancelledOrRefunded = ['cancelled', 'refunded'].includes((row.status || '').toLowerCase());
-      const isPendingOnline = row.paymentMethod !== 'cod' && (row.paymentStatus || '').toLowerCase() === 'pending';
+      const isPendingOnline = !/cod|cash/i.test(row.paymentMethod || '') && (row.paymentStatus || '').toLowerCase() === 'pending';
       const isRevenue = !isCancelledOrRefunded && !isPendingOnline;
 
       return {

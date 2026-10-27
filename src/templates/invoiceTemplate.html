@@ -254,7 +254,7 @@
             letter-spacing: 0.02em;
         }
 
-        /* Dossier (Atelier vs Client) */
+        /* Dossier (Store vs Client) */
         .dossier-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -658,7 +658,7 @@
                 {{else}}
                 <h1 class="brand-fallback-title">House of Urvaah</h1>
                 {{/if}}
-                <span class="brand-subtitle">Haute Couture &bull; Luxury Pret Atelier &bull; New Delhi</span>
+                <span class="brand-subtitle">Haute Couture &bull; Luxury Pret Store &bull; New Delhi</span>
             </div>
 
             <div class="invoice-badge-block">
@@ -691,12 +691,12 @@
             </div>
         </div>
 
-        <!-- Two-Column Dossier: Sold By Atelier & Billed/Shipped To Client -->
+        <!-- Two-Column Dossier: Sold By Store & Billed/Shipped To Client -->
         <div class="dossier-grid">
             <div class="dossier-card">
                 <div class="dossier-card-header">
-                    <span>Sold By &bull; Registered Atelier</span>
-                    <span>Concierge</span>
+                    <span>Sold By &bull; Registered Store</span>
+                    <span>Customer Care</span>
                 </div>
                 <div class="dossier-name">House of Urvaah Private Limited</div>
                 <div class="dossier-body">
@@ -773,7 +773,7 @@
 
 
                 <div class="bank-details-box">
-                    <div class="bank-title">Atelier Remittance &amp; Audit Reference</div>
+                    <div class="bank-title">Store Remittance &amp; Audit Reference</div>
                     Beneficiary: <strong>HOUSE OF URVAAH PRIVATE LIMITED</strong><br>
                     Bank: HDFC Bank Ltd &bull; Account No: 50200088923412<br>
                     IFSC: HDFC0000123 &bull; Branch: Kurla East, Mumbai
@@ -808,6 +808,13 @@
                         <td>{{currencySymbol}}{{taxAmount}}</td>
                     </tr>
 
+                    {{#if hasCodCharge}}
+                    <tr>
+                        <td>Cash on Delivery Charge</td>
+                        <td>{{currencySymbol}}{{codCharge}}</td>
+                    </tr>
+                    {{/if}}
+
                     {{#if hasCardSurcharge}}
                     <tr>
                         <td>Card Processing Surcharge ({{cardSurchargeRate}}%)</td>
@@ -833,15 +840,15 @@
             <div class="seal-block">
                 <div class="seal-crest">U</div>
                 <div class="seal-text">
-                    <strong>Official Atelier Authenticated Document</strong><br>
+                    <strong>Official Store Authenticated Document</strong><br>
                     This is a digitally generated Tax Invoice issued in compliance with the Information Technology Act, 2000 and CGST Rules. No physical signature is required.
                 </div>
             </div>
 
             <div class="signature-block">
                 <div class="signature-for">For House of Urvaah Pvt. Ltd.</div>
-                <div class="digital-sign-script">House of Urvaah Atelier</div>
-                <div class="signature-title">Authorized Atelier Signatory &bull; {{authSignatoryDate}}</div>
+                <div class="digital-sign-script">House of Urvaah</div>
+                <div class="signature-title">Authorized Store Signatory &bull; {{authSignatoryDate}}</div>
             </div>
         </div>
 

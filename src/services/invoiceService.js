@@ -70,10 +70,40 @@ const getCurrencySymbol = () => {
  * @param {string|number} orderId - Order UUID or order number.
  * @returns {Promise<Object>} - Clean, rich invoice data object.
  */
-exports.getInvoiceData = async (orderId) => {
+exports.getInvoiceData = async (orderId, options = {}) => {
     // 1. Fetch order details with joined address info
-    const order = await orderService.getOrderById(orderId);
+    let order = await orderService.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
+
+    // Customer copy: only delivered, non-cancelled, non-returned line items, with the order amounts
+    // scaled to those lines. The full (statutory) invoice is unchanged for admins.
+    if (options.customerView) {
+        const { getInvoiceEligibility } = require('./invoiceEligibility');
+        const { eligible, eligibleItems, reason } = getInvoiceEligibility(order);
+        if (!eligible) {
+            const err = new Error(reason);
+            err.statusCode = 403;
+            throw err;
+        }
+        const lineTotal = (it) => (Number(it.price) || 0) * (Number(it.quantity) || 1);
+        const eligibleSubtotal = eligibleItems.reduce((acc, it) => acc + lineTotal(it), 0);
+        const orderSubtotal = Number(order.subtotal || 0);
+        if (eligibleItems.length !== (order.items || []).length && orderSubtotal > 0 && eligibleSubtotal < orderSubtotal) {
+            const ratio = eligibleSubtotal / orderSubtotal;
+            const round2 = (n) => Math.round(n * 100) / 100;
+            order = {
+                ...order,
+                items: eligibleItems,
+                subtotal: round2(eligibleSubtotal),
+                discount_amount: round2(Number(order.discount_amount || 0) * ratio),
+                shipping: round2(Number(order.shipping || order.shipping_cost || 0) * ratio),
+                total: round2(Number(order.total || 0) * ratio),
+                cod_charge: round2(Number(order.cod_charge || 0) * ratio)
+            };
+        } else {
+            order = { ...order, items: eligibleItems };
+        }
+    }
 
     // 2. Fetch user details for contact info
     let user = {};
@@ -184,7 +214,9 @@ exports.getInvoiceData = async (orderId) => {
     
     // Determine tax rate: use order.tax if present, else apply dynamic GST settings
     let taxRate = 18;
-    if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
+    if (order.gst_applied === false) {
+        taxRate = 0; // order placed while GST was switched off
+    } else if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
         const computedRate = Math.round((parseFloat(order.tax) / netTaxable) * 100);
         if (computedRate > 0) {
             taxRate = computedRate;
@@ -198,7 +230,7 @@ exports.getInvoiceData = async (orderId) => {
     }
 
     // Calculated tax amount
-    const calculatedTax = (order.tax !== undefined && order.tax !== null && parseFloat(order.tax) > 0)
+    const calculatedTax = order.gst_applied === false ? 0 : (order.tax !== undefined && order.tax !== null && parseFloat(order.tax) > 0)
         ? parseFloat(order.tax)
         : Math.round(netTaxable * (taxRate / 100));
 
@@ -206,6 +238,7 @@ exports.getInvoiceData = async (orderId) => {
 
     // Card processing surcharge detection
     const isCard = String(order.payment_method || '').toLowerCase().includes('card') || String(order.payment_type || '').toLowerCase().includes('card');
+    const codChargeNum = Math.max(0, parseFloat(order.cod_charge || 0));
     let cardSurchargeNum = parseFloat(order.card_surcharge || order.cardSurcharge || 0);
     if (cardSurchargeNum <= 0 && isCard && order.total) {
         const orderTotal = parseFloat(order.total);
@@ -244,7 +277,13 @@ exports.getInvoiceData = async (orderId) => {
 
     const paymentMethodRaw = String(order.payment_method || 'Online').toUpperCase();
     const isCod = paymentMethodRaw === 'COD' || paymentMethodRaw.includes('CASH');
-    const isDelivered = String(order.status || '').toLowerCase() === 'delivered';
+    const orderStatusLower = String(order.status || '').toLowerCase();
+    const isDelivered = orderStatusLower === 'delivered' ||
+        orderStatusLower === 'return qc rejected' ||
+        orderStatusLower === 'return rejected' ||
+        orderStatusLower === 'replace rejected' ||
+        String(order.return_qc_status || '').toLowerCase() === 'rejected' ||
+        Boolean(order.delivered_at);
     const paymentStatusRaw = (isCod && isDelivered) ? 'PAID' : String(order.payment_status || 'Paid').toUpperCase();
     const isPaid = paymentStatusRaw === 'PAID';
 
@@ -388,7 +427,7 @@ exports.getInvoiceData = async (orderId) => {
         couponCode: order.coupon_code || '',
         discountAmount: discountAmount.toFixed(2),
         discountLabel: (order.coupon_code && (order.coupon_code.toUpperCase().includes('BOGO') || order.coupon_code.toUpperCase().includes('FREE')))
-            ? 'Atelier Privilege / BOGO Offer'
+            ? 'Store Privilege / BOGO Offer'
             : (order.coupon_code ? `Promotional Privilege (${order.coupon_code})` : 'Privilege Savings'),
         taxRate: taxRate,
         isInterState,
@@ -399,6 +438,8 @@ exports.getInvoiceData = async (orderId) => {
         sgstAmount,
         igstAmount,
         taxAmount: calculatedTax.toFixed(2),
+        hasCodCharge: codChargeNum > 0,
+        codCharge: codChargeNum.toFixed(2),
         hasCardSurcharge: cardSurchargeNum > 0,
         cardSurcharge: cardSurchargeNum.toFixed(2),
         cardSurchargeRate: cardSurchargeRate,
@@ -413,8 +454,8 @@ exports.getInvoiceData = async (orderId) => {
  * @param {string|number} orderId - The database ID of the order.
  * @returns {Promise<string>} - Compiled HTML string.
  */
-exports.generateInvoiceHTML = async (orderId) => {
-    const templateData = await exports.getInvoiceData(orderId);
+exports.generateInvoiceHTML = async (orderId, options = {}) => {
+    const templateData = await exports.getInvoiceData(orderId, options);
 
     const templatePath = path.join(__dirname, '../templates/invoiceTemplate.html');
     if (!fs.existsSync(templatePath)) {
@@ -431,8 +472,8 @@ exports.generateInvoiceHTML = async (orderId) => {
  * @param {string|number} orderId - The database ID of the order.
  * @returns {Promise<Buffer>} - PDF binary data.
  */
-exports.generateInvoicePDF = async (orderId) => {
-    const html = await exports.generateInvoiceHTML(orderId);
+exports.generateInvoicePDF = async (orderId, options = {}) => {
+    const html = await exports.generateInvoiceHTML(orderId, options);
 
     let browser;
     try {

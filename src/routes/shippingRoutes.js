@@ -1,6 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const shippingController = require('../controllers/shippingController');
+const { protect, authorize } = require('../middlewares/authMiddleware');
+
+// Admin-desk operations change shipments / order state, so they require an admin token.
+// Serviceability, tracking, checkout shipment creation, label/manifest view links and the
+// courier webhook stay open as before.
+const adminOnly = [protect, authorize('admin')];
 
 // 0. Configuration & Connectivity Status Check
 router.get('/config-status', shippingController.getConfigStatus);
@@ -12,46 +18,46 @@ router.get('/serviceability', shippingController.checkServiceability);
 router.post('/order/create', shippingController.createForwardShipment);
 
 // 3. Assign AWB
-router.post('/courier/assign-awb', shippingController.assignAwb);
+router.post('/courier/assign-awb', adminOnly, shippingController.assignAwb);
 
 // 4. Schedule Pickup
-router.post('/courier/pickup', shippingController.schedulePickup);
+router.post('/courier/pickup', adminOnly, shippingController.schedulePickup);
 
 // 5. Track Shipment
 router.get('/track/:awb', shippingController.trackShipment);
 router.get('/track', shippingController.trackShipment);
 
 // 6 & 7. Milestones (Out for Delivery & Delivered Simulators)
-router.post('/simulate/out-for-delivery', shippingController.simulateOutForDelivery);
-router.post('/simulate/delivered', shippingController.simulateDelivered);
+router.post('/simulate/out-for-delivery', adminOnly, shippingController.simulateOutForDelivery);
+router.post('/simulate/delivered', adminOnly, shippingController.simulateDelivered);
 
 // 8. Labels & Manifests
-router.post('/label', shippingController.generateLabel);
-router.post('/manifest', shippingController.generateManifest);
+router.post('/label', adminOnly, shippingController.generateLabel);
+router.post('/manifest', adminOnly, shippingController.generateManifest);
 router.get('/label/view/:targetId', shippingController.viewLabelHtml);
 router.get('/manifest/view/:targetId', shippingController.viewManifestHtml);
 
 // 9. Cancel Order
-router.post('/order/cancel', shippingController.cancelShipment);
+router.post('/order/cancel', adminOnly, shippingController.cancelShipment);
 
 // 10. Customer Notification
-router.post('/notify', shippingController.notifyCustomer);
+router.post('/notify', adminOnly, shippingController.notifyCustomer);
 
 // 11. Create Reverse Order (Return)
-router.post('/return/create', shippingController.createReturnOrder);
+router.post('/return/create', adminOnly, shippingController.createReturnOrder);
 
 // 12. Assign Return AWB
-router.post('/return/assign-awb', shippingController.assignReturnAwb);
+router.post('/return/assign-awb', adminOnly, shippingController.assignReturnAwb);
 
 // 13. Schedule Return Pickup
-router.post('/return/pickup', shippingController.scheduleReversePickup);
+router.post('/return/pickup', adminOnly, shippingController.scheduleReversePickup);
 
 // 14. Track Return Parcel
 router.get('/return/track/:awb', shippingController.trackReturnParcel);
 router.get('/return/track', shippingController.trackReturnParcel);
 
 // 15. Dispatch Replacement
-router.post('/replacement/dispatch', shippingController.dispatchReplacement);
+router.post('/replacement/dispatch', adminOnly, shippingController.dispatchReplacement);
 
 // 16. Webhook
 router.post('/webhook', shippingController.handleWebhook);

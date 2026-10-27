@@ -1,6 +1,7 @@
 const orderService = require('../services/orderService');
 const invoiceService = require('../services/invoiceService');
 const { validateBankDetails } = require('../utils/bankValidator');
+const pool = require('../config/db');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -207,6 +208,60 @@ exports.updateOrderStatus = async (req, res) => {
             });
         }
 
+        // Replacement Cancellation Guard:
+        // When a user requests to replace a product, admin can ONLY cancel / reject the request UNTIL it is shipped.
+        // Once the replacement is shipped, it CANNOT be cancelled or rejected by anyone.
+        const isReplacementFlow = (
+            (order.return_type || '').toLowerCase().includes('replace') ||
+            (order.return_type || '').toLowerCase().includes('exchange') ||
+            Boolean(order.replacement_size) ||
+            Boolean(order.replacement_order_number) ||
+            Boolean(order.original_order_number) ||
+            (order.order_number || '').includes('-REP') ||
+            currentStatusLower.includes('replace') ||
+            currentStatusLower.includes('exchange')
+        );
+
+        let isReplacementShipped = (
+            currentStatusLower === 'replacement shipped' ||
+            currentStatusLower === 'replacement out for delivery' ||
+            currentStatusLower === 'replacement delivered' ||
+            (currentStatusLower === 'replaced' && Boolean(order.tracking_number || order.replacement_order_number))
+        );
+
+        if (!isReplacementShipped && order.replacement_order_number) {
+            try {
+                const repCheck = await pool.query(
+                    `SELECT status, tracking_number FROM orders WHERE order_number = $1 OR id::text = $2 LIMIT 1`,
+                    [order.replacement_order_number, order.replacement_order_id ? String(order.replacement_order_id) : '']
+                );
+                if (repCheck.rows.length > 0) {
+                    const repStatus = (repCheck.rows[0].status || '').toLowerCase();
+                    const hasRepAwb = Boolean(repCheck.rows[0].tracking_number);
+                    if (['shipped', 'in transit', 'out for delivery', 'delivered', 'replacement shipped'].includes(repStatus) || hasRepAwb) {
+                        isReplacementShipped = true;
+                    }
+                }
+            } catch (err) {
+                console.warn('[OrderController] Error checking replacement order shipment status:', err.message);
+            }
+        }
+
+        const isRejectOrCancelAction = (
+            targetStatusLower === 'replace rejected' ||
+            targetStatusLower === 'return rejected' ||
+            targetStatusLower === 'return & replacement rejected' ||
+            targetStatusLower === 'cancelled' ||
+            targetStatusLower === 'cancellation requested'
+        );
+
+        if (isReplacementFlow && isReplacementShipped && isRejectOrCancelAction) {
+            return res.status(400).json({
+                success: false,
+                message: 'Replacement piece has already been shipped. The replacement request cannot be cancelled or rejected after dispatch.'
+            });
+        }
+
         if (!isAdmin) {
             if (adminOnlyStatuses.includes(targetStatusLower)) {
                 return res.status(403).json({
@@ -282,8 +337,53 @@ exports.updateOrderStatus = async (req, res) => {
             }
         }
 
+        const isCancelActionNow = (
+            targetStatus === 'Cancellation Requested' ||
+            targetStatus === 'Cancelled' ||
+            status === 'Cancellation Requested' ||
+            status === 'Cancelled'
+        );
+
+        if (isCancelActionNow && !isCod) {
+            // Prepaid order cancellation requires bank details for refund
+            if (!sanitizedBankDetails && order.user_id) {
+                try {
+                    const userBankRes = await pool.query(
+                        `SELECT refund_bank_account, refund_ifsc_code, refund_holder_name FROM users WHERE emailid = $1 OR username = $1 LIMIT 1`,
+                        [order.user_id]
+                    );
+                    if (userBankRes.rows.length > 0 && userBankRes.rows[0].refund_bank_account) {
+                        const uBank = userBankRes.rows[0];
+                        const bankCheck = validateBankDetails({
+                            accountNumber: uBank.refund_bank_account,
+                            ifscCode: uBank.refund_ifsc_code,
+                            holderName: uBank.refund_holder_name
+                        });
+                        if (bankCheck.isValid) {
+                            sanitizedBankDetails = bankCheck.sanitized;
+                        }
+                    }
+                } catch (uErr) {
+                    console.warn('[OrderController] User bank profile lookup warning:', uErr.message);
+                }
+            }
+
+            if (!isAdmin && !sanitizedBankDetails && !order.refund_bank_account) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Bank account details (Account Holder Name, IFSC Code, Account Number) are required to process a refund for prepaid order cancellations.'
+                });
+            }
+        }
+
         // Pass order.id (validated UUID) and extraData to ensure clean DB queries
-        const extraData = { return_qc_status, return_rejection_reason, is_product_received };
+        const extraData = {
+            return_qc_status,
+            return_rejection_reason,
+            is_product_received,
+            actor_type: isAdmin ? 'admin' : 'customer',
+            actor_id: String(req.user?.username || req.user?.id || '')
+        };
         const updatedOrder = await orderService.updateOrderStatus(order.id, targetStatus, cancelReason, sanitizedBankDetails, targetPaymentStatus, itemIds, extraData);
 
         // Synchronize with Shiprocket logistics only if order is cancelled before delivery
@@ -300,7 +400,7 @@ exports.updateOrderStatus = async (req, res) => {
         }
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 
@@ -327,19 +427,14 @@ exports.downloadInvoice = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        // Business Rule: End users / customers should only get the invoice once the order or replacement is delivered
+        // Business Rule: customers only get the invoice for items that have been delivered (item level).
+        // Enforced here for every format, so direct URL / API access can't bypass it.
+        const invoiceOptions = { customerView: !isAdmin };
         if (!isAdmin) {
-            const statusLower = String(order.status || '').toLowerCase();
-            const originalStatusLower = String(order.original_status || '').toLowerCase();
-            const isDelivered = statusLower.includes('delivered') ||
-                                originalStatusLower.includes('delivered') ||
-                                Boolean(order.delivered_at);
-
-            if (!isDelivered) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Official tax invoice is only accessible once your order or replacement piece has been delivered.'
-                });
+            const { getInvoiceEligibility } = require('../services/invoiceEligibility');
+            const eligibility = getInvoiceEligibility(order);
+            if (!eligibility.eligible) {
+                return res.status(403).json({ success: false, message: eligibility.reason });
             }
         }
 
@@ -347,20 +442,20 @@ exports.downloadInvoice = async (req, res) => {
 
         // 1. Return structured JSON data for frontend live invoice rendering
         if (format === 'json') {
-            const data = await invoiceService.getInvoiceData(id);
+            const data = await invoiceService.getInvoiceData(id, invoiceOptions);
             return res.status(200).json({ success: true, data });
         }
 
         // 2. Return standalone HTML invoice for print / in-browser viewing
         if (format === 'html' || req.headers.accept?.includes('text/html')) {
-            const html = await invoiceService.generateInvoiceHTML(id);
+            const html = await invoiceService.generateInvoiceHTML(id, invoiceOptions);
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             return res.send(html);
         }
 
         // 3. Return binary PDF attachment
         try {
-            const pdfBuffer = await invoiceService.generateInvoicePDF(id);
+            const pdfBuffer = await invoiceService.generateInvoicePDF(id, invoiceOptions);
 
             res.setHeader('Content-Type', 'application/pdf');
             res.setHeader('Content-Disposition', `attachment; filename="HOUSE_OF_URVAAH_INVOICE_${order.invoice_number || order.order_number}.pdf"`);
@@ -369,7 +464,7 @@ exports.downloadInvoice = async (req, res) => {
             return res.end(pdfBuffer);
         } catch (pdfErr) {
             console.warn('[Invoice] PDF Generation error, serving printable HTML fallback:', pdfErr.message);
-            const html = await invoiceService.generateInvoiceHTML(id);
+            const html = await invoiceService.generateInvoiceHTML(id, invoiceOptions);
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             return res.send(html);
         }
@@ -467,7 +562,7 @@ exports.requestReturnReplace = async (req, res) => {
         const result = await orderService.requestReturnReplace(id, req.user, req.body);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 
@@ -491,7 +586,7 @@ exports.requestItemCancellation = async (req, res) => {
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('[OrderController] requestItemCancellation error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 
@@ -567,5 +662,41 @@ exports.updateOrderBankDetails = async (req, res) => {
             success: false,
             message: error.message || 'Failed to update bank details'
         });
+    }
+};
+
+
+/**
+ * POST /api/orders/:id/request-decision  (admin)
+ * Body: { decisions: { [orderItemId]: 'approve' | 'reject' }, reason?: string }
+ * Approves or rejects each requested return / replacement item individually.
+ */
+exports.decideReturnReplaceRequest = async (req, res) => {
+    try {
+        const { decisions, reason } = req.body || {};
+        if (!decisions || typeof decisions !== 'object' || Object.keys(decisions).length === 0) {
+            return res.status(400).json({ success: false, message: 'Provide an approve / reject decision for each requested item.' });
+        }
+        const hasReject = Object.values(decisions).some(d => String(d).toLowerCase() === 'reject');
+        if (hasReject && !String(reason || '').trim()) {
+            return res.status(400).json({ success: false, message: 'Please give a reason for the rejected item(s).' });
+        }
+        const order = await orderService.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+        const updatedOrder = await orderService.updateOrderStatus(
+            order.id,
+            'Return & Replacement Approved', // final status is derived from the decisions inside the service
+            String(reason || '').trim() || null,
+            null, null, null,
+            {
+                item_decisions: decisions,
+                actor_type: 'admin',
+                actor_id: String(req.user?.username || req.user?.id || '')
+            }
+        );
+        res.status(200).json({ success: true, data: updatedOrder });
+    } catch (error) {
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };

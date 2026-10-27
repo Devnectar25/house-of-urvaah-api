@@ -8,11 +8,17 @@ types.setTypeParser(1114, (val) => {
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.SUPABASE_DB_URL;
 
+// Per-process pool size. Requests mostly wait on the network round trip to Supabase, so 10
+// connections saturated quickly under concurrent traffic (requests queued for a free client).
+// Supabase's transaction pooler (port 6543) multiplexes client connections, so a larger client
+// pool is safe. Override with PG_POOL_MAX if the host or Supabase plan needs a different value.
+const POOL_MAX = parseInt(process.env.PG_POOL_MAX || '20', 10);
+
 const poolConfig = connectionString 
     ? {
         connectionString,
         ssl: { rejectUnauthorized: false },
-        max: 10,
+        max: POOL_MAX,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 15000,
       }
@@ -25,7 +31,7 @@ const poolConfig = connectionString
         ssl: {
             rejectUnauthorized: false
         },
-        max: 10,
+        max: POOL_MAX,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 15000,
       };

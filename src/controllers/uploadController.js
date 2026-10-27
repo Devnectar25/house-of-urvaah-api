@@ -41,12 +41,15 @@ exports.uploadVideoMiddleware = multer({
     storage: diskStorage,
     limits: { fileSize: 250 * 1024 * 1024 }, // Increased to 250MB to be safe
     fileFilter: (req, file, cb) => {
-        // Now that bucket is fixed, we can be lenient but specific
-        if (file.mimetype.startsWith('video/') || 
-            ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'].includes(file.mimetype)) {
+        const isVideoMime = file.mimetype && (
+            file.mimetype.startsWith('video/') || 
+            ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'application/octet-stream'].includes(file.mimetype)
+        );
+        const isVideoExt = file.originalname && Boolean(file.originalname.match(/\.(mp4|webm|mov|m4v|ogg|mkv|avi)$/i));
+        if (isVideoMime || isVideoExt) {
             cb(null, true);
         } else {
-            cb(new Error('Invalid file type. Please upload a supported video format.'));
+            cb(new Error('Invalid file type. Please upload a supported video format (MP4, WebM, QuickTime, MOV, M4V).'));
         }
     }
 }).single('video');
@@ -152,5 +155,23 @@ exports.deleteFolder = async (req, res) => {
     } catch (error) {
         console.error("Error in deleteFolder:", error);
         res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+// Admin: signed link for a direct browser-to-storage video upload (bypasses the API body size cap)
+exports.createVideoUploadUrl = async (req, res) => {
+    try {
+        const { fileName, contentType } = req.body || {};
+        const isVideo = (contentType && String(contentType).startsWith('video/')) ||
+            /\.(mp4|webm|mov|m4v|ogg)$/i.test(String(fileName || ''));
+        if (!fileName || !isVideo) {
+            return res.status(400).json({ success: false, message: 'Please choose a video file (MP4, WebM or MOV).' });
+        }
+        const folder = String(req.body.folderName || 'products/videos').replace(/[^a-zA-Z0-9/_-]/g, '');
+        const data = await storageService.createSignedUpload(folder, fileName);
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error creating video upload URL:', error);
+        res.status(500).json({ success: false, message: error.message || 'Could not prepare the video upload.' });
     }
 };
