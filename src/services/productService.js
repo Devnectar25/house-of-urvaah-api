@@ -198,6 +198,10 @@ const mapProduct = (p) => {
         fabric: p.fabric || '',
         fabric_slug: p.fabric_slug || '',
         fabricSlug: p.fabric_slug || '',
+        created_at: p.created_at || null,
+        createdAt: p.created_at || null,
+        // New Arrivals placement: null = automatic (3 months from created_at), true = always, false = never
+        new_arrival: p.new_arrival === true ? true : (p.new_arrival === false ? false : null),
         categories: Array.isArray(p.categories) ? p.categories : [p.category_name].filter(Boolean),
         occasion: p.occasion || '',
         tags: Array.isArray(p.tags) ? p.tags : [],
@@ -641,6 +645,10 @@ const cleanTagList = (tags) => (Array.isArray(tags)
 const cleanFabricSlug = (slug) => (slug === undefined || slug === null
     ? undefined
     : String(slug).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''));
+// Admin "New Arrivals" choice -> column value ('auto' / null -> NULL, 'always'/true -> TRUE, 'hide'/false -> FALSE)
+const cleanNewArrival = (v) => (v === true || v === 'always' || v === 'true') ? true
+    : (v === false || v === 'hide' || v === 'false') ? false
+    : null;
 const cleanOccasion = (occasion) => (occasion === undefined || occasion === null
     ? undefined
     : (Array.isArray(occasion) ? occasion : String(occasion).split(','))
@@ -725,8 +733,8 @@ exports.createProduct = async (product) => {
 
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, video_url, tags, occasion, fabric_slug, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, $27, $28::text[], $29, $30, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, video_url, tags, occasion, fabric_slug, new_arrival, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, $27, $28::text[], $29, $30, $31, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
@@ -741,7 +749,8 @@ exports.createProduct = async (product) => {
             productVideo,
             cleanTagList(product.tags) || [],
             cleanOccasion(product.occasion) || null,
-            cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) || null
+            cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) || null,
+            cleanNewArrival(product.new_arrival)
         ]
     );
     return mapProduct(result.rows[0]);
@@ -877,6 +886,7 @@ exports.updateProduct = async (id, product) => {
             tags = COALESCE($30::text[], tags),
             occasion = CASE WHEN $31::boolean THEN NULLIF($32, '') ELSE occasion END,
             fabric_slug = CASE WHEN $33::boolean THEN NULLIF($34, '') ELSE fabric_slug END,
+            new_arrival = CASE WHEN $35::boolean THEN $36::boolean ELSE new_arrival END,
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
@@ -914,7 +924,9 @@ exports.updateProduct = async (id, product) => {
             product.occasion !== undefined,
             cleanOccasion(product.occasion) ?? '',
             (product.fabric_slug ?? product.fabricSlug) !== undefined,
-            cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) ?? ''
+            cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) ?? '',
+            product.new_arrival !== undefined,
+            cleanNewArrival(product.new_arrival)
         ]
     );
 

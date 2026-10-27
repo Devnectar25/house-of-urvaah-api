@@ -7,7 +7,7 @@ const ALLOWED_PERMISSIONS = [
     'analytics', 'products', 'categories',
     'orders', 'refunds',
     'customers', 'leads', 'reviews',
-    'email-notifications', 'newsletter', 'stock-notifications', 'faqs',
+    'email-notifications', 'stock-notifications', 'faqs',
     'modify-ui', 'error-monitoring', 'settings'
 ];
 const RESERVED_USERNAMES = ['admin', 'administrator', 'root', 'superadmin', 'super_admin', 'system'];

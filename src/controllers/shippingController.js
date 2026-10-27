@@ -7,6 +7,56 @@
 const shiprocketService = require('../services/shiprocketService');
 const pool = require('../config/db');
 
+/**
+ * Assign the courier AWB right after a forward shipment is created at checkout (replaces the admin
+ * "Generate AWB" click): saves the AWB on the order and moves a new order to Processing, exactly as
+ * the admin button did. Best effort: a failure never blocks checkout; the admin can retry later.
+ */
+const autoAssignAwb = async (orderIdentifier, shipmentId) => {
+    try {
+        const rowRes = await pool.query(
+            `SELECT id, order_number, status, tracking_number, awb_code, logistics_status FROM orders
+             WHERE order_number = $1 OR id::text = $1 LIMIT 1`,
+            [String(orderIdentifier)]
+        );
+        const row = rowRes.rows[0];
+        if (!row) return null;
+        const existingAwb = String(row.awb_code || '').trim();
+        if (existingAwb) return { awb_code: existingAwb, already_assigned: true };
+        const st = String(row.status || '').toLowerCase();
+        if (['cancelled', 'canceled'].includes(st)) return null;
+
+        const result = await shiprocketService.assignAwb(shipmentId);
+        const awbCode = result.response?.data?.awb_code || result.awb_code;
+        const courierName = result.response?.data?.courier_name || result.courier_name || 'Delhivery Express';
+        if (!awbCode) return null;
+
+        await pool.query(
+            `UPDATE orders
+             SET tracking_number = $1, awb_code = $1, courier_name = $2,
+                 shipment_status = 'AWB Assigned',
+                 logistics_status = COALESCE(NULLIF(logistics_status, ''), 'AWB Assigned'),
+                 updated_at = NOW()
+             WHERE id = $3::uuid`,
+            [String(awbCode), String(courierName), row.id]
+        );
+
+        if (['pending', 'placed'].includes(st)) {
+            try {
+                const orderService = require('../services/orderService');
+                await orderService.updateOrderStatus(row.id, 'Processing', null, null, null, null, { actor_type: 'system', actor_id: 'auto-awb' });
+            } catch (stErr) {
+                console.warn('[ShippingController] Auto AWB: status update skipped:', stErr.message);
+            }
+        }
+        console.log(`[ShippingController] Auto-assigned AWB ${awbCode} (${courierName}) to order ${row.order_number}`);
+        return { awb_code: awbCode, courier_name: courierName };
+    } catch (err) {
+        console.warn('[ShippingController] Auto AWB assignment failed (admin can retry):', err.message);
+        return null;
+    }
+};
+
 // 0. Configuration & Connectivity Health Check
 exports.getConfigStatus = async (req, res) => {
     try {
@@ -66,6 +116,13 @@ exports.createForwardShipment = async (req, res) => {
                 );
                 if (existingCheck.rows.length > 0 && existingCheck.rows[0].shipment_id) {
                     const row = existingCheck.rows[0];
+                    if (!String(row.awb_code || '').trim()) {
+                        const auto = await autoAssignAwb(row.order_number || orderIdentifier, row.shipment_id);
+                        if (auto?.awb_code) {
+                            row.awb_code = auto.awb_code;
+                            row.courier_name = auto.courier_name || row.courier_name;
+                        }
+                    }
                     console.log(`[ShippingController] Order #${row.order_number} already has shipment ID ${row.shipment_id}. Returning existing shipment.`);
                     return res.json({
                         success: true,
@@ -103,6 +160,13 @@ exports.createForwardShipment = async (req, res) => {
                 console.log(`[ShippingController] Synced shipment ID ${shipmentId} to database order ${orderIdentifier}`);
             } catch (dbErr) {
                 console.warn('[ShippingController DB Sync Warning]:', dbErr.message);
+            }
+
+            // Assign the AWB immediately (no manual "Generate AWB" step)
+            const auto = await autoAssignAwb(orderIdentifier, String(result.shipment_id || shipmentId));
+            if (auto?.awb_code) {
+                result.awb_code = auto.awb_code;
+                result.courier_name = auto.courier_name || result.courier_name;
             }
         }
 
