@@ -808,6 +808,13 @@
                         <td>{{currencySymbol}}{{taxAmount}}</td>
                     </tr>
 
+                    {{#if hasCodCharge}}
+                    <tr>
+                        <td>Cash on Delivery Charge</td>
+                        <td>{{currencySymbol}}{{codCharge}}</td>
+                    </tr>
+                    {{/if}}
+
                     {{#if hasCardSurcharge}}
                     <tr>
                         <td>Card Processing Surcharge ({{cardSurchargeRate}}%)</td>

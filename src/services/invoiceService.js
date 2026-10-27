@@ -97,7 +97,8 @@ exports.getInvoiceData = async (orderId, options = {}) => {
                 subtotal: round2(eligibleSubtotal),
                 discount_amount: round2(Number(order.discount_amount || 0) * ratio),
                 shipping: round2(Number(order.shipping || order.shipping_cost || 0) * ratio),
-                total: round2(Number(order.total || 0) * ratio)
+                total: round2(Number(order.total || 0) * ratio),
+                cod_charge: round2(Number(order.cod_charge || 0) * ratio)
             };
         } else {
             order = { ...order, items: eligibleItems };
@@ -213,7 +214,9 @@ exports.getInvoiceData = async (orderId, options = {}) => {
     
     // Determine tax rate: use order.tax if present, else apply dynamic GST settings
     let taxRate = 18;
-    if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
+    if (order.gst_applied === false) {
+        taxRate = 0; // order placed while GST was switched off
+    } else if (order.tax !== undefined && order.tax !== null && netTaxable > 0) {
         const computedRate = Math.round((parseFloat(order.tax) / netTaxable) * 100);
         if (computedRate > 0) {
             taxRate = computedRate;
@@ -227,7 +230,7 @@ exports.getInvoiceData = async (orderId, options = {}) => {
     }
 
     // Calculated tax amount
-    const calculatedTax = (order.tax !== undefined && order.tax !== null && parseFloat(order.tax) > 0)
+    const calculatedTax = order.gst_applied === false ? 0 : (order.tax !== undefined && order.tax !== null && parseFloat(order.tax) > 0)
         ? parseFloat(order.tax)
         : Math.round(netTaxable * (taxRate / 100));
 
@@ -235,6 +238,7 @@ exports.getInvoiceData = async (orderId, options = {}) => {
 
     // Card processing surcharge detection
     const isCard = String(order.payment_method || '').toLowerCase().includes('card') || String(order.payment_type || '').toLowerCase().includes('card');
+    const codChargeNum = Math.max(0, parseFloat(order.cod_charge || 0));
     let cardSurchargeNum = parseFloat(order.card_surcharge || order.cardSurcharge || 0);
     if (cardSurchargeNum <= 0 && isCard && order.total) {
         const orderTotal = parseFloat(order.total);
@@ -428,6 +432,8 @@ exports.getInvoiceData = async (orderId, options = {}) => {
         sgstAmount,
         igstAmount,
         taxAmount: calculatedTax.toFixed(2),
+        hasCodCharge: codChargeNum > 0,
+        codCharge: codChargeNum.toFixed(2),
         hasCardSurcharge: cardSurchargeNum > 0,
         cardSurcharge: cardSurchargeNum.toFixed(2),
         cardSurchargeRate: cardSurchargeRate,

@@ -42,9 +42,16 @@ const normalizeOrderRow = (row) => {
     const ship = parseFloat(row.shipping || row.shipping_cost || 0);
     let tax = parseFloat(row.tax || 0);
     let taxRate = parseFloat(row.tax_rate) || 0;
+    const gstOff = row.gst_applied === false; // placed while GST was switched off
 
-    if (tax <= 0 && net > 0) {
-        const rawTot = parseFloat(row.total || 0);
+    const codCharge = parseFloat(row.cod_charge || 0);
+    if (gstOff) {
+        tax = 0;
+        taxRate = 0;
+        row.tax = 0;
+        row.tax_rate = 0;
+    } else if (tax <= 0 && net > 0) {
+        const rawTot = parseFloat(row.total || 0) - codCharge;
         if (rawTot > net + ship) {
             tax = Math.max(0, Math.round(rawTot - net - ship));
             taxRate = taxRate || Math.round((tax / net) * 100);
@@ -55,7 +62,7 @@ const normalizeOrderRow = (row) => {
         row.tax = tax;
     }
 
-    if (!row.tax_rate) {
+    if (!row.tax_rate && !gstOff) {
         if (tax > 0 && net > 0) {
             taxRate = Math.round((tax / net) * 100);
         } else {
@@ -64,7 +71,7 @@ const normalizeOrderRow = (row) => {
         row.tax_rate = taxRate;
     }
 
-    const effectiveTot = net + tax + ship;
+    const effectiveTot = net + tax + ship + codCharge;
     if (!row.total || parseFloat(row.total) <= net) {
         row.total = effectiveTot;
     }
@@ -108,6 +115,7 @@ pool.query(`
         total = (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) + ROUND((COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) * (CASE WHEN (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) > 2500 THEN 0.18 ELSE 0.05 END)) + COALESCE(shipping, 0),
         original_total = COALESCE(original_total, (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) + ROUND((COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) * (CASE WHEN (COALESCE(subtotal, total) - COALESCE(discount_amount, 0)) > 2500 THEN 0.18 ELSE 0.05 END)) + COALESCE(shipping, 0))
     WHERE (tax = 0 OR tax IS NULL) AND (total <= subtotal OR total IS NULL) AND subtotal > 0
+      AND gst_applied IS DISTINCT FROM FALSE -- orders placed with GST switched off must stay GST-free
 `).then(res => {
     if (res && res.rowCount > 0) {
         console.log(`[OrderService] Synced ${res.rowCount} order(s) with missing GST tax & total calculation`);
@@ -383,6 +391,14 @@ exports.createOrder = async (orderData) => {
             }
         }
 
+        // Optional flat Cash-on-Delivery charge (admin Settings)
+        let codCharge = 0;
+        const isCodPayment = /cod|cash/i.test(`${paymentMethod || ''} ${paymentType || ''}`);
+        if (isCodPayment) {
+            codCharge = (await settingsService.calculateCodCharge(true)).amount;
+            if (codCharge > 0) finalTotal = Math.round(finalTotal + codCharge);
+        }
+
         // ── STEP 2: Insert order with coupon fields ────────────────────────────
         let sanitizedAddressId = addressId;
         if (sanitizedAddressId) {
@@ -474,8 +490,8 @@ exports.createOrder = async (orderData) => {
                 subtotal, original_total, shipping,
                 tax, discount_amount, total,
                 coupon_code, coupon_id,
-                status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Pending', $16, $17, NOW(), NOW())
+                status, tracking_number, estimated_delivery, gst_applied, cod_charge, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Pending', $16, $17, $18, $19, NOW(), NOW())
             RETURNING *`,
             [
                 userId,                          // $1
@@ -494,7 +510,9 @@ exports.createOrder = async (orderData) => {
                 validatedCouponCode || null,     // $14 — normalized code string (kept for history)
                 couponId,                        // $15 — FK → coupons.id; null if no coupon
                 trackingNumber,                  // $16
-                estimatedDelivery                // $17
+                estimatedDelivery,               // $17
+                gstResult.enabled !== false,     // $18 — false when the admin has GST switched off
+                codCharge                        // $19 — flat COD charge included in total (0 if none)
             ]
         );
 

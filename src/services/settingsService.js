@@ -11,6 +11,7 @@ class SettingsService {
     formatSettings(row) {
         if (!row) {
             return {
+                gst_enabled: true,
                 gst_percentage: 18,
                 enable_tiered_gst: true,
                 gst_threshold: 2500,
@@ -18,6 +19,8 @@ class SettingsService {
                 gst_rate_above: 18,
                 card_charge_enabled: true,
                 card_charge_percentage: 2,
+                cod_charge_enabled: false,
+                cod_charge_amount: 0,
                 store_name: 'House of Urvaah',
                 support_email: 'houseofurvaah@gmail.com',
                 free_shipping_threshold: 2999,
@@ -28,6 +31,7 @@ class SettingsService {
 
         return {
             id: row.id,
+            gst_enabled: row.gst_enabled !== false,
             gst_percentage: parseFloat(row.gst_percentage) || 18,
             enable_tiered_gst: Boolean(row.enable_tiered_gst),
             gst_threshold: parseFloat(row.gst_threshold) || 2500,
@@ -35,6 +39,8 @@ class SettingsService {
             gst_rate_above: parseFloat(row.gst_rate_above) || 18,
             card_charge_enabled: Boolean(row.card_charge_enabled),
             card_charge_percentage: parseFloat(row.card_charge_percentage) || 2,
+            cod_charge_enabled: row.cod_charge_enabled === true,
+            cod_charge_amount: Math.max(0, parseFloat(row.cod_charge_amount) || 0),
             store_name: row.store_name || 'House of Urvaah',
             support_email: row.support_email || 'houseofurvaah@gmail.com',
             free_shipping_threshold: parseFloat(row.free_shipping_threshold) || 2999,
@@ -82,6 +88,7 @@ class SettingsService {
     async getPublicSettings() {
         const s = await this.getSettings();
         return {
+            gst_enabled: s.gst_enabled,
             gst_percentage: s.gst_percentage,
             enable_tiered_gst: s.enable_tiered_gst,
             gst_threshold: s.gst_threshold,
@@ -89,6 +96,8 @@ class SettingsService {
             gst_rate_above: s.gst_rate_above,
             card_charge_enabled: s.card_charge_enabled,
             card_charge_percentage: s.card_charge_percentage,
+            cod_charge_enabled: s.cod_charge_enabled,
+            cod_charge_amount: s.cod_charge_amount,
             store_name: s.store_name,
             free_shipping_threshold: s.free_shipping_threshold,
             currency_symbol: s.currency_symbol,
@@ -101,6 +110,10 @@ class SettingsService {
      */
     async updateSettings(data) {
         const current = await this.getSettings(true);
+
+        const gstEnabled = data.gst_enabled !== undefined
+            ? Boolean(data.gst_enabled)
+            : current.gst_enabled;
 
         const gstPercentage = data.gst_percentage !== undefined 
             ? Math.max(0, Math.min(100, parseFloat(data.gst_percentage) || 0)) 
@@ -130,6 +143,14 @@ class SettingsService {
             ? Math.max(0, Math.min(50, parseFloat(data.card_charge_percentage) || 0)) 
             : current.card_charge_percentage;
 
+        const codChargeEnabled = data.cod_charge_enabled !== undefined
+            ? Boolean(data.cod_charge_enabled)
+            : current.cod_charge_enabled;
+
+        const codChargeAmount = data.cod_charge_amount !== undefined
+            ? Math.max(0, Math.min(5000, parseFloat(data.cod_charge_amount) || 0))
+            : current.cod_charge_amount;
+
         const storeName = data.store_name !== undefined ? String(data.store_name).trim() : current.store_name;
         const supportEmail = data.support_email !== undefined ? String(data.support_email).trim() : current.support_email;
         const freeShippingThreshold = data.free_shipping_threshold !== undefined 
@@ -152,6 +173,9 @@ class SettingsService {
                 free_shipping_threshold = $10,
                 currency_symbol = $11,
                 maintenance_mode = $12,
+                gst_enabled = $13,
+                cod_charge_enabled = $14,
+                cod_charge_amount = $15,
                 updated_at = NOW()
             WHERE id = 1
             RETURNING *
@@ -169,7 +193,10 @@ class SettingsService {
             supportEmail,
             freeShippingThreshold,
             currencySymbol,
-            maintenanceMode
+            maintenanceMode,
+            gstEnabled,
+            codChargeEnabled,
+            codChargeAmount
         ];
 
         const res = await pool.query(query, values);
@@ -186,6 +213,11 @@ class SettingsService {
         const s = customSettings || await this.getSettings();
         const amt = Math.max(0, parseFloat(taxableAmount) || 0);
 
+        // GST switched off by the admin: no tax is added to orders
+        if (s.gst_enabled === false) {
+            return { rate: 0, amount: 0, isTiered: false, threshold: s.gst_threshold, enabled: false };
+        }
+
         let rate = s.gst_percentage;
         if (s.enable_tiered_gst) {
             rate = amt > s.gst_threshold ? s.gst_rate_above : s.gst_rate_below;
@@ -196,8 +228,18 @@ class SettingsService {
             rate,
             amount: taxAmount,
             isTiered: s.enable_tiered_gst,
-            threshold: s.gst_threshold
+            threshold: s.gst_threshold,
+            enabled: true
         };
+    }
+
+    /**
+     * Flat charge added to Cash-on-Delivery orders (0 when switched off)
+     */
+    async calculateCodCharge(isCodPayment, customSettings = null) {
+        const s = customSettings || await this.getSettings();
+        if (!isCodPayment || !s.cod_charge_enabled) return { enabled: Boolean(s.cod_charge_enabled), amount: 0 };
+        return { enabled: true, amount: Math.round(Math.max(0, parseFloat(s.cod_charge_amount) || 0)) };
     }
 
     /**
