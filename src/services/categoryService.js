@@ -65,26 +65,69 @@ exports.getCategoryById = async (id) => {
 
 exports.createCategory = async (data) => {
     const { name, description, active, is_active, category_image, image_url, slug } = data;
+    const trimmedName = (name || '').trim();
+    if (!trimmedName) {
+        const error = new Error("Category name is required");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const generatedSlug = (slug || trimmedName).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+    // Check if a category with this name or slug already exists (case-insensitive)
+    const existingCheck = await pool.query(
+        "SELECT id, name FROM categories WHERE LOWER(TRIM(name)) = LOWER($1) OR (slug IS NOT NULL AND slug = $2) LIMIT 1",
+        [trimmedName, generatedSlug]
+    );
+
+    if (existingCheck.rows.length > 0) {
+        const error = new Error(`Category "${existingCheck.rows[0].name}" already exists.`);
+        error.statusCode = 409;
+        throw error;
+    }
+
     const activeVal = active !== undefined ? Boolean(active) : (is_active !== undefined ? Boolean(is_active) : true);
     const imgVal = category_image || image_url || null;
-    const generatedSlug = (slug || name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     const result = await pool.query(
         "INSERT INTO categories (name, description, active, is_active, category_image, image_url, slug, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING *",
-        [name, description, activeVal, activeVal, imgVal, imgVal, generatedSlug]
+        [trimmedName, description, activeVal, activeVal, imgVal, imgVal, generatedSlug]
     );
     return mapCategory(result.rows[0]);
 };
 
 exports.updateCategory = async (id, data) => {
     const { name, description, active, is_active, category_image, image_url, slug } = data;
+    const trimmedName = name !== undefined ? (name || '').trim() : null;
+
+    if (trimmedName !== null && !trimmedName) {
+        const error = new Error("Category name cannot be empty");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const generatedSlug = slug ? slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : (trimmedName ? trimmedName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null);
+
+    // If updating name or slug, check for duplicates excluding this category id
+    if (trimmedName || generatedSlug) {
+        const existingCheck = await pool.query(
+            "SELECT id, name FROM categories WHERE (LOWER(TRIM(name)) = LOWER($1) OR (slug IS NOT NULL AND slug = $2)) AND id != $3 LIMIT 1",
+            [trimmedName || '', generatedSlug || '', id]
+        );
+
+        if (existingCheck.rows.length > 0) {
+            const error = new Error(`Category "${existingCheck.rows[0].name}" already exists.`);
+            error.statusCode = 409;
+            throw error;
+        }
+    }
+
     const activeVal = active !== undefined ? Boolean(active) : (is_active !== undefined ? Boolean(is_active) : null);
     const imgVal = category_image !== undefined ? category_image : (image_url !== undefined ? image_url : null);
-    const generatedSlug = slug ? slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : (name ? name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null);
 
     const result = await pool.query(
         "UPDATE categories SET name = COALESCE($1, name), description = COALESCE($2, description), active = COALESCE($3, active), is_active = COALESCE($3, is_active), category_image = COALESCE($4, category_image), image_url = COALESCE($4, image_url), slug = COALESCE($5, slug) WHERE id = $6 RETURNING *",
-        [name, description, activeVal, imgVal, generatedSlug, id]
+        [trimmedName, description, activeVal, imgVal, generatedSlug, id]
     );
     return mapCategory(result.rows[0]);
 };
