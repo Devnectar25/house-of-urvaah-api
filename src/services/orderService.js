@@ -617,12 +617,16 @@ exports.createOrder = async (orderData) => {
     }
 };
 
-// Return / replacement requests waiting for the admin are listed first (newest request first)
-const PENDING_REQUEST_STATUSES = ['Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Requested', 'Replacement Request Processing', 'Return & Replacement Requested'];
-const PENDING_REQUEST_SQL_LIST = PENDING_REQUEST_STATUSES.map((st) => `'${st}'`).join(', ');
+// Order all orders strictly by their most recent activity timestamp
+// (recent order placement, return/exchange request, cancellation, or status update)
 const PENDING_REQUEST_ORDER_SQL = `
-            CASE WHEN o.status IN (${PENDING_REQUEST_SQL_LIST}) THEN 0 ELSE 1 END ASC,
-            CASE WHEN o.status IN (${PENDING_REQUEST_SQL_LIST}) THEN COALESCE(o.return_request_at, o.updated_at) END DESC NULLS LAST,`;
+            GREATEST(
+                o.created_at, 
+                COALESCE(o.updated_at, o.created_at), 
+                COALESCE(o.return_request_at, o.created_at), 
+                COALESCE(o.cancelled_at, o.created_at)
+            ) DESC,`;
+
 
 exports.getAllOrders = async (options = {}) => {
     const { limit = 10, offset = 0, status, paymentStatus } = options;
