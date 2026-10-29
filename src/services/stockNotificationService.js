@@ -10,8 +10,32 @@ const CLIENT_URL =
     (process.env.CLIENT_URL && !process.env.CLIENT_URL.includes('localhost') ? process.env.CLIENT_URL : null) || 
     'https://house-of-urvaah-fe.vercel.app';
 
+function resolveDbProductId(id) {
+    if (!id && id !== 0) return null;
+    const s = String(id).trim().toLowerCase();
+    if (s === '101' || s === 'bs-101' || s === 'prod-101' || s.includes('mocha-brown')) return 105;
+    if (s === '103' || s === 'bs-103' || s === 'prod-102' || s.includes('sage-bloom')) return 106;
+    if (s === '108' || s === 'prod-105') return 108;
+    if (s === '109' || s === 'bs-105' || s === 'prod-109' || s.includes('ivory-heart')) return 109;
+    if (s === '107' || s === 'prod-103') return 107;
+    if (s === '104' || s === 'bs-104' || s.includes('blush-pink')) return 104;
+    if (s === '102' || s === 'bs-102' || s.includes('teal-embroidered')) return 102;
+    if (s === '105') return 105;
+    if (s === '106') return 106;
+    const digits = s.replace(/\D/g, '');
+    if (digits) {
+        const num = parseInt(digits, 10);
+        if (num === 101) return 105;
+        if (num === 103) return 106;
+        return num;
+    }
+    return null;
+}
+
 function parseCandidateProductId(rawId) {
     if (!rawId) return null;
+    const resolved = resolveDbProductId(rawId);
+    if (resolved) return resolved;
     if (typeof rawId === 'number' && !isNaN(rawId)) return rawId;
     const str = String(rawId).trim();
     const digits = str.replace(/\D/g, '');
@@ -56,6 +80,8 @@ class StockNotificationService {
         const candidateIds = [];
         if (candidateNumericId) {
             candidateIds.push(candidateNumericId);
+            if (candidateNumericId === 101) candidateIds.push(105);
+            if (candidateNumericId === 105) candidateIds.push(101);
             if (candidateNumericId === 103) candidateIds.push(106);
             if (candidateNumericId === 106) candidateIds.push(103);
         }
@@ -66,19 +92,22 @@ class StockNotificationService {
                 'SELECT product_id, title, stock_quantity, stock, quantity, is_active, price, image_url, images FROM products WHERE product_id = ANY($1::integer[]) OR id = ANY($1::integer[]) LIMIT 1',
                 [candidateIds]
             );
-        } else {
+        }
+
+        if (!prodRes || prodRes.rows.length === 0) {
+            const cleanTitle = String(productId).replace(/[-_]/g, ' ').replace(/^(bs|prod)\s*\d+\s*/i, '').trim();
             prodRes = await pool.query(
-                'SELECT product_id, title, stock_quantity, stock, quantity, is_active, price, image_url, images FROM products WHERE title ILIKE $1 LIMIT 1',
-                [`%${productId}%`]
+                'SELECT product_id, title, stock_quantity, stock, quantity, is_active, price, image_url, images FROM products WHERE title ILIKE $1 OR title ILIKE $2 LIMIT 1',
+                [`%${productId}%`, `%${cleanTitle}%`]
             );
         }
 
-        if (prodRes.rows.length === 0) {
+        if (!prodRes || prodRes.rows.length === 0) {
             throw new Error('Product not found.');
         }
 
         const product = prodRes.rows[0];
-        const numericId = product.product_id;
+        const numericId = product.product_id || product.id;
 
         // 3. Check for existing active or pending subscription
         let existingCheckQuery = `
