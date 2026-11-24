@@ -100,6 +100,12 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
                 `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id::text = $1 OR order_number = $1`,
                 [String(internalOrderId)]
             ).catch(err => console.warn('[verifyPayment] Cancel update note:', err.message));
+
+            // Trigger Workflow 2: Payment Status Email (Failed)
+            orderEmailService.sendPaymentStatusWorkflow(internalOrderId, 'Failed', {
+                transactionId: razorpay_payment_id || null,
+                message: 'Payment verification failed'
+            }).catch(e => console.error('[PaymentService] Failed payment notification error:', e.message));
         }
         return { success: false, message: 'Invalid signature' };
     }
@@ -330,6 +336,11 @@ exports.handleWebhook = async (payload, signature) => {
                         error_code: payment?.error_code,
                         error_description: payment?.error_description
                     });
+                    orderEmailService.sendPaymentStatusWorkflow(orderRes.rows[0].id, 'Failed', {
+                        transactionId: payment?.id,
+                        amount: (payment?.amount || 0) / 100,
+                        message: payment?.error_description || 'Payment was declined.'
+                    }).catch(err => console.error('[Webhook] Failed payment notification error:', err.message));
                 }
             } catch (err) {
                 console.error('[Webhook] Error processing payment.failed event:', err.message);

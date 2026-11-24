@@ -45,6 +45,17 @@ function parseCandidateProductId(rawId) {
     return null;
 }
 
+function parseCandidateProductId(rawId) {
+    if (!rawId) return null;
+    if (typeof rawId === 'number' && !isNaN(rawId)) return rawId;
+    const str = String(rawId).trim();
+    const digits = str.replace(/\D/g, '');
+    if (digits) {
+        return parseInt(digits, 10);
+    }
+    return null;
+}
+
 class StockNotificationService {
     /**
      * Subscribe customer to out-of-stock product variant
