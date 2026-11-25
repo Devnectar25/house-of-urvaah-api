@@ -115,6 +115,39 @@ const mapProduct = (p) => {
     }
     if (!Array.isArray(parsedProdDetails)) parsedProdDetails = [];
 
+    let colorImages = [];
+    const rawColorImages = p.color_images ?? p.colorImages;
+    if (rawColorImages) {
+        let parsedCI = rawColorImages;
+        if (typeof parsedCI === 'string') {
+            try { parsedCI = JSON.parse(parsedCI); } catch (e) { parsedCI = []; }
+        }
+        if (Array.isArray(parsedCI)) {
+            colorImages = parsedCI.map(item => {
+                const rawItemVideo = typeof item?.video === 'string' && item.video.trim().length > 0
+                    ? item.video.trim()
+                    : (typeof item?.video_url === 'string' && item.video_url.trim().length > 0 ? item.video_url.trim() : '');
+                const resolvedVideo = rawItemVideo ? storageService.getPublicMediaUrl(rawItemVideo) : '';
+                const itemSizeStock = (item?.sizeStock && typeof item.sizeStock === 'object')
+                    ? item.sizeStock
+                    : ((item?.size_stock && typeof item.size_stock === 'object') ? item.size_stock : {});
+
+                return {
+                    color: typeof item?.color === 'string' ? item.color.trim() : '',
+                    images: Array.isArray(item?.images)
+                        ? item.images
+                            .filter(img => typeof img === 'string' && img.trim().length > 0)
+                            .map(img => storageService.getPublicMediaUrl(img))
+                        : [],
+                    video: resolvedVideo,
+                    video_url: resolvedVideo,
+                    sizeStock: itemSizeStock,
+                    size_stock: itemSizeStock
+                };
+            }).filter(item => item.color.length > 0);
+        }
+    }
+
         const qtyVal = (p.stock_quantity !== undefined && p.stock_quantity !== null)
             ? Number(p.stock_quantity)
             : (p.quantity !== undefined && p.quantity !== null ? Number(p.quantity) : (p.stock !== undefined && p.stock !== null ? Number(p.stock) : 0));
@@ -227,7 +260,9 @@ const mapProduct = (p) => {
         is_recommended: p.is_recommended !== undefined ? Boolean(p.is_recommended) : Boolean(p.isrecommended),
         isRecommended: p.is_recommended !== undefined ? Boolean(p.is_recommended) : Boolean(p.isrecommended),
         active: p.active !== false && p.is_active !== false,
-        is_active: p.active !== false && p.is_active !== false
+        is_active: p.active !== false && p.is_active !== false,
+        colorImages: colorImages,
+        color_images: colorImages
     };
 };
 
@@ -654,6 +689,91 @@ const cleanOccasion = (occasion) => (occasion === undefined || occasion === null
     : (Array.isArray(occasion) ? occasion : String(occasion).split(','))
         .map(o => String(o).trim()).filter(Boolean).join(', '));
 
+const POPULAR_COLOR_PAIRS = [
+    { name: 'black', hex: '#111111' },
+    { name: 'white', hex: '#ffffff' },
+    { name: 'wine red', hex: '#722f37' },
+    { name: 'emerald green', hex: '#50c878' },
+    { name: 'navy blue', hex: '#000080' },
+    { name: 'ivory', hex: '#fffff0' },
+    { name: 'mustard', hex: '#ffdb58' },
+    { name: 'blush pink', hex: '#ffd1dc' }
+];
+
+// Sanitize colorImages: array of { color: string, images: string[] }, at most 5 images per colour.
+// Silently drops entries whose colour isn't in the product's colors list (case-insensitive, trimmed).
+const sanitizeColorImages = (colorImages, allowedColors) => {
+    if (!Array.isArray(colorImages)) return [];
+
+    const validColorSet = new Set();
+    (Array.isArray(allowedColors) ? allowedColors : []).forEach(c => {
+        if (typeof c === 'string' && c.trim().length > 0) {
+            const clean = c.trim().toLowerCase();
+            validColorSet.add(clean);
+            const pair = POPULAR_COLOR_PAIRS.find(p => p.name === clean || p.hex === clean);
+            if (pair) {
+                validColorSet.add(pair.name);
+                validColorSet.add(pair.hex);
+            }
+        }
+    });
+
+    const result = [];
+    for (const item of colorImages) {
+        if (!item || typeof item !== 'object') continue;
+        const colorName = typeof item.color === 'string' ? item.color.trim() : '';
+        if (!colorName) continue;
+
+        const cleanLower = colorName.toLowerCase();
+        const pair = POPULAR_COLOR_PAIRS.find(p => p.name === cleanLower || p.hex === cleanLower);
+
+        // If allowedColors contains real colors (not just 'default'), enforce match
+        const hasRealColors = [...validColorSet].some(c => c !== 'default');
+        if (hasRealColors) {
+            const matchesAllowed = validColorSet.has(cleanLower) || (pair && (validColorSet.has(pair.name) || validColorSet.has(pair.hex)));
+            if (!matchesAllowed) continue;
+        }
+
+        const rawImgs = Array.isArray(item.images) ? item.images : [];
+        const cleanImgs = rawImgs
+            .filter(img => typeof img === 'string' && img.trim().length > 0)
+            .map(img => img.trim())
+            .slice(0, 5); // at most 5 images per colour
+
+        const rawVideo = typeof item.video === 'string'
+            ? item.video.trim()
+            : (typeof item.video_url === 'string' ? item.video_url.trim() : '');
+
+        let cleanSizeStock = {};
+        const rawSizeStock = (item.sizeStock && typeof item.sizeStock === 'object')
+            ? item.sizeStock
+            : ((item.size_stock && typeof item.size_stock === 'object') ? item.size_stock : {});
+
+        if (rawSizeStock && typeof rawSizeStock === 'object') {
+            Object.entries(rawSizeStock).forEach(([sz, qty]) => {
+                if (typeof sz === 'string' && sz.trim().length > 0) {
+                    const cleanSz = sz.trim();
+                    const num = parseInt(qty, 10);
+                    if (!isNaN(num) && num >= 0) {
+                        cleanSizeStock[cleanSz] = num;
+                    }
+                }
+            });
+        }
+
+        // Retain colour block if it has images, a fabric video, or configured size stock
+        if (cleanImgs.length > 0 || rawVideo.length > 0 || Object.keys(cleanSizeStock).length > 0) {
+            result.push({
+                color: colorName,
+                images: cleanImgs,
+                video: rawVideo,
+                sizeStock: cleanSizeStock
+            });
+        }
+    }
+    return result;
+};
+
 exports.createProduct = async (product) => {
     const {
         productname, title, description, shortDescription, short_description, shortdescription,
@@ -663,7 +783,8 @@ exports.createProduct = async (product) => {
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
         specifications, name_options, nameOptions, product_details, productDetails,
-        video_url, videoUrl, video
+        video_url, videoUrl, video,
+        colorImages, color_images
     } = product;
 
     const productTitle = title || productname || '';
@@ -731,16 +852,19 @@ exports.createProduct = async (product) => {
             : (product.inStock !== undefined ? Boolean(product.inStock) : stockQty > 0)
     );
 
+    const allowedColors = Array.isArray(colors) ? colors : ['Default'];
+    const cleanColorImages = sanitizeColorImages(colorImages ?? color_images, allowedColors);
+
     const result = await pool.query(
         `INSERT INTO products 
-        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, video_url, tags, occasion, fabric_slug, new_arrival, created_at, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, $27, $28::text[], $29, $30, $31, NOW(), NOW()) 
+        (title, description, short_description, full_description, price, sale_price, category_id, brand, image_url, images, is_featured, is_recommended, is_active, stock_quantity, stock, quantity, instock, sizes, colors, fabric, fit_type, care_instructions, style_code, subcategory_id, specifications, name_options, product_details, size_stock, video_url, tags, occasion, fabric_slug, new_arrival, color_images, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25::jsonb, $26::jsonb, $27, $28::text[], $29, $30, $31, $32::jsonb, NOW(), NOW()) 
         RETURNING *`,
         [
             productTitle, description || '', shortDesc, fullDesc, currPrice, origPrice, parsedCatId,
             brand || 'House of Urvaah', imgUrl, imgList, isFeatured, recVal, activeVal !== false,
             stockQty, initialInStock, cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L'],
-            Array.isArray(colors) ? colors : ['Default'],
+            allowedColors,
             fabric || '', fit_type || '', careInst, style_code || '', parsedSubcatId,
             JSON.stringify(specsVal),
             JSON.stringify(nameOptsVal),
@@ -750,7 +874,8 @@ exports.createProduct = async (product) => {
             cleanTagList(product.tags) || [],
             cleanOccasion(product.occasion) || null,
             cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) || null,
-            cleanNewArrival(product.new_arrival)
+            cleanNewArrival(product.new_arrival),
+            JSON.stringify(cleanColorImages)
         ]
     );
     return mapProduct(result.rows[0]);
@@ -766,7 +891,8 @@ exports.updateProduct = async (id, product) => {
         quantity, stock_quantity, stock, active, is_active, sizes, colors,
         fabric, fit_type, care_instructions, careInstructions, style_code, subcategory_id,
         specifications, name_options, nameOptions, product_details, productDetails,
-        instock, inStock, video_url, videoUrl, video
+        instock, inStock, video_url, videoUrl, video,
+        colorImages, color_images
     } = product;
 
     const videoVal = (video_url !== undefined) ? video_url : (videoUrl !== undefined ? videoUrl : (video !== undefined ? video : undefined));
@@ -833,17 +959,37 @@ exports.updateProduct = async (id, product) => {
 
     // Fetch previous stock before update to detect restock transition
     let previousStock = null;
+    let existingColors = [];
     try {
         const prevRes = await pool.query(
-            "SELECT product_id, stock_quantity, stock, quantity, is_active FROM products WHERE product_id = $1::integer OR id = $1::integer",
+            "SELECT product_id, stock_quantity, stock, quantity, is_active, colors FROM products WHERE product_id = $1::integer OR id = $1::integer",
             [targetId]
         );
         if (prevRes.rows.length > 0) {
             const p = prevRes.rows[0];
             previousStock = (p.is_active === false) ? 0 : (p.stock_quantity ?? p.quantity ?? p.stock ?? 0);
+            existingColors = Array.isArray(p.colors) ? p.colors : [];
         }
     } catch (e) {
         console.warn('[updateProduct] Error fetching prev stock:', e.message);
+    }
+
+    const hasColorImagesUpdate = (colorImages !== undefined || color_images !== undefined);
+    const effectiveColors = colors !== undefined ? (Array.isArray(colors) ? colors : [colors]) : existingColors;
+    const cleanColorImages = hasColorImagesUpdate ? sanitizeColorImages(colorImages ?? color_images, effectiveColors) : [];
+
+    let finalColorsParam = colors !== undefined ? colors : null;
+    if (cleanColorImages.length > 0) {
+        let baseList = Array.isArray(colors) ? [...colors] : [...existingColors];
+        baseList = baseList.filter(c => String(c).toLowerCase() !== 'default');
+        cleanColorImages.forEach(ci => {
+            if (!baseList.some(bc => bc.trim().toLowerCase() === ci.color.trim().toLowerCase())) {
+                baseList.push(ci.color);
+            }
+        });
+        if (baseList.length > 0) {
+            finalColorsParam = baseList;
+        }
     }
 
     const cleanSizes = sizes !== undefined ? filterValidSizes(sizes) : undefined;
@@ -887,6 +1033,7 @@ exports.updateProduct = async (id, product) => {
             occasion = CASE WHEN $31::boolean THEN NULLIF($32, '') ELSE occasion END,
             fabric_slug = CASE WHEN $33::boolean THEN NULLIF($34, '') ELSE fabric_slug END,
             new_arrival = CASE WHEN $35::boolean THEN $36::boolean ELSE new_arrival END,
+            color_images = CASE WHEN $37::boolean THEN $38::jsonb ELSE color_images END,
             updated_at = NOW()
         WHERE product_id = $1::integer OR id = $1::integer
         RETURNING *`,
@@ -907,7 +1054,7 @@ exports.updateProduct = async (id, product) => {
             activeVal !== undefined ? activeVal : null,
             stockQty !== undefined && !isNaN(stockQty) ? stockQty : null,
             cleanSizes !== undefined ? (cleanSizes.length > 0 ? cleanSizes : ['XS', 'S', 'M', 'L']) : null,
-            colors !== undefined ? colors : null,
+            finalColorsParam !== null ? finalColorsParam : (colors !== undefined ? colors : null),
             fabric !== undefined ? fabric : null,
             fit_type !== undefined ? fit_type : null,
             careInst !== undefined ? careInst : null,
@@ -926,7 +1073,9 @@ exports.updateProduct = async (id, product) => {
             (product.fabric_slug ?? product.fabricSlug) !== undefined,
             cleanFabricSlug(product.fabric_slug ?? product.fabricSlug) ?? '',
             product.new_arrival !== undefined,
-            cleanNewArrival(product.new_arrival)
+            cleanNewArrival(product.new_arrival),
+            hasColorImagesUpdate,
+            JSON.stringify(cleanColorImages)
         ]
     );
 

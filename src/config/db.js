@@ -51,6 +51,7 @@ if (process.env.RUN_AUTO_MIGRATIONS === 'true') {
         ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS original_order_id UUID DEFAULT NULL;
         ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS original_order_number VARCHAR(100) DEFAULT NULL;
         ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS replacement_size VARCHAR(50) DEFAULT NULL;
+        ALTER TABLE public.products ADD COLUMN IF NOT EXISTS color_images JSONB DEFAULT '[]'::jsonb;
     `).catch((err) => {
         if (!err.message?.includes('timeout')) {
             console.warn('[DB Auto Migration Warning] Could not check/add columns:', err.message);
