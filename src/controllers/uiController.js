@@ -1,152 +1,318 @@
 const pool = require('../config/db');
+const storageService = require('../services/storageService');
 
 // ==========================================
-// 1. HERO SLIDES
+// 1. HERO SLIDES  (desktop and mobile are fully independent records)
 // ==========================================
+// Every hero row belongs to exactly ONE device ('desktop' | 'mobile') and owns its
+// own media_url / media_type / is_active / display_order. Every endpoint takes a
+// `device` and every query is filtered by it, so no request can read, modify or
+// delete the other device's slides. See migrations/018_hero_slides_device_split.sql.
 
-// Public GET
+const HERO_DEVICES = ['desktop', 'mobile'];
+const HERO_MEDIA_TYPES = ['video', 'image'];
+const HERO_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'houseofurvaah-media';
+const HERO_PUBLIC_COLUMNS = 'id, device, media_url, media_type, heading, subheading, button_text, button_link, display_order, is_active, created_at';
+
+const readHeroDevice = (req) => {
+  const raw = (req.query && req.query.device) || (req.body && req.body.device);
+  const device = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return HERO_DEVICES.includes(device) ? device : null;
+};
+
+const invalidDevice = (res) =>
+  res.status(400).json({ success: false, message: "A valid device is required: 'desktop' or 'mobile'." });
+
+// Extension of a URL/path without its query string ('' when it has none)
+const heroExt = (url) => {
+  const clean = String(url || '').split('?')[0].split('#')[0].trim().toLowerCase();
+  const last = clean.split('/').pop() || '';
+  return last.includes('.') ? last.split('.').pop() : '';
+};
+
+/**
+ * Validates media_url + media_type. Videos must be .mp4; images JPEG/PNG/WebP.
+ * Extension-less asset keys (e.g. a storage key without suffix) are accepted with the
+ * given media_type. Returns { media_url, media_type } or { error }.
+ */
+const validateHeroMedia = (mediaUrl, mediaType) => {
+  const url = typeof mediaUrl === 'string' ? mediaUrl.trim() : '';
+  if (!url) return { error: 'Media file or URL is required.' };
+
+  const ext = heroExt(url);
+  const isImageExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+  const isOtherVideoExt = ['webm', 'mov', 'm4v', 'ogg', 'mkv', 'avi'].includes(ext);
+  const isOtherImageExt = ['gif', 'avif', 'svg', 'bmp', 'tif', 'tiff', 'heic'].includes(ext);
+
+  if (isOtherVideoExt) return { error: 'Hero videos must be MP4 (.mp4).' };
+  if (isOtherImageExt) return { error: 'Hero images must be JPEG, PNG or WebP.' };
+
+  let type = HERO_MEDIA_TYPES.includes(mediaType) ? mediaType : null;
+  if (ext === 'mp4') type = 'video';
+  else if (isImageExt) type = 'image';
+  if (!type) type = 'video';
+
+  if (mediaType && HERO_MEDIA_TYPES.includes(mediaType) && mediaType !== type) {
+    return { error: `The file is a ${type}, but media type "${mediaType}" was selected.` };
+  }
+  return { media_url: url, media_type: type };
+};
+
+// Storage object path for a media URL/path, or null when it is not in our bucket
+const heroStoragePath = (url) => {
+  if (!url || typeof url !== 'string') return null;
+  let p = url.trim().split('?')[0].split('#')[0];
+  if (/^https?:\/\//i.test(p)) {
+    const marker = `/${HERO_STORAGE_BUCKET}/`;
+    const idx = p.indexOf(marker);
+    if (idx === -1) return null; // external URL: not ours to delete
+    p = p.slice(idx + marker.length);
+  }
+  p = p.replace(/^\/+/, '').replace(/^assets\//, '');
+  try { p = decodeURIComponent(p); } catch (_) { /* keep raw */ }
+  return p || null;
+};
+
+/**
+ * Deletes a hero file from storage ONLY when:
+ *  - it lives under hero/ in our bucket (never touches default/brand/product assets), and
+ *  - no remaining hero record (either device) still uses the same file.
+ * Storage errors are logged, never thrown: the DB change has already succeeded.
+ */
+const cleanupHeroFileIfUnused = async (mediaUrl, db = pool) => {
+  const path = heroStoragePath(mediaUrl);
+  if (!path || !path.startsWith('hero/')) return { deleted: false, reason: 'not-a-hero-upload' };
+
+  const others = await db.query('SELECT media_url FROM ui_hero_slides');
+  const stillUsed = others.rows.some((r) => heroStoragePath(r.media_url) === path);
+  if (stillUsed) return { deleted: false, reason: 'still-in-use' };
+
+  try {
+    await storageService.deleteImage(path);
+    return { deleted: true };
+  } catch (err) {
+    console.error('[UI] Hero file cleanup failed (row already removed):', err.message);
+    return { deleted: false, reason: 'storage-error' };
+  }
+};
+
+// Single-active rule, scoped to ONE device: the storefront plays one hero per device.
+const deactivateOtherHeroSlides = (client, device, keepId) =>
+  client.query(
+    'UPDATE ui_hero_slides SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE device = $1 AND id <> $2 AND is_active = true',
+    [device, keepId]
+  );
+
+// Public GET  /api/ui/hero?device=desktop|mobile  -> active slides for that device only
 exports.getPublicHeroSlides = async (req, res) => {
   try {
+    // Older storefront builds call without ?device; they only ever rendered desktop.
+    const device = readHeroDevice(req) || (req.query && req.query.device ? null : 'desktop');
+    if (!device) return invalidDevice(res);
+
     const result = await pool.query(
-      `SELECT id, heading, subheading, desktop_image, mobile_image, media_type, button_text, button_link, display_order 
-       FROM ui_hero_slides 
-       WHERE is_active = true 
-       ORDER BY display_order ASC, id ASC`
+      `SELECT ${HERO_PUBLIC_COLUMNS}
+       FROM ui_hero_slides
+       WHERE is_active = true AND device = $1
+       ORDER BY display_order ASC, id ASC`,
+      [device]
     );
-    res.json({ success: true, count: result.rows.length, data: result.rows });
+    res.json({ success: true, device, count: result.rows.length, data: result.rows });
   } catch (error) {
     console.error('[UI] Error fetching public hero slides:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch hero slides', error: error.message });
   }
 };
 
-// Admin GET all
+// Admin GET  /api/ui/admin/hero?device=desktop|mobile
 exports.getAdminHeroSlides = async (req, res) => {
   try {
+    const device = readHeroDevice(req);
+    if (!device) return invalidDevice(res);
+
     const result = await pool.query(
-      `SELECT * FROM ui_hero_slides ORDER BY display_order ASC, id ASC`
+      `SELECT ${HERO_PUBLIC_COLUMNS}, updated_at
+       FROM ui_hero_slides
+       WHERE device = $1
+       ORDER BY display_order ASC, id ASC`,
+      [device]
     );
-    res.json({ success: true, count: result.rows.length, data: result.rows });
+    res.json({ success: true, device, count: result.rows.length, data: result.rows });
   } catch (error) {
     console.error('[UI] Error fetching admin hero slides:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch hero slides', error: error.message });
   }
 };
 
-// Admin Create
+// Admin Create  POST /api/ui/admin/hero  { device, media_url, media_type, is_active, display_order }
 exports.createHeroSlide = async (req, res) => {
-  try {
-    const { heading, subheading, desktop_image, mobile_image, media_type, button_text, button_link, display_order, is_active } = req.body;
+  const device = readHeroDevice(req);
+  if (!device) return invalidDevice(res);
 
-    if (!desktop_image) {
-      return res.status(400).json({ success: false, message: 'Media (desktop_image) is required' });
+  const { heading, subheading, media_url, media_type, button_text, button_link, display_order, is_active } = req.body || {};
+  const media = validateHeroMedia(media_url, media_type);
+  if (media.error) return res.status(400).json({ success: false, message: media.error });
+
+  const activeVal = is_active !== undefined ? Boolean(is_active) : true;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    let orderVal = Number.isInteger(display_order) ? display_order : null;
+    if (orderVal === null) {
+      const max = await client.query('SELECT COALESCE(MAX(display_order), 0) AS max FROM ui_hero_slides WHERE device = $1', [device]);
+      orderVal = Number(max.rows[0].max) + 1;
     }
 
-    const orderVal = Number.isInteger(display_order) ? display_order : 0;
-    const activeVal = is_active !== undefined ? Boolean(is_active) : true;
-    const mType = media_type || (desktop_image.endsWith('.mp4') ? 'video' : 'image');
-
-    const result = await pool.query(
-      `INSERT INTO ui_hero_slides 
-        (heading, subheading, desktop_image, mobile_image, media_type, button_text, button_link, display_order, is_active)
+    const result = await client.query(
+      `INSERT INTO ui_hero_slides
+        (device, media_url, media_type, heading, subheading, button_text, button_link, display_order, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [heading || '', subheading || '', desktop_image, mobile_image || '', mType, button_text || 'EXPLORE NOW', button_link || '/clothing', orderVal, activeVal]
+       RETURNING ${HERO_PUBLIC_COLUMNS}, updated_at`,
+      [device, media.media_url, media.media_type, heading || '', subheading || '',
+       button_text || 'EXPLORE NOW', button_link || '/clothing', orderVal, activeVal]
     );
+    const created = result.rows[0];
+    if (activeVal) await deactivateOtherHeroSlides(client, device, created.id);
 
-    res.status(201).json({ success: true, message: 'Hero slide created successfully', data: result.rows[0] });
+    await client.query('COMMIT');
+    res.status(201).json({ success: true, message: `${device === 'mobile' ? 'Mobile' : 'Desktop'} hero slide created`, data: created });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[UI] Error creating hero slide:', error);
     res.status(500).json({ success: false, message: 'Failed to create hero slide', error: error.message });
+  } finally {
+    client.release();
   }
 };
 
-// Admin Update
+// Admin Update  PUT /api/ui/admin/hero/:id?device=...  (only that device's record; device itself can't change)
 exports.updateHeroSlide = async (req, res) => {
+  const device = readHeroDevice(req);
+  if (!device) return invalidDevice(res);
+  const { id } = req.params;
+
+  const client = await pool.connect();
+  let replacedMediaUrl = null;
   try {
-    const { id } = req.params;
-    const { heading, subheading, desktop_image, mobile_image, media_type, button_text, button_link, display_order, is_active } = req.body;
-
-    const existing = await pool.query('SELECT * FROM ui_hero_slides WHERE id = $1', [id]);
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM ui_hero_slides WHERE id = $1 AND device = $2 FOR UPDATE', [id, device]);
     if (existing.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Hero slide not found' });
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: `${device === 'mobile' ? 'Mobile' : 'Desktop'} hero slide not found` });
     }
-
     const current = existing.rows[0];
-    const newDesktopImage = desktop_image !== undefined ? desktop_image : current.desktop_image;
-    const newMediaType = media_type !== undefined ? media_type : (newDesktopImage.endsWith('.mp4') ? 'video' : current.media_type);
+    const body = req.body || {};
 
-    const result = await pool.query(
-      `UPDATE ui_hero_slides 
-       SET heading = $1, 
-           subheading = $2, 
-           desktop_image = $3, 
-           mobile_image = $4, 
-           media_type = $5,
-           button_text = $6, 
-           button_link = $7, 
-           display_order = $8, 
-           is_active = $9,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10
-       RETURNING *`,
+    let mediaUrl = current.media_url;
+    let mediaType = current.media_type;
+    if (body.media_url !== undefined || body.media_type !== undefined) {
+      const media = validateHeroMedia(
+        body.media_url !== undefined ? body.media_url : current.media_url,
+        body.media_type !== undefined ? body.media_type : (body.media_url !== undefined ? undefined : current.media_type)
+      );
+      if (media.error) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: media.error });
+      }
+      mediaUrl = media.media_url;
+      mediaType = media.media_type;
+    }
+    if (mediaUrl !== current.media_url) replacedMediaUrl = current.media_url;
+
+    const isActive = body.is_active !== undefined ? Boolean(body.is_active) : current.is_active;
+    const result = await client.query(
+      `UPDATE ui_hero_slides
+       SET media_url = $1, media_type = $2, heading = $3, subheading = $4, button_text = $5,
+           button_link = $6, display_order = $7, is_active = $8, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9 AND device = $10
+       RETURNING ${HERO_PUBLIC_COLUMNS}, updated_at`,
       [
-        heading !== undefined ? heading : current.heading,
-        subheading !== undefined ? subheading : current.subheading,
-        newDesktopImage,
-        mobile_image !== undefined ? mobile_image : current.mobile_image,
-        newMediaType,
-        button_text !== undefined ? button_text : current.button_text,
-        button_link !== undefined ? button_link : current.button_link,
-        display_order !== undefined ? display_order : current.display_order,
-        is_active !== undefined ? is_active : current.is_active,
-        id
+        mediaUrl, mediaType,
+        body.heading !== undefined ? body.heading : current.heading,
+        body.subheading !== undefined ? body.subheading : current.subheading,
+        body.button_text !== undefined ? body.button_text : current.button_text,
+        body.button_link !== undefined ? body.button_link : current.button_link,
+        Number.isInteger(body.display_order) ? body.display_order : current.display_order,
+        isActive, id, device
       ]
     );
+    if (isActive) await deactivateOtherHeroSlides(client, device, current.id);
+    await client.query('COMMIT');
+
+    // The replaced file is removed only if no other hero record (either device) uses it
+    if (replacedMediaUrl) await cleanupHeroFileIfUnused(replacedMediaUrl);
 
     res.json({ success: true, message: 'Hero slide updated successfully', data: result.rows[0] });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[UI] Error updating hero slide:', error);
     res.status(500).json({ success: false, message: 'Failed to update hero slide', error: error.message });
+  } finally {
+    client.release();
   }
 };
 
-// Admin Delete
+// Admin Delete  DELETE /api/ui/admin/hero/:id?device=...  (that record + its own file only)
 exports.deleteHeroSlide = async (req, res) => {
   try {
+    const device = readHeroDevice(req);
+    if (!device) return invalidDevice(res);
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM ui_hero_slides WHERE id = $1 RETURNING id', [id]);
+
+    const result = await pool.query(
+      'DELETE FROM ui_hero_slides WHERE id = $1 AND device = $2 RETURNING id, media_url',
+      [id, device]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Hero slide not found' });
+      return res.status(404).json({ success: false, message: `${device === 'mobile' ? 'Mobile' : 'Desktop'} hero slide not found` });
     }
-    res.json({ success: true, message: 'Hero slide deleted successfully' });
+
+    const cleanup = await cleanupHeroFileIfUnused(result.rows[0].media_url);
+    res.json({
+      success: true,
+      message: `${device === 'mobile' ? 'Mobile' : 'Desktop'} hero slide deleted`,
+      fileDeleted: cleanup.deleted,
+      fileKeptReason: cleanup.deleted ? undefined : cleanup.reason
+    });
   } catch (error) {
     console.error('[UI] Error deleting hero slide:', error);
     res.status(500).json({ success: false, message: 'Failed to delete hero slide', error: error.message });
   }
 };
 
-// Admin Reorder Slides
+// Admin Reorder  PUT /api/ui/admin/hero/reorder  { device, items: [{ id, display_order }] }
 exports.reorderHeroSlides = async (req, res) => {
+  const device = readHeroDevice(req);
+  if (!device) return invalidDevice(res);
+  const { items } = req.body || {};
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ success: false, message: 'items array is required' });
+  }
+
+  const client = await pool.connect();
   try {
-    const { items } = req.body; // array of { id, display_order }
-    if (!Array.isArray(items)) {
-      return res.status(400).json({ success: false, message: 'items array is required' });
-    }
-
+    await client.query('BEGIN');
     for (const item of items) {
-      await pool.query('UPDATE ui_hero_slides SET display_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [
-        item.display_order,
-        item.id
-      ]);
+      // device in WHERE: ids of the other device are silently ignored
+      await client.query(
+        'UPDATE ui_hero_slides SET display_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND device = $3',
+        [item.display_order, item.id, device]
+      );
     }
-
+    await client.query('COMMIT');
     res.json({ success: true, message: 'Hero slides reordered successfully' });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[UI] Error reordering hero slides:', error);
     res.status(500).json({ success: false, message: 'Failed to reorder hero slides', error: error.message });
+  } finally {
+    client.release();
   }
 };
+
+// Exposed for tests
+exports._hero = { validateHeroMedia, heroStoragePath, cleanupHeroFileIfUnused };
 
 
 // ==========================================
