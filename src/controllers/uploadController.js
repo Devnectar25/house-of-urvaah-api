@@ -3,6 +3,13 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+
+// Hero media lives in separate per-device folders: hero/desktop/... and hero/mobile/...
+const HERO_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+const isHeroFolder = (folder) => /^hero\/(desktop|mobile)(\/|$)/.test(String(folder || ''));
+// Random prefix (on top of storage's timestamp) so two uploads can never share/overwrite a file
+const uniqueHeroName = (name) => `${crypto.randomUUID().slice(0, 8)}-${String(name || 'media')}`;
 
 // Configure Multer for memory storage (for smaller files like images)
 const memoryStorage = multer.memoryStorage();
@@ -62,7 +69,16 @@ exports.uploadImage = async (req, res) => {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const folderName = req.body?.folderName || req.body?.folder || 'products'; 
+        const folderName = req.body?.folderName || req.body?.folder || 'products';
+
+        // Hero uploads (hero/desktop, hero/mobile): JPEG/PNG/WebP only, unique file name
+        if (isHeroFolder(folderName)) {
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+                return res.status(400).json({ success: false, message: 'Hero images must be JPEG, PNG or WebP.' });
+            }
+            file.originalname = uniqueHeroName(file.originalname);
+        }
+
         const publicUrl = await storageService.uploadImage(file, folderName);
 
         console.log(`[UPLOAD] Image successful: ${publicUrl}`);
@@ -168,7 +184,21 @@ exports.createVideoUploadUrl = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Please choose a video file (MP4, WebM or MOV).' });
         }
         const folder = String(req.body.folderName || 'products/videos').replace(/[^a-zA-Z0-9/_-]/g, '');
-        const data = await storageService.createSignedUpload(folder, fileName);
+
+        // Hero videos (hero/desktop, hero/mobile): MP4 only, max 100MB, unique file name
+        let finalName = fileName;
+        if (isHeroFolder(folder)) {
+            if (!/\.mp4$/i.test(String(fileName))) {
+                return res.status(400).json({ success: false, message: 'Hero videos must be MP4 (.mp4).' });
+            }
+            const size = Number(req.body.fileSize);
+            if (Number.isFinite(size) && size > HERO_VIDEO_MAX_BYTES) {
+                return res.status(400).json({ success: false, message: 'Hero video is too large. Max allowed: 100MB.' });
+            }
+            finalName = uniqueHeroName(fileName);
+        }
+
+        const data = await storageService.createSignedUpload(folder, finalName);
         res.json({ success: true, data });
     } catch (error) {
         console.error('Error creating video upload URL:', error);

@@ -20,6 +20,10 @@ async function seedUiSections() {
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
     ALTER TABLE public.ui_hero_slides ADD COLUMN IF NOT EXISTS media_type VARCHAR(20) DEFAULT 'video';
+    -- Desktop and mobile hero slides are independent rows (see migrations/018_hero_slides_device_split.sql)
+    ALTER TABLE public.ui_hero_slides ADD COLUMN IF NOT EXISTS device VARCHAR(10);
+    ALTER TABLE public.ui_hero_slides ADD COLUMN IF NOT EXISTS media_url TEXT;
+    ALTER TABLE public.ui_hero_slides ALTER COLUMN desktop_image DROP NOT NULL;
 
     CREATE TABLE IF NOT EXISTS public.ui_dual_campaign (
         id SERIAL PRIMARY KEY,
@@ -71,14 +75,13 @@ async function seedUiSections() {
   if (parseInt(heroCheck.rows[0].count, 10) === 0) {
     await pool.query(`
       INSERT INTO ui_hero_slides 
-        (heading, subheading, desktop_image, mobile_image, media_type, button_text, button_link, display_order, is_active)
-      VALUES 
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (device, heading, subheading, media_url, media_type, button_text, button_link, display_order, is_active)
+      VALUES
+        ('desktop', $1, $2, $3, $4, $5, $6, $7, $8)
     `, [
       'HOUSE OF URVAAH',
       'AUTUMN / WINTER 2026 ATELIER',
       'https://fhbdceauisvlcpmuzpmf.supabase.co/storage/v1/object/public/houseofurvaah-media/videos/HOU_desktop%20video.mp4.mp4',
-      '/assets/video/Hero-section-video-two.mp4',
       'video',
       'EXPLORE COLLECTION',
       '/clothing',
